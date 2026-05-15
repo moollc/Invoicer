@@ -1663,6 +1663,14 @@ function getData() {
     raw.totalLabelBottom = parts.slice(1).join(' ') || 'Due';
     delete raw.totalLabel;
   }
+  // Heal swapped email/phone — if email field looks like a phone, swap them back
+  const looksLikeEmail = v => v && v.includes('@');
+  const looksLikePhone = v => v && !v.includes('@') && /[\d\s\(\)\+\-\/]/.test(v);
+  for (const party of [raw.from, raw.to]) {
+    if (party && looksLikePhone(party.email) && looksLikeEmail(party.phone)) {
+      [party.email, party.phone] = [party.phone, party.email];
+    }
+  }
   return raw;
 }
 
@@ -3116,7 +3124,7 @@ async function openEmail() {
 
       const fullMessage = [
         `From: ${data.from.email}`,
-        `To: ${data.to.email}`,
+        `To: ${(data.to.email || '').includes('@') ? data.to.email : ''}`,
         `Subject: ${decodeURIComponent(subject)}`,
         'MIME-Version: 1.0',
         `Content-Type: multipart/mixed; boundary="${boundary}"`,
