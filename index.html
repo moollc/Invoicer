@@ -3064,56 +3064,23 @@ async function openEmail() {
 
   const sendViaDraft = async () => {
     try {
-      // Generate PDF using html2pdf
-      const invoiceEl = document.getElementById('invoice');
       const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
-      console.log('Generating PDF...');
+      console.log('Generating PDF for email...');
 
-      // Temporarily hide UI elements and strip padding
-      const toolbar = document.getElementById('toolbar');
-      const chatPanel = document.getElementById('chat-panel');
-      const origToolbarDisplay = toolbar.style.display;
-      const origChatDisplay = chatPanel.style.display;
-      const origMargin = invoiceEl.style.margin;
-      const origPadding = invoiceEl.style.padding;
-      const origBg = invoiceEl.style.background;
-      const origBoxShadow = invoiceEl.style.boxShadow;
-      const origBorderRadius = invoiceEl.style.borderRadius;
-      const origMinHeight = invoiceEl.style.minHeight;
-      const origHeight = invoiceEl.style.height;
+      // Clone the invoice element — same approach as proceedPrint, never touch live DOM
+      const clone = document.getElementById('invoice').cloneNode(true);
+      clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
+      document.body.appendChild(clone);
 
-      toolbar.style.display = 'none';
-      chatPanel.style.display = 'none';
-      invoiceEl.style.margin = '0';
-      invoiceEl.style.padding = '62px 67px 58px';
-      invoiceEl.style.background = '#fff';
-      invoiceEl.style.boxShadow = 'none';
-      invoiceEl.style.borderRadius = '0';
-      invoiceEl.style.minHeight = 'unset';
-      invoiceEl.style.height = 'auto';
-
-      // Use browser's print-to-PDF by capturing it
-      const pdfBlob = await new Promise((resolve, reject) => {
-        const opt = {
-          margin: 0,
-          filename: filename,
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 1 },
-          jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
-        };
-        html2pdf().set(opt).from(invoiceEl).toPdf().output('blob').then(resolve).catch(reject);
-      });
-
-      // Restore styles
-      toolbar.style.display = origToolbarDisplay;
-      chatPanel.style.display = origChatDisplay;
-      invoiceEl.style.margin = origMargin;
-      invoiceEl.style.padding = origPadding;
-      invoiceEl.style.background = origBg;
-      invoiceEl.style.boxShadow = origBoxShadow;
-      invoiceEl.style.borderRadius = origBorderRadius;
-      invoiceEl.style.minHeight = origMinHeight;
-      invoiceEl.style.height = origHeight;
+      const opt = {
+        margin: 0,
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 1 },
+        jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
+      };
+      const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
+      document.body.removeChild(clone);
 
       // Save to Drive if signed in
       if (gmailTokenValid()) savePdfToDrive(pdfBlob, filename);
@@ -3158,7 +3125,11 @@ async function openEmail() {
         `--${boundary}--`,
       ].join('\r\n');
 
-      const encoded = btoa(unescape(encodeURIComponent(fullMessage)))
+      // Use TextEncoder → Uint8Array → base64 to safely handle the full MIME blob
+      const msgBytes = new TextEncoder().encode(fullMessage);
+      let binary = '';
+      msgBytes.forEach(b => binary += String.fromCharCode(b));
+      const encoded = btoa(binary)
         .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
       const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
