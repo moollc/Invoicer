@@ -1254,6 +1254,8 @@
   </select>
   <button id="btn-print"  onclick="confirmPrint()">⎙ Print / PDF</button>
   <button id="btn-chat"   onclick="toggleChat()" style="background:#5b4fcf; color:#fff;">✦ AI</button>
+  <input id="cal-keyword" type="text" placeholder="keyword (e.g. gig)" style="font-family:'Roboto',sans-serif; font-size:12px; padding:8px 12px; border:none; border-radius:6px; background:#1e2a38; color:#fff; width:160px; display:none;" />
+  <button id="btn-calendar" onclick="openCalendarImport()" style="background:#1a73e8; color:#fff; display:none;">From Calendar</button>
 </div>
 
 <!-- AI CHAT PANEL -->
@@ -2572,7 +2574,7 @@ function toggleClientBook() {
 // Application type: Web application. Add your file:// or localhost origin.
 const GMAIL_CLIENT_ID = '622970529535-p38faf23t1pn0nhrhktam3c8gcf4r303.apps.googleusercontent.com';
 
-const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/generative-language https://www.googleapis.com/auth/drive.file';
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/generative-language https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly';
 
 function saveOAuthClientIdInput() {
   const input = document.getElementById('oauth-client-id-input');
@@ -2668,6 +2670,10 @@ function updateEmailBtn() {
       signinBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg> Sign in with Google';
     }
   }
+  ['btn-calendar', 'cal-keyword'].forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = gmailTokenValid() ? '' : 'none';
+  });
 }
 
 function googleSignIn() {
@@ -2991,6 +2997,128 @@ async function savePdfToDrive(pdfBlob, filename) {
   }
 }
 
+// ── Calendar import ──────────────────────────────────────────────
+
+async function fetchCalendarEvents(keyword) {
+  const now    = new Date();
+  const future = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+
+  const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+    + '?q='             + encodeURIComponent(keyword)
+    + '&timeMin='       + encodeURIComponent(now.toISOString())
+    + '&timeMax='       + encodeURIComponent(future.toISOString())
+    + '&singleEvents=true'
+    + '&orderBy=startTime'
+    + '&maxResults=20';
+
+  const res = await fetch(url, {
+    headers: { Authorization: 'Bearer ' + _gmailToken }
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('Token expired — please sign in again.');
+    const err = await res.json();
+    throw new Error((err.error && err.error.message) || res.statusText);
+  }
+
+  const data = await res.json();
+  return (data.items || []).filter(function(e) { return e.status !== 'cancelled'; });
+}
+
+function buildDraftFromEvent(event) {
+  const startRaw = (event.start && (event.start.dateTime || event.start.date)) || '';
+  const dateStr  = startRaw
+    ? new Date(startRaw).toLocaleDateString('en-GB').replace(/\//g, ' / ')
+    : '';
+
+  const attendees   = event.attendees || [];
+  const selfEmail   = (event.organizer && event.organizer.self && event.organizer.email) || '';
+  const client      = attendees.filter(function(a) { return !a.self && a.email !== selfEmail; })[0] || null;
+  const clientName  = (client && (client.displayName || client.email)) || '';
+  const clientEmail = (client && client.email) || '';
+
+  return {
+    dateOverride:    dateStr,
+    receiptOverride: '',
+    payPeriod:       'Due on Receipt',
+    currency:        'USD',
+    to: {
+      name:    clientName,
+      address: '',
+      email:   clientEmail,
+      phone:   '',
+    },
+    lineItems: [
+      {
+        service: event.summary || 'Service',
+        details: event.description || '',
+        rates:   ['Rate'],
+        costs:   ['0'],
+      }
+    ],
+    projectTotal:     '0',
+    totalLabelTop:    'Total',
+    totalLabelBottom: 'Due',
+    totalAmount:      '$0',
+    paymentNote:      '',
+    paid:             false,
+  };
+}
+
+async function openCalendarImport() {
+  if (!gmailTokenValid()) {
+    alert('Please sign in with Google first.');
+    return;
+  }
+
+  const keyword = document.getElementById('cal-keyword').value.trim();
+  if (!keyword) {
+    alert('Enter a keyword to search your calendar (e.g. "gig", "session").');
+    return;
+  }
+  localStorage.setItem('cal-keyword', keyword);
+
+  let events;
+  try {
+    events = await fetchCalendarEvents(keyword);
+  } catch (e) {
+    alert('Calendar error: ' + e.message);
+    return;
+  }
+
+  if (!events.length) {
+    alert('No upcoming events found matching "' + keyword + '".');
+    return;
+  }
+
+  const choices = events.map(function(e, i) {
+    const d = (e.start && (e.start.dateTime || e.start.date)) || '?';
+    return (i + 1) + '. ' + (e.summary || '(untitled)') + '  —  ' + new Date(d).toDateString();
+  }).join('\n');
+
+  const answer = prompt('Pick an event to draft an invoice:\n\n' + choices + '\n\nEnter number:');
+  if (!answer) return;
+
+  const idx = parseInt(answer, 10) - 1;
+  if (isNaN(idx) || idx < 0 || idx >= events.length) {
+    alert('Invalid selection.');
+    return;
+  }
+
+  const draft = buildDraftFromEvent(events[idx]);
+  let existing;
+  try {
+    existing = JSON.parse(document.getElementById('invoice-data').textContent);
+  } catch (e) {
+    alert('Could not read invoice data. Try reloading the page.');
+    return;
+  }
+
+  const merged = Object.assign({}, existing, draft, { from: existing.from });
+  document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+  render(merged);
+}
+
 async function loadLedgerFromSheet() {
   if (!_sheetsSpreadsheetId || !_gmailToken) {
     console.log('Sheet sync not available: missing ID or token');
@@ -3160,6 +3288,11 @@ window.addEventListener('load', () => {
       setupDrive();
     });
   } catch(e) {}
+  const savedKw = localStorage.getItem('cal-keyword');
+  if (savedKw) {
+    const kwEl = document.getElementById('cal-keyword');
+    if (kwEl) kwEl.value = savedKw;
+  }
 });
 
 // Register service worker for PWA
