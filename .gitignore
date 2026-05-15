@@ -15,6 +15,9 @@
 
 # Allow git and essential config
 !.gitignore
+
+# Local scaffolding — never published
+scaffolds/
 !.git/
 !.gitattributes
 
