@@ -2365,9 +2365,7 @@ ${currentData}`;
       parts.push({ text: systemPrompt + '\n\nUser: ' + text });
 
       const url = typeof prov.url === 'function' ? prov.url(cfg.model) : prov.url;
-      const geminiAuth = gmailTokenValid()
-        ? { Authorization: `Bearer ${_gmailToken}` }
-        : prov.authHeader(cfg.key);
+      const geminiAuth = prov.authHeader(cfg.key);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...geminiAuth },
