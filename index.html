@@ -3061,6 +3061,7 @@ async function openEmail() {
   const to      = encodeURIComponent(data.to.email || '');
   const subject = encodeURIComponent(`moo Invoice ${data.receiptNumber} - ${service}`);
   const body    = encodeURIComponent('Please review the attached invoice.');
+  // Note: to/subject/body above are only used by fallbackEmail — MIME headers use raw values
 
   const sendViaDraft = async () => {
     try {
@@ -3115,8 +3116,8 @@ async function openEmail() {
 
       const fullMessage = [
         `From: ${data.from.email}`,
-        `To: ${data.to.email}`,
-        `Subject: ${decodeURIComponent(subject)}`,
+        `To: ${data.to.email || ''}`,
+        `Subject: moo Invoice ${data.receiptNumber} - ${data.lineItems.map(l => l.service).join(', ')}`,
         'MIME-Version: 1.0',
         `Content-Type: multipart/mixed; boundary="${boundary}"`,
         '',
