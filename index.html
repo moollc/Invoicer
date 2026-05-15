@@ -1718,7 +1718,7 @@ async function renderLedgerHistory() {
     sel.addEventListener('change', async () => {
       rows[realIdx].status = sel.value;
       saveLedgerRows(rows); // Also save to localStorage as backup
-      await updateLedgerStatusOnSheet(realIdx, sel.value);
+      await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value);
     });
 
     wrap.append(info, sel);
@@ -2639,7 +2639,6 @@ function requestGmailToken(onToken) {
   setTimeout(() => {
     if (!gmailTokenValid()) {
       console.log('Silent token request failed, user may need to grant permission');
-      if (onToken) onToken(); // Call callback anyway, let it fail gracefully
     } else if (onToken) {
       onToken();
     }
@@ -3160,11 +3159,21 @@ async function loadLedgerFromSheet() {
   }
 }
 
-async function updateLedgerStatusOnSheet(rowIndex, status) {
+async function updateLedgerStatusOnSheet(receiptNumber, status) {
   if (!_sheetsSpreadsheetId || !_gmailToken) return;
 
   try {
-    const cell = `Sheet1!G${rowIndex + 2}`; // +2 for header + 0-index
+    const readRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A:A`,
+      { headers: { Authorization: `Bearer ${_gmailToken}` } }
+    );
+    if (!readRes.ok) return;
+    const readJson = await readRes.json();
+    const colA = readJson.values || [];
+    const sheetRowIdx = colA.findIndex(function(r, i) { return i > 0 && r[0] === receiptNumber; });
+    if (sheetRowIdx === -1) { console.warn('Receipt not found in sheet:', receiptNumber); return; }
+    const cell = `Sheet1!G${sheetRowIdx + 1}`;
+
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
       {
@@ -3178,7 +3187,7 @@ async function updateLedgerStatusOnSheet(rowIndex, status) {
     );
 
     if (res.ok) {
-      console.log('✓ Status updated on sheet');
+      console.log('✓ Status updated on sheet row', sheetRowIdx + 1);
     }
   } catch (e) {
     console.error('Status update error:', e.message);
@@ -3278,7 +3287,7 @@ renderClientChips();
 restoreTitleFont();
 
 // Restore token from storage if available
-restoreTokenFromStorage();
+if (restoreTokenFromStorage()) updateEmailBtn();
 
 // Init Google auth silently on load
 window.addEventListener('load', () => {
