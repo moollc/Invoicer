@@ -168,9 +168,14 @@
     outline: 2px solid var(--red);
     background: rgba(208,36,27,0.04);
   }
-  /* table cells with data-field must stay as table cells */
+  /* table cells with data-field must stay as table cells and keep dark bg */
   body.editing td[data-field] {
     display: table-cell;
+    background: var(--row);
+  }
+  body.editing td[data-field]:focus {
+    background: var(--row);
+    outline: 2px solid var(--red);
   }
   /* qualifier spans sit inside a flex column — keep them as block, not inline-block */
   body.editing .qualifier [data-field] {
@@ -333,6 +338,8 @@
     color: var(--ink);
     line-height: 1.65;
     font-weight: 400;
+    word-break: break-word;
+    overflow-wrap: break-word;
   }
 
   /* ── TABLE ── */
@@ -1497,12 +1504,12 @@
       <div class="party from">
         <div class="lbl">From</div>
         <div class="name" data-field="from.name"></div>
-        <div class="sub" id="from-sub"></div>
+        <div class="sub" id="from-sub" data-field="from._sub"></div>
       </div>
       <div class="party to">
         <div class="lbl">To</div>
         <div class="name" data-field="to.name"></div>
-        <div class="sub" id="to-sub"></div>
+        <div class="sub" id="to-sub" data-field="to._sub"></div>
       </div>
     </div>
   </div>
@@ -1645,10 +1652,10 @@ function render(data) {
   try { localStorage.setItem('invoice-last-state', JSON.stringify(data)); } catch(e) {}
 
   const fromSub = document.getElementById('from-sub');
-  if (fromSub) safeText(fromSub, data.from.email, data.from.phone);
+  if (fromSub) fromSub.textContent = [data.from.email, data.from.phone].filter(Boolean).join(' · ');
 
   const toSub = document.getElementById('to-sub');
-  if (toSub) safeText(toSub, data.to.address, data.to.email, data.to.phone);
+  if (toSub) toSub.textContent = [data.to.address, data.to.email, data.to.phone].filter(Boolean).join(' · ');
 
   const pn = document.getElementById('payment-note-el');
   if (pn) pn.textContent = data.paymentNote || '';
@@ -1707,7 +1714,22 @@ function startEdit() {
 function saveEdit() {
   const data = getData();
   document.querySelectorAll('[data-field]').forEach(el => {
-    setNestedField(data, el.dataset.field, el.textContent.trim());
+    const field = el.dataset.field;
+    // Sub fields are stored as "· "-joined strings — parse them back
+    if (field === 'from._sub') {
+      const parts = el.textContent.split(' · ').map(s => s.trim());
+      data.from.email = parts[0] || '';
+      data.from.phone = parts[1] || '';
+      return;
+    }
+    if (field === 'to._sub') {
+      const parts = el.textContent.split(' · ').map(s => s.trim());
+      data.to.address = parts[0] || '';
+      data.to.email   = parts[1] || '';
+      data.to.phone   = parts[2] || '';
+      return;
+    }
+    setNestedField(data, field, el.textContent.trim());
   });
   // Persist overrides so edits stick
   data.dateOverride    = data.date;
