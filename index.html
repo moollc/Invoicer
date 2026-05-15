@@ -2963,12 +2963,22 @@ function saveTokenToStorage() {
   if (_gmailToken) {
     localStorage.setItem('gmail-token', _gmailToken);
     localStorage.setItem('gmail-token-exp', _gmailTokenExp);
+    localStorage.setItem('gmail-token-scopes', GMAIL_SCOPE);
   }
 }
 
 function restoreTokenFromStorage() {
-  const token = localStorage.getItem('gmail-token');
-  const exp = localStorage.getItem('gmail-token-exp');
+  const token  = localStorage.getItem('gmail-token');
+  const exp    = localStorage.getItem('gmail-token-exp');
+  const scopes = localStorage.getItem('gmail-token-scopes');
+  // Reject stored token if it was granted for different scopes
+  if (scopes !== GMAIL_SCOPE) {
+    localStorage.removeItem('gmail-token');
+    localStorage.removeItem('gmail-token-exp');
+    localStorage.removeItem('gmail-token-scopes');
+    console.log('ℹ Scopes changed — stored token cleared, re-auth required');
+    return false;
+  }
   if (token && exp && Date.now() < parseInt(exp) - 30000) {
     _gmailToken = token;
     _gmailTokenExp = parseInt(exp);
