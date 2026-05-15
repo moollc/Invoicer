@@ -3126,8 +3126,14 @@ async function openEmail() {
         `--${boundary}--`,
       ].join('\r\n');
 
-      const encoded = btoa(unescape(encodeURIComponent(fullMessage)))
-        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      console.log('MIME start:', JSON.stringify(fullMessage.substring(0, 300)));
+      const msgBytes = new TextEncoder().encode(fullMessage);
+      let binary = '';
+      const chunkSize = 8192;
+      for (let i = 0; i < msgBytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...msgBytes.subarray(i, i + chunkSize));
+      }
+      const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
       const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
         method:  'POST',
