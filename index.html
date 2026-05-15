@@ -168,6 +168,10 @@
     outline: 2px solid var(--red);
     background: rgba(208,36,27,0.04);
   }
+  /* table cells with data-field must stay as table cells */
+  body.editing td[data-field] {
+    display: table-cell;
+  }
   /* qualifier spans sit inside a flex column — keep them as block, not inline-block */
   body.editing .qualifier [data-field] {
     display: block;
@@ -178,6 +182,48 @@
   body.editing .qualifier [data-field]:focus {
     background: rgba(255,255,255,0.25);
     outline: 2px solid rgba(255,255,255,0.8);
+  }
+
+  /* title size slider shown in edit mode */
+  #title-size-wrap {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  body.editing #title-size-wrap { display: flex; }
+  #title-size-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 90px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(20,32,46,0.2);
+    outline: none;
+    cursor: pointer;
+  }
+  #title-size-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--red);
+    cursor: pointer;
+  }
+  #title-size-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--red);
+    border: none;
+    cursor: pointer;
+  }
+  #title-size-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    color: var(--muted);
+    min-width: 28px;
   }
 
   /* ── PAGE ── */
@@ -1262,6 +1308,7 @@
   </select>
   <button id="btn-print"  onclick="confirmPrint()">⎙ Print / PDF</button>
   <button id="btn-chat"   onclick="toggleChat()" style="background:#5b4fcf; color:#fff;">✦ AI</button>
+  <button id="btn-templates" onclick="openTemplatesModal()" style="background:#14202e; color:#fff; padding:8px 10px; line-height:0;" title="Templates"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
   <button id="btn-calendar" onclick="openCalendarImport()" style="background:#1a73e8; color:#fff; display:none; padding:8px 10px; line-height:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
 </div>
 
@@ -1394,6 +1441,16 @@
   </div>
 </div>
 
+<div id="templates-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='templates-overlay') closeTemplatesModal()">
+  <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:540px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
+    <button onclick="closeTemplatesModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Start from a</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Template</div>
+    <div id="templates-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+    <button onclick="closeTemplatesModal()" style="margin-top:20px; width:100%; padding:10px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">Cancel</button>
+  </div>
+</div>
+
 <div id="calendar-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='calendar-overlay') closeCalendarModal()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:500px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
     <button onclick="closeCalendarModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
@@ -1425,6 +1482,10 @@
     <div class="title-block">
       <span class="this-is-your">This is your</span>
       <span class="invoice-word">Invoice</span>
+      <div id="title-size-wrap">
+        <input id="title-size-slider" type="range" min="36" max="120" step="2" value="82" oninput="applyTitleSize(this.value)">
+        <span id="title-size-label">82px</span>
+      </div>
       <div class="meta">
         <span>Date</span>      <span class="v" data-field="date"></span>
         <span>Receipt №</span> <span class="v" data-field="receiptNumber"></span>
@@ -1508,6 +1569,22 @@ function restoreTitleFont() {
   const saved = localStorage.getItem('invoice-title-font') || 'Bebas Neue';
   document.getElementById('font-selector').value = saved;
   changeTitleFont(saved);
+}
+
+function applyTitleSize(px) {
+  const titleEl = document.querySelector('.invoice-word');
+  if (!titleEl) return;
+  titleEl.style.fontSize = px + 'px';
+  document.getElementById('title-size-label').textContent = px + 'px';
+  localStorage.setItem('invoice-title-size', px);
+}
+
+function restoreTitleSize() {
+  const saved = localStorage.getItem('invoice-title-size');
+  if (!saved) return;
+  const slider = document.getElementById('title-size-slider');
+  if (slider) slider.value = saved;
+  applyTitleSize(saved);
 }
 
 // ── Date & Receipt helpers ────────────────────────────────────
@@ -1618,6 +1695,13 @@ function startEdit() {
   document.getElementById('btn-save').style.display        = 'inline-block';
   document.getElementById('btn-cancel').style.display      = 'inline-block';
   document.getElementById('font-selector').style.display   = 'inline-block';
+  // Sync slider to current rendered font size
+  const titleEl = document.querySelector('.invoice-word');
+  if (titleEl) {
+    const curPx = Math.round(parseFloat(getComputedStyle(titleEl).fontSize));
+    const slider = document.getElementById('title-size-slider');
+    if (slider) { slider.value = curPx; document.getElementById('title-size-label').textContent = curPx + 'px'; }
+  }
 }
 
 function saveEdit() {
@@ -2360,11 +2444,18 @@ async function sendChat() {
   const thinking = appendMsg('assistant', '…');
 
   const currentData = JSON.stringify(getData(), null, 2);
-  const systemPrompt = `You are an invoice data assistant. The user will describe changes to make to an invoice.
-Return ONLY a valid JSON object containing only the fields that need to change — nothing else, no markdown, no explanation.
-Field reference: date, receiptNumber, currency, payPeriod, from (name/email/phone), to (name/address/email/phone), lineItems (array of {service, details, rates[], costs[]}), projectTotal, totalLabelTop (e.g. "Deposit"), totalLabelBottom (e.g. "Due"), totalAmount, paymentNote, paid.
+  const systemPrompt = `You are an invoice data assistant. The current invoice data is shown below — it already reflects all previous changes.
+The user will describe what to change next. Return ONLY a single valid JSON object with the fields that need to change.
+Do not repeat fields that are already correct. Do not return markdown, explanation, or any text outside the JSON object.
+If nothing needs to change, return an empty object: {}
+Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, paid.
+When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
 Current invoice data:
 ${currentData}`;
+
+  const recentHistory = loadChatHistory()
+    .filter(function(m) { return m.role === 'user' || m.role === 'assistant'; })
+    .slice(-6);
 
   try {
     let responseText = '';
@@ -2378,10 +2469,15 @@ ${currentData}`;
       });
       content.push({ type: 'text', text });
 
+      const messages = recentHistory.map(function(m) {
+        return { role: m.role, content: m.text };
+      });
+      messages.push({ role: 'user', content });
+
       const res = await fetch(prov.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
-        body: JSON.stringify({ model: cfg.model, max_tokens: 1024, system: systemPrompt, messages: [{ role: 'user', content }] })
+        body: JSON.stringify({ model: cfg.model, max_tokens: 1024, system: systemPrompt, messages })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error?.message || json.type || res.statusText);
@@ -2393,14 +2489,23 @@ ${currentData}`;
         const b64 = img.dataUrl.split(',')[1];
         parts.push({ inlineData: { mimeType: img.mediaType, data: b64 } });
       });
+
+      const contents = [];
+      recentHistory.forEach(function(m) {
+        const role = m.role === 'assistant' ? 'model' : 'user';
+        if (contents.length && contents[contents.length - 1].role === role) return;
+        contents.push({ role: role, parts: [{ text: m.text }] });
+      });
+      if (contents.length && contents[contents.length - 1].role === 'user') contents.pop();
       parts.push({ text: systemPrompt + '\n\nUser: ' + text });
+      contents.push({ role: 'user', parts });
 
       const url = typeof prov.url === 'function' ? prov.url(cfg.model) : prov.url;
       const geminiAuth = prov.authHeader(cfg.key);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...geminiAuth },
-        body: JSON.stringify({ contents: [{ parts }] })
+        body: JSON.stringify({ contents })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error?.message || res.statusText);
@@ -2414,10 +2519,16 @@ ${currentData}`;
       });
       userContent.push({ type: 'text', text });
 
+      const messages = [{ role: 'system', content: systemPrompt }];
+      recentHistory.forEach(function(m) {
+        messages.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text });
+      });
+      messages.push({ role: 'user', content: userContent });
+
       const res = await fetch(prov.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
-        body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userContent }] })
+        body: JSON.stringify({ model: cfg.model, messages })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error?.message || res.statusText);
@@ -2443,7 +2554,14 @@ ${currentData}`;
     document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
     render(data);
 
-    const changed = Object.keys(patch).join(', ');
+    const fieldLabels = {
+      date: 'date', receiptNumber: 'receipt #', currency: 'currency', payPeriod: 'pay period',
+      from: 'sender details', to: 'client details', lineItems: 'line items',
+      projectTotal: 'project total', totalLabelTop: 'total label', totalLabelBottom: 'total label',
+      totalAmount: 'total amount', paymentNote: 'payment note', paid: 'paid status'
+    };
+    const changedKeys = Object.keys(patch);
+    const changed = changedKeys.map(k => fieldLabels[k] || k).filter((v, i, a) => a.indexOf(v) === i).join(', ');
     thinking.textContent = `✓ Updated: ${changed}`;
     const h = loadChatHistory(); h.push({ role: 'assistant', text: thinking.textContent }); saveChatHistory(h);
 
@@ -2604,6 +2722,141 @@ function toggleClientBook() {
 const GMAIL_CLIENT_ID = '622970529535-p38faf23t1pn0nhrhktam3c8gcf4r303.apps.googleusercontent.com';
 
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly';
+
+// ── Invoice Templates ────────────────────────────────────────
+
+const INVOICE_TEMPLATES = [
+  { id: 'default',        label: 'General Invoice',  description: 'Blank starting point',                              category: 'General'    },
+  { id: 'film-quote',     label: 'Film Quote',        description: 'Pre-production estimate — day rates, crew, gear',  category: 'Film'       },
+  { id: 'film-invoice',   label: 'Film Invoice',      description: 'Post-production billing — shoot days, edit, deliverables', category: 'Film' },
+  { id: 'music-session',  label: 'Music Session',     description: 'Studio session, mixing, or performance',           category: 'Music'      },
+  { id: 'design-project', label: 'Design Project',    description: 'Branding, UI, or print design',                   category: 'Design'     },
+  { id: 'consulting',     label: 'Consulting',        description: 'Hourly or project-based consulting',              category: 'Consulting' },
+];
+
+function getTemplateData(id) {
+  switch (id) {
+    case 'film-quote':       return TMPL_FILM_QUOTE;
+    case 'film-invoice':     return TMPL_FILM_INVOICE;
+    case 'music-session':    return TMPL_MUSIC_SESSION;
+    case 'design-project':   return TMPL_DESIGN_PROJECT;
+    case 'consulting':       return TMPL_CONSULTING;
+    default:                 return TMPL_DEFAULT;
+  }
+}
+
+const TMPL_DEFAULT = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Due on Receipt', currency: 'USD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [{ service: 'Service Name', details: '', rates: ['Rate'], costs: ['0'] }],
+  projectTotal: '0', totalLabelTop: 'Total', totalLabelBottom: 'Due', totalAmount: '$0',
+  paymentNote: 'Thank you for your business.', paid: false,
+};
+
+const TMPL_FILM_QUOTE = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Valid 30 Days', currency: 'USD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [
+    { service: 'Director / DP',    details: 'Day rate. Includes pre-production and on-set supervision.',                          rates: ['Day Rate', 'x Days'],  costs: ['0', '0'] },
+    { service: 'Camera Package',   details: 'Camera body, lenses, and accessories. Rental or owned.',                            rates: ['Daily', 'x Days'],     costs: ['0', '0'] },
+    { service: 'Crew',             details: 'Supporting crew. AC, gaffer, sound.',                                               rates: ['Day Rate', 'x Days'],  costs: ['0', '0'] },
+    { service: 'Location / Travel',details: 'Location fees, transport, and accommodation if applicable.',                        rates: ['Estimated'],           costs: ['0']      },
+    { service: 'Post-Production',  details: 'Editing, colour grade, and deliverables. Quoted separately if scope changes.',      rates: ['Flat Rate'],           costs: ['0']      },
+  ],
+  projectTotal: '0', totalLabelTop: 'Estimate', totalLabelBottom: 'Total', totalAmount: '$0',
+  paymentNote: 'This is a quote, not a final invoice. 50% deposit required to confirm booking. Final invoice issued on delivery.', paid: false,
+};
+
+const TMPL_FILM_INVOICE = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Net 14', currency: 'USD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [
+    { service: 'Production',      details: 'Principal photography. Includes on-set direction and camera operation.',       rates: ['Day Rate', 'x Shoot Days'], costs: ['0', '0'] },
+    { service: 'Post-Production', details: 'Offline edit, colour grade, sound mix.',                                       rates: ['Flat Rate'],               costs: ['0']      },
+    { service: 'Deliverables',    details: 'Master file (ProRes / H.264), web optimised cut, and thumbnail stills.',       rates: ['Included'],               costs: ['0']      },
+    { service: 'Expenses',        details: 'Travel, accommodation, and miscellaneous on-set costs.',                       rates: ['Actuals'],                costs: ['0']      },
+  ],
+  projectTotal: '0', totalLabelTop: 'Balance', totalLabelBottom: 'Due', totalAmount: '$0',
+  paymentNote: 'Payment due within 14 days of invoice date. Files released upon receipt of full payment.', paid: false,
+};
+
+const TMPL_MUSIC_SESSION = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Due on Receipt', currency: 'USD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [
+    { service: 'Studio Session', details: 'Recording session including engineer and studio time.', rates: ['Hourly Rate', 'x Hours'], costs: ['0', '0'] },
+    { service: 'Mixing',         details: 'Full mix per track.',                                   rates: ['Per Track'],             costs: ['0']      },
+    { service: 'Mastering',      details: 'Mastering for streaming and digital distribution.',     rates: ['Per Track'],             costs: ['0']      },
+  ],
+  projectTotal: '0', totalLabelTop: 'Total', totalLabelBottom: 'Due', totalAmount: '$0',
+  paymentNote: 'Payment due on receipt. Files delivered within 5 business days of payment.', paid: false,
+};
+
+const TMPL_DESIGN_PROJECT = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Net 7', currency: 'USD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [
+    { service: 'Discovery & Strategy',   details: 'Brand audit, moodboard, and creative direction.',          rates: ['Flat Rate'],  costs: ['0'] },
+    { service: 'Design',                 details: 'Primary deliverables. Includes 2 rounds of revisions.',    rates: ['Flat Rate'],  costs: ['0'] },
+    { service: 'Additional Revisions',   details: 'Beyond the included rounds.',                              rates: ['Per Round'],  costs: ['0'] },
+    { service: 'File Delivery',          details: 'Final files in agreed formats (AI, PDF, PNG, SVG).',       rates: ['Included'],   costs: ['0'] },
+  ],
+  projectTotal: '0', totalLabelTop: 'Total', totalLabelBottom: 'Due', totalAmount: '$0',
+  paymentNote: 'Payment due within 7 days. Source files released upon receipt of full payment.', paid: false,
+};
+
+const TMPL_CONSULTING = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Net 30', currency: 'USD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [
+    { service: 'Consulting',   details: 'Advisory and strategy sessions.',                      rates: ['Hourly Rate', 'x Hours'], costs: ['0', '0'] },
+    { service: 'Deliverables', details: 'Reports, decks, or documentation as agreed.',          rates: ['Flat Rate'],             costs: ['0']      },
+  ],
+  projectTotal: '0', totalLabelTop: 'Total', totalLabelBottom: 'Due', totalAmount: '$0',
+  paymentNote: 'Payment due within 30 days of invoice date.', paid: false,
+};
+
+function openTemplatesModal() {
+  const list = document.getElementById('templates-list');
+  list.innerHTML = '';
+  const categories = {};
+  INVOICE_TEMPLATES.forEach(function(t) {
+    if (!categories[t.category]) categories[t.category] = [];
+    categories[t.category].push(t);
+  });
+  Object.keys(categories).forEach(function(cat) {
+    const catLabel = document.createElement('div');
+    catLabel.style.cssText = 'font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-top:12px; margin-bottom:4px;';
+    catLabel.textContent = cat;
+    list.appendChild(catLabel);
+    categories[cat].forEach(function(t) {
+      const btn = document.createElement('button');
+      btn.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; padding:10px 14px; background:#f6f6f4; border:1.5px solid transparent; border-radius:7px; cursor:pointer; font-family:Roboto,sans-serif; text-align:left; width:100%; transition:border-color 0.15s;';
+      btn.onmouseover = function() { btn.style.borderColor = '#14202e'; };
+      btn.onmouseout  = function() { btn.style.borderColor = 'transparent'; };
+      btn.innerHTML = '<span style="font-size:13px; font-weight:600; color:#14202e;">' + t.label + '</span>'
+        + '<span style="font-size:11px; color:#6c7682; margin-top:2px;">' + t.description + '</span>';
+      btn.onclick = function() { applyTemplate(t.id); };
+      list.appendChild(btn);
+    });
+  });
+  document.getElementById('templates-overlay').style.display = 'flex';
+}
+
+function closeTemplatesModal() {
+  document.getElementById('templates-overlay').style.display = 'none';
+}
+
+function applyTemplate(id) {
+  const template = getTemplateData(id);
+  let existing;
+  try { existing = JSON.parse(document.getElementById('invoice-data').textContent); }
+  catch(e) { alert('Could not read invoice data. Try reloading the page.'); return; }
+  const merged = Object.assign({}, existing, template, { from: existing.from, to: existing.to });
+  document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+  render(merged);
+  closeTemplatesModal();
+}
 
 function saveOAuthClientIdInput() {
   const input = document.getElementById('oauth-client-id-input');
@@ -3334,6 +3587,7 @@ try {
 render(getData());
 renderClientChips();
 restoreTitleFont();
+restoreTitleSize();
 
 // Restore token from storage if available
 if (restoreTokenFromStorage()) updateEmailBtn();
