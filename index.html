@@ -1391,12 +1391,9 @@
     </div>
 
     <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
-      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">Google Sheets Sync (Optional)</div>
-      <div style="font-size:11px; color:#9aa2ac; margin-bottom:10px;">Sync invoices to a Google Sheet called "InvoiceLedger" for automatic tracking.</div>
-      <button onclick="promptForSheetsId()" style="background:#5b4fcf; color:#fff; border:none; border-radius:6px; padding:8px 12px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer; font-weight:500;">
-        Set Spreadsheet ID
-      </button>
-      <div style="font-size:10px; color:#9aa2ac; margin-top:8px;">ID: <span id="sheets-id-status" style="font-family:monospace;">not set</span></div>
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">Google Drive & Sheets</div>
+      <div style="font-size:11px; color:#9aa2ac; margin-bottom:10px;">After signing in, a <strong style="color:#14202e;">mooInvoicer/</strong> folder is created in your Drive automatically. PDFs save there and the ledger spreadsheet is created for you.</div>
+      <div id="drive-setup-status" style="font-size:11px; color:#9aa2ac;">Sign in with Google above to activate.</div>
     </div>
   </div>
 </div>
@@ -1876,11 +1873,34 @@ function updateFilenamePreview() {
   document.title = buildFilename(saved, data);
 }
 
-function proceedPrint() {
+async function proceedPrint() {
   updateFilenamePreview();
   closeDialog();
   window.print();
   setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
+
+  // Also save to Drive silently if signed in
+  if (gmailTokenValid() && _driveFolderId) {
+    const data = getData();
+    const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
+    const invoiceEl = document.getElementById('invoice');
+    const toolbar = document.getElementById('toolbar');
+    const chatPanel = document.getElementById('chat-panel');
+    toolbar.style.display = 'none';
+    chatPanel.style.display = 'none';
+    const origMargin = invoiceEl.style.margin;
+    invoiceEl.style.margin = '0';
+    invoiceEl.style.boxShadow = 'none';
+    invoiceEl.style.borderRadius = '0';
+    const opt = { margin: 0, filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 1 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+    const pdfBlob = await html2pdf().set(opt).from(invoiceEl).toPdf().output('blob');
+    toolbar.style.display = '';
+    chatPanel.style.display = '';
+    invoiceEl.style.margin = origMargin;
+    invoiceEl.style.boxShadow = '';
+    invoiceEl.style.borderRadius = '';
+    savePdfToDrive(pdfBlob, filename);
+  }
 }
 
 function openEmail() {
@@ -2569,7 +2589,7 @@ function toggleClientBook() {
 // Application type: Web application. Add your file:// or localhost origin.
 let GMAIL_CLIENT_ID = localStorage.getItem('gmail-client-id') || '';
 
-const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/generative-language';
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/generative-language https://www.googleapis.com/auth/drive.file';
 
 function saveOAuthClientIdInput() {
   const input = document.getElementById('oauth-client-id-input');
@@ -2696,7 +2716,10 @@ function googleSignIn() {
     localStorage.setItem('gmail-client-id', GMAIL_CLIENT_ID);
     refreshGmailIdStatus();
   }
-  initGmailAuth(() => updateEmailBtn());
+  initGmailAuth(() => {
+    updateEmailBtn();
+    setupDrive();
+  });
   if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: '' });
 }
 
@@ -2759,6 +2782,9 @@ async function openEmail() {
       invoiceEl.style.borderRadius = origBorderRadius;
       invoiceEl.style.minHeight = origMinHeight;
       invoiceEl.style.height = origHeight;
+
+      // Save to Drive if signed in
+      if (gmailTokenValid()) savePdfToDrive(pdfBlob, filename);
 
       const pdfBase64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -2854,10 +2880,12 @@ function resetGmailClientId() {
 // ── Google Sheets Sync ───────────────────────────────────────
 
 async function syncToGoogleSheets(invoiceData) {
-  if (!_gmailToken || !_sheetsSpreadsheetId) {
-    console.log('Sheets sync skipped: no token or spreadsheet ID');
-    return;
+  if (!_gmailToken) return;
+  if (!_sheetsSpreadsheetId) {
+    const folderId = await ensureDriveFolder();
+    await ensureLedgerSheet(folderId);
   }
+  if (!_sheetsSpreadsheetId) return;
 
   try {
     const services = invoiceData.lineItems.map(l => l.service).join(', ');
@@ -2905,6 +2933,111 @@ The sheet must have columns: Receipt #, Date, Client, Service, Project Total, Am
     _sheetsSpreadsheetId = id.trim();
     localStorage.setItem('sheets-spreadsheet-id', id);
     alert('✓ Spreadsheet ID saved. Invoices will now sync to Google Sheets.');
+  }
+}
+
+// ── Google Drive Auto-Setup ──────────────────────────────────
+
+let _driveFolderId = localStorage.getItem('drive-folder-id') || '';
+
+async function driveRequest(method, path, body, isUpload) {
+  const base = isUpload ? 'https://www.googleapis.com/upload/drive/v3' : 'https://www.googleapis.com/drive/v3';
+  const res = await fetch(base + path, {
+    method,
+    headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  return res.json();
+}
+
+async function ensureDriveFolder() {
+  if (_driveFolderId) return _driveFolderId;
+
+  // Search for existing folder
+  const search = await driveRequest('GET', `/files?q=name%3D'mooInvoicer'+and+mimeType%3D'application%2Fvnd.google-apps.folder'+and+trashed%3Dfalse&fields=files(id,name)`);
+  if (search.files && search.files.length > 0) {
+    _driveFolderId = search.files[0].id;
+    localStorage.setItem('drive-folder-id', _driveFolderId);
+    return _driveFolderId;
+  }
+
+  // Create folder
+  const folder = await driveRequest('POST', '/files', { name: 'mooInvoicer', mimeType: 'application/vnd.google-apps.folder' });
+  _driveFolderId = folder.id;
+  localStorage.setItem('drive-folder-id', _driveFolderId);
+  return _driveFolderId;
+}
+
+async function ensureLedgerSheet(folderId) {
+  if (_sheetsSpreadsheetId) return _sheetsSpreadsheetId;
+
+  // Search for existing ledger in folder
+  const search = await driveRequest('GET', `/files?q=name%3D'mooInvoicer+Ledger'+and+'${folderId}'+in+parents+and+trashed%3Dfalse&fields=files(id,name)`);
+  if (search.files && search.files.length > 0) {
+    _sheetsSpreadsheetId = search.files[0].id;
+    localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
+    return _sheetsSpreadsheetId;
+  }
+
+  // Create spreadsheet via Drive (so it lands in our folder)
+  const file = await driveRequest('POST', '/files', {
+    name: 'mooInvoicer Ledger',
+    mimeType: 'application/vnd.google-apps.spreadsheet',
+    parents: [folderId]
+  });
+  _sheetsSpreadsheetId = file.id;
+  localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
+
+  // Write header row
+  await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A1:G1?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values: [['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status']] })
+    }
+  );
+
+  return _sheetsSpreadsheetId;
+}
+
+async function setupDrive() {
+  if (!gmailTokenValid()) return;
+  const statusEl = document.getElementById('drive-setup-status');
+  try {
+    if (statusEl) statusEl.textContent = 'Setting up…';
+    const folderId = await ensureDriveFolder();
+    await ensureLedgerSheet(folderId);
+    if (statusEl) {
+      statusEl.innerHTML = '✓ <strong style="color:#2a8c55;">mooInvoicer/</strong> folder ready · Ledger connected';
+      statusEl.style.color = '#2a8c55';
+    }
+    refreshSheetsIdStatus();
+  } catch (e) {
+    console.error('Drive setup failed:', e);
+    if (statusEl) { statusEl.textContent = '✗ Drive setup failed. Check permissions.'; statusEl.style.color = '#d0241b'; }
+  }
+}
+
+async function savePdfToDrive(pdfBlob, filename) {
+  if (!gmailTokenValid() || !_driveFolderId) return null;
+  try {
+    const metadata = { name: filename, parents: [_driveFolderId] };
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    form.append('file', pdfBlob, filename);
+
+    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${_gmailToken}` },
+      body: form
+    });
+    const json = await res.json();
+    console.log('✓ PDF saved to Drive:', json.name);
+    return json.id;
+  } catch (e) {
+    console.error('Drive PDF save failed:', e.message);
+    return null;
   }
 }
 
@@ -3072,7 +3205,12 @@ restoreTokenFromStorage();
 // Init Gmail auth silently if client ID already saved
 if (localStorage.getItem('gmail-client-id')) {
   window.addEventListener('load', () => {
-    try { initGmailAuth(null); } catch(e) {}
+    try {
+      initGmailAuth(() => {
+        updateEmailBtn();
+        setupDrive();
+      });
+    } catch(e) {}
   });
 }
 
