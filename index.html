@@ -1,0 +1,3051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="format-detection" content="telephone=no, address=no, email=no">
+<meta name="theme-color" content="#14202e">
+<link rel="manifest" href="./manifest.json">
+<title>moo Invoicer</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+  @font-face {
+    font-family: 'Bauhaus93';
+    src: url('./BAUHS93.TTF') format('truetype');
+    font-weight: normal;
+    font-display: swap;
+  }
+
+  /* Fallback for mobile if TTF doesn't load */
+  @supports not (font-family: 'Bauhaus93') {
+    .invoice-word, .party.from .name {
+      font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+      font-weight: 900;
+      letter-spacing: -1px;
+    }
+  }
+</style>
+
+<!--
+================================================================
+  INVOICE DATA
+  ── How to fill this out ──────────────────────────────────────
+  Edit the JSON below. You can do it manually, or paste this
+  whole block to Claude / Gemini and say something like:
+
+    "Update this invoice for [Client Name], [service],
+     amount [X], dated today."
+
+  ── Field guide ───────────────────────────────────────────────
+  date          Auto-set to today on load (DD / MM / YYYY).
+                Override by setting "dateOverride" to a string.
+
+  receiptNumber Auto-generated from today's date in YYMMDD
+                format + a suffix letter (A = first invoice
+                of the day, B = second, etc.).
+                Override by setting "receiptOverride".
+
+  currency      Three-letter code shown next to amounts (JMD,
+                USD, etc.).
+
+  from          Your details — rarely changes.
+
+  to            Client details. Fill name, address, email,
+                phone for each new invoice.
+
+  lineItems     Array — add as many rows as needed.
+                Each item: service, details, rates[], costs[].
+                rates and costs must be the same length.
+                costs are plain numbers with commas, no $ sign.
+
+  projectTotal  Sum of all costs. Plain number with commas.
+
+  totalLabelTop     First line on the red card, e.g. "Deposit", "Payment", "Balance".
+  totalLabelBottom  Second line on the red card, e.g. "Due", "Received".
+
+  totalAmount   The amount shown large on the red card.
+                Include $ and commas, e.g. "$100,000".
+
+  paymentNote   Footer payment instructions.
+
+  paid          Set to true once the client has paid.
+                This is used by the ledger.
+================================================================
+-->
+<script id="invoice-data" type="application/json">
+{
+  "receiptOverride": "",
+  "dateOverride": "",
+  "payPeriod": "Due on Receipt",
+  "currency": "USD",
+
+  "from": {
+    "name": "Your Business Name",
+    "email": "contact@yourbusiness.com",
+    "phone": "(555) 123-4567"
+  },
+
+  "to": {
+    "name": "John Doe",
+    "address": "123 Main Street",
+    "email": "client@example.com",
+    "phone": "(555) 123-4567"
+  },
+
+  "lineItems": [
+    {
+      "service": "Service Name",
+      "details": "Description of the service provided, terms, and payment schedule.",
+      "rates": ["Rate 1", "Rate 2"],
+      "costs": ["1,000", "1,500"]
+    }
+  ],
+
+  "projectTotal": "2,500",
+  "totalLabelTop": "Total",
+  "totalLabelBottom": "Due",
+  "totalAmount": "$2,500",
+
+  "paymentNote": "Thank you for your business. Please contact us if you have any questions.",
+
+  "paid": false
+}
+</script>
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ink:   #14202e;
+    --red:   #d0241b;
+    --muted: #6c7682;
+    --row:   #14202e;
+    --rule:  rgba(20,32,46,0.13);
+  }
+
+  html, body {
+    background: #cecece;
+    font-family: 'Roboto', sans-serif;
+    color: var(--ink);
+
+    -webkit-font-smoothing: antialiased;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── EDIT-MODE TOOLBAR ── */
+  #toolbar {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 999;
+    display: flex;
+    gap: 8px;
+  }
+  #toolbar button {
+    font-family: 'Roboto', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  #toolbar button:hover { opacity: 0.85; }
+  #btn-edit   { background: var(--ink); color: #fff; }
+  #btn-print  { background: var(--red);  color: #fff; }
+  #btn-save   { background: #2a8c55; color: #fff; display: none; }
+  #btn-cancel { background: #888;    color: #fff; display: none; }
+
+  /* editable fields highlight in edit mode */
+  body.editing [data-field] {
+    outline: 2px dashed rgba(208,36,27,0.5);
+    outline-offset: 2px;
+    border-radius: 3px;
+    cursor: text;
+    min-width: 20px;
+    min-height: 1em;
+    display: inline-block;
+  }
+  body.editing [data-field]:focus {
+    outline: 2px solid var(--red);
+    background: rgba(208,36,27,0.04);
+  }
+  /* qualifier spans sit inside a flex column — keep them as block, not inline-block */
+  body.editing .qualifier [data-field] {
+    display: block;
+    background: rgba(255,255,255,0.15);
+    max-width: none;
+    min-width: 40px;
+  }
+  body.editing .qualifier [data-field]:focus {
+    background: rgba(255,255,255,0.25);
+    outline: 2px solid rgba(255,255,255,0.8);
+  }
+
+  /* ── PAGE ── */
+  .page {
+    width: 816px;
+    min-height: 1056px;
+    margin: 28px auto;
+    padding: 62px 67px 58px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08);
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: grid;
+    grid-template-columns: 1fr 310px;
+    gap: 0;
+    align-items: stretch;
+    padding-bottom: 22px;
+    border-bottom: 1.5px solid var(--rule);
+  }
+
+  .title-block {
+    border-right: 1.5px solid var(--rule);
+    padding-right: 32px;
+    min-width: 0;
+  }
+
+  .this-is-your {
+    font-family: 'Roboto', sans-serif;
+    font-weight: 300;
+    font-size: 11px;
+    letter-spacing: 5px;
+    text-transform: uppercase;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .invoice-word {
+    font-family: 'Bauhaus93', sans-serif;
+    font-weight: 900;
+    font-size: 86px;
+    text-transform: uppercase;
+    letter-spacing: -2px;
+    color: var(--ink);
+    line-height: 0.88;
+    display: block;
+  }
+
+  .meta {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 7px 20px;
+    font-size: 11px;
+    letter-spacing: 0.3px;
+    color: var(--muted);
+    font-weight: 300;
+  }
+  .meta .v { color: var(--ink); font-weight: 600; letter-spacing: 0; }
+
+  /* ── PARTIES ── */
+  .right-col {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 20px;
+    text-align: right;
+    padding-left: 32px;
+  }
+
+  .party .lbl {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .party .name {
+    font-family: 'Roboto', sans-serif;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.3px;
+    color: var(--ink);
+    line-height: 1.25;
+  }
+
+  .party.from .name {
+    font-family: 'Bauhaus93', sans-serif;
+    font-size: 20px;
+    font-weight: normal;
+    letter-spacing: -0.5px;
+  }
+
+  .party.to .name { font-size: 17px; font-weight: 700; }
+
+  .party .sub {
+    margin-top: 5px;
+    font-size: 11.5px;
+    color: var(--ink);
+    line-height: 1.65;
+    font-weight: 400;
+  }
+
+  /* ── TABLE ── */
+  .invoice-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 5px;
+    margin-top: 20px;
+  }
+
+  .invoice-table th {
+    background: var(--ink);
+    color: #fff;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 500;
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    padding: 14px 18px;
+    text-align: center;
+    border-radius: 6px;
+  }
+
+  .invoice-table td {
+    background: var(--row);
+    color: #fff;
+    padding: 26px 20px;
+    vertical-align: top;
+    font-size: 13px;
+    line-height: 1.65;
+    border-radius: 6px;
+    height: auto;
+  }
+  .invoice-table td.num { text-align: right; font-feature-settings: "tnum"; }
+
+  .col-service { width: 20%; }
+  .col-details { width: 44%; }
+  .col-rate    { width: 16%; }
+  .col-cost    { width: 20%; }
+
+  .invoice-table td.col-service,
+  .invoice-table td.col-rate,
+  .invoice-table td.col-cost { text-align: center; }
+
+  .service-name {
+    font-family: 'Roboto', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: -0.3px;
+  }
+
+  .rate-rows, .cost-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .rate-rows { align-items: flex-start; }
+  .cost-rows { align-items: flex-end; }
+
+  .rate-tag {
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.5);
+    font-weight: 400;
+  }
+  .cost-amt {
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── TOTAL ── */
+  .total-wrap {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 8px;
+  }
+
+  .total-block {
+    min-width: 300px;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .total-block {
+    min-width: 320px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1.5px solid var(--rule);
+  }
+
+  /* White top — Project Total */
+  .project-total-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    background: #fff;
+  }
+  .project-total-row .ptl {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .project-total-row .ptv {
+    font-family: 'Roboto', sans-serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: -0.5px;
+    font-feature-settings: "tnum";
+  }
+
+  /* Red bottom — Deposit Due Now */
+  .total-card {
+    background: var(--red);
+    color: #fff;
+    padding: 16px 20px;
+  }
+
+  .total-card .total-amount {
+    font-family: 'Roboto', sans-serif;
+    font-weight: 900;
+    font-size: 52px;
+    letter-spacing: -1.5px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .total-card .qualifier {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-family: 'Roboto', sans-serif;
+    font-weight: 500;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    opacity: 0.75;
+    line-height: 1.2;
+    min-width: 0;
+  }
+  .total-card .qualifier span {
+    font-size: 15px;
+    white-space: nowrap;
+  }
+
+  .pay-period {
+    text-align: right;
+    margin-top: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--muted);
+    padding-bottom: 8px;
+    border-bottom: 1.5px solid var(--rule);
+  }
+
+  /* ── FOOTER ── */
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    margin-top: 22px;
+  }
+
+  .thank-you {
+    font-family: 'Bauhaus93', sans-serif;
+    font-weight: 900;
+    font-size: 38px;
+    text-transform: uppercase;
+    letter-spacing: -1px;
+    color: var(--ink);
+    line-height: 1;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .footer-divider {
+    width: 1.5px;
+    align-self: stretch;
+    background: var(--rule);
+    flex-shrink: 0;
+  }
+
+  .payment-note {
+    font-size: 12px;
+    line-height: 1.65;
+    color: #14202e;
+    font-weight: 400;
+  }
+
+  /* ── PRINT ── */
+  @page { size: Letter; margin: 0; }
+  @media print {
+    #toolbar    { display: none !important; }
+    #chat-panel { display: none !important; }
+    body { background: #fff; }
+    .page {
+      margin: 0;
+      box-shadow: none;
+      border-radius: 0;
+      width: 100%;
+      min-height: 100vh;
+      padding: 62px 67px 58px !important;
+    }
+    body.editing [data-field] { outline: none; }
+  }
+
+  /* ── MOBILE RESPONSIVE ── */
+  @media (max-width: 900px) {
+    html, body {
+      background: #fff;
+    }
+
+    #print-overlay > div {
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 20px 24px !important;
+    }
+
+    #toolbar {
+      position: static;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 12px;
+      margin: 0;
+      background: #f6f6f4;
+      justify-content: space-between;
+    }
+
+    #toolbar button, #toolbar select {
+      flex: 1;
+      min-width: 80px;
+      font-size: 11px !important;
+      padding: 6px 8px !important;
+    }
+
+    .page {
+      width: 100%;
+      min-height: auto;
+      margin: 0;
+      padding: 12px;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    .header {
+      display: block;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    .title-block {
+      border-right: none;
+      padding-right: 0;
+      margin-bottom: 12px;
+    }
+
+    .invoice-word {
+      font-size: 36px;
+      line-height: 0.9;
+    }
+
+    .this-is-your {
+      font-size: 9px;
+    }
+
+    .meta {
+      font-size: 10px;
+      gap: 4px 12px;
+    }
+
+    .right-col {
+      text-align: left;
+      gap: 12px;
+    }
+
+    .party .name {
+      font-size: 14px;
+    }
+
+    .party.from .name {
+      font-size: 16px;
+    }
+
+    .party .sub {
+      font-size: 10px;
+    }
+
+    .invoice-table {
+      font-size: 11px;
+      margin-top: 12px;
+    }
+
+    .invoice-table th {
+      font-size: 9px;
+      padding: 8px 10px;
+    }
+
+    .invoice-table td {
+      padding: 12px 8px;
+      font-size: 11px;
+    }
+
+    .service-name {
+      font-size: 11px;
+    }
+
+    .col-service { width: 25%; }
+    .col-details { width: 35%; }
+    .col-rate    { width: 20%; }
+    .col-cost    { width: 20%; }
+
+    .total-wrap {
+      margin-top: 12px;
+    }
+
+    .total-block {
+      min-width: 100%;
+    }
+
+    .project-total-row .ptv {
+      font-size: 16px;
+    }
+
+    .total-card .total-amount {
+      font-size: 32px;
+      gap: 8px;
+    }
+
+    .total-card .qualifier span {
+      font-size: 12px;
+    }
+
+    .footer {
+      gap: 12px;
+      margin-top: 12px;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .thank-you {
+      font-size: 24px;
+    }
+
+    .footer-divider {
+      display: none;
+    }
+
+    .payment-note {
+      font-size: 10px;
+      width: 100%;
+    }
+
+    #chat-panel {
+      position: fixed;
+      bottom: 0;
+      right: 0;
+      width: 100%;
+      max-height: 70vh;
+      border-radius: 12px 12px 0 0;
+    }
+  }
+
+  /* ── AI CHAT PANEL ── */
+  #chat-panel {
+    position: fixed;
+    bottom: 64px;
+    right: 20px;
+    width: 370px;
+    max-height: 580px;
+    background: rgba(250,250,249,0.82);
+    backdrop-filter: blur(24px) saturate(1.8);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    border: 1px solid rgba(255,255,255,0.6);
+    border-radius: 18px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2), 0 2px 8px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8);
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 998;
+    font-family: 'Roboto', sans-serif;
+  }
+  #chat-panel.open { display: flex; }
+
+  /* Header */
+  #chat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 14px 12px;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #chat-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ink);
+    letter-spacing: -0.3px;
+    flex-shrink: 0;
+  }
+
+  /* Active provider pill in header */
+  #chat-active-provider {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    margin-left: 8px;
+  }
+  #chat-active-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #aaa;
+  }
+  #chat-active-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  #btn-chat-settings {
+    background: rgba(20,32,46,0.06);
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    color: var(--muted);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+  }
+  #btn-chat-settings:hover { background: rgba(20,32,46,0.12); color: var(--ink); }
+
+  /* Messages */
+  #chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 140px;
+  }
+  .chat-msg {
+    font-size: 12.5px;
+    line-height: 1.55;
+    max-width: 86%;
+    padding: 9px 12px;
+    border-radius: 12px;
+    word-break: break-word;
+  }
+  .chat-msg.user {
+    align-self: flex-end;
+    background: var(--ink);
+    color: #fff;
+    border-bottom-right-radius: 3px;
+  }
+  .chat-msg.assistant {
+    align-self: flex-start;
+    background: rgba(20,32,46,0.07);
+    color: var(--ink);
+    border-bottom-left-radius: 3px;
+  }
+  .chat-msg.error {
+    align-self: flex-start;
+    background: rgba(208,36,27,0.08);
+    color: var(--red);
+    border-bottom-left-radius: 3px;
+  }
+
+  /* Image preview strip */
+  #chat-image-preview {
+    display: none;
+    gap: 6px;
+    padding: 8px 12px 0;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  #chat-image-preview.has-images { display: flex; }
+  .chat-img-thumb {
+    position: relative;
+    width: 52px;
+    height: 52px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1.5px solid rgba(20,32,46,0.12);
+    flex-shrink: 0;
+  }
+  .chat-img-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  .chat-img-thumb .rm-img {
+    position: absolute;
+    top: 2px; right: 2px;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    border: none;
+    font-size: 9px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+
+  /* Input row */
+  #chat-input-row {
+    display: flex;
+    gap: 7px;
+    padding: 8px 12px 13px;
+    border-top: 1px solid rgba(20,32,46,0.08);
+    flex-shrink: 0;
+    background: rgba(255,255,255,0.5);
+    align-items: flex-end;
+  }
+  #btn-chat-attach, #btn-chat-voice {
+    background: rgba(20,32,46,0.06);
+    border: none;
+    border-radius: 10px;
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    transition: background 0.15s, color 0.15s;
+  }
+  #btn-chat-attach:hover, #btn-chat-voice:hover { background: rgba(20,32,46,0.12); color: var(--ink); }
+  #btn-chat-voice.recording { background: rgba(208,36,27,0.12); color: var(--red); animation: pulse-rec 1s infinite; }
+  @keyframes pulse-rec { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+  #chat-input {
+    flex: 1;
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    padding: 9px 12px;
+    border: 1.5px solid rgba(20,32,46,0.13);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.9);
+    color: var(--ink);
+    resize: none;
+    outline: none;
+    line-height: 1.4;
+    min-height: 38px;
+    max-height: 100px;
+    transition: border-color 0.15s;
+  }
+  #chat-input:focus { border-color: rgba(91,79,207,0.5); }
+  #btn-chat-send {
+    align-self: flex-end;
+    background: #5b4fcf;
+    color: #fff;
+    border: none;
+    border-radius: 10px;
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+    cursor: pointer;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s, transform 0.1s;
+  }
+  #btn-chat-send:hover { opacity: 0.88; transform: scale(1.05); }
+  #btn-chat-send:disabled { opacity: 0.35; cursor: default; transform: none; }
+
+  /* ── Settings overlay (replaces messages area) ── */
+  #chat-settings-panel {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+  }
+  #chat-settings-panel.open { display: flex; }
+
+  #settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 14px 12px;
+    flex-shrink: 0;
+  }
+  #settings-header span {
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  #btn-add-provider {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 11px;
+    background: #5b4fcf;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  #btn-add-provider:hover { opacity: 0.85; }
+
+  #provider-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* Provider card */
+  .prov-card {
+    border-radius: 12px;
+    background: rgba(255,255,255,0.85);
+    border: 1.5px solid rgba(20,32,46,0.09);
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .prov-card.active-card { border-color: #5b4fcf; }
+
+  .prov-card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .prov-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+    flex-shrink: 0;
+    font-weight: 700;
+    color: #fff;
+  }
+  .prov-card-info { flex: 1; min-width: 0; }
+  .prov-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .prov-card-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .prov-card-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .btn-use-provider {
+    font-family: 'Roboto', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border: 1.5px solid rgba(91,79,207,0.3);
+    border-radius: 6px;
+    background: transparent;
+    color: #5b4fcf;
+    cursor: pointer;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .btn-use-provider:hover, .btn-use-provider.active { background: rgba(91,79,207,0.1); }
+  .btn-use-provider.active { border-color: #5b4fcf; }
+  .btn-expand-provider {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--muted);
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: color 0.15s;
+  }
+  .btn-expand-provider:hover { color: var(--ink); }
+
+  .prov-card-fields {
+    display: none;
+    padding: 0 12px 12px;
+    flex-direction: column;
+    gap: 7px;
+    border-top: 1px solid rgba(20,32,46,0.07);
+    padding-top: 10px;
+  }
+  .prov-card-fields.open { display: flex; }
+
+  .field-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .field-row label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .field-row input, .field-row select {
+    font-family: 'Roboto', sans-serif;
+    font-size: 12.5px;
+    padding: 7px 10px;
+    border: 1.5px solid rgba(20,32,46,0.12);
+    border-radius: 7px;
+    background: rgba(255,255,255,0.9);
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s;
+    width: 100%;
+  }
+  .field-row input:focus, .field-row select:focus { border-color: rgba(91,79,207,0.5); }
+  .field-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+
+  .btn-del-provider {
+    align-self: flex-end;
+    background: rgba(208,36,27,0.08);
+    color: var(--red);
+    border: none;
+    border-radius: 7px;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 5px 10px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-top: 2px;
+  }
+  .btn-del-provider:hover { background: rgba(208,36,27,0.15); }
+
+  /* ── Client picker ── */
+  #client-picker-row {
+    padding: 0 12px 8px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  #client-picker-row .cp-label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+  #client-chips {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+  .client-chip {
+    font-family: 'Roboto', sans-serif;
+    font-size: 11.5px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1.5px solid rgba(20,32,46,0.15);
+    background: rgba(255,255,255,0.8);
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .client-chip:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn-manage-clients {
+    font-family: 'Roboto', sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    flex-shrink: 0;
+    transition: color 0.12s;
+  }
+  .btn-manage-clients:hover { color: var(--ink); }
+
+  /* Client address book panel (replaces messages like settings) */
+  #client-book-panel {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+  }
+  #client-book-panel.open { display: flex; }
+  #client-book-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 14px 12px;
+    flex-shrink: 0;
+  }
+  #client-book-header span {
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  #btn-add-client {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 5px 11px;
+    background: var(--ink);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  #btn-add-client:hover { opacity: 0.85; }
+  #client-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .client-card {
+    border-radius: 12px;
+    background: rgba(255,255,255,0.85);
+    border: 1.5px solid rgba(20,32,46,0.09);
+    overflow: hidden;
+  }
+  .client-card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .client-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--ink);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .client-card-info { flex: 1; min-width: 0; }
+  .client-card-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .client-card-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .btn-use-client {
+    font-family: 'Roboto', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border: 1.5px solid rgba(20,32,46,0.2);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--ink);
+    cursor: pointer;
+    transition: background 0.12s;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .btn-use-client:hover { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .client-card-fields {
+    display: none;
+    padding: 10px 12px 12px;
+    flex-direction: column;
+    gap: 7px;
+    border-top: 1px solid rgba(20,32,46,0.07);
+  }
+  .client-card-fields.open { display: flex; }
+  .btn-expand-client {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--muted);
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: color 0.15s;
+    flex-shrink: 0;
+  }
+  .btn-expand-client:hover { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<!-- TOOLBAR (hidden on print) -->
+<div id="toolbar">
+  <button id="btn-edit"   onclick="startEdit()">✏️ Edit</button>
+  <button id="btn-save"   onclick="saveEdit()">✓ Save</button>
+  <button id="btn-cancel" onclick="cancelEdit()">✕ Cancel</button>
+  <select id="font-selector" onchange="changeTitleFont(this.value)" style="font-family:'Roboto',sans-serif; font-size:12px; padding:8px 12px; border:none; border-radius:6px; background:#14202e; color:#fff; cursor:pointer;">
+    <option value="Bauhaus93">Bauhaus93</option>
+    <option value="Roboto">Roboto</option>
+    <option value="Georgia">Georgia</option>
+    <option value="Courier New">Courier New</option>
+    <option value="Comic Sans MS">Comic Sans MS</option>
+  </select>
+  <button id="btn-print"  onclick="confirmPrint()">⎙ Print / PDF</button>
+  <button id="btn-chat"   onclick="toggleChat()" style="background:#5b4fcf; color:#fff;">✦ AI</button>
+</div>
+
+<!-- AI CHAT PANEL -->
+<div id="chat-panel">
+  <div id="chat-header">
+    <span id="chat-title">AI Assistant</span>
+    <div id="chat-active-provider">
+      <div id="chat-active-dot"></div>
+      <span id="chat-active-name">No provider</span>
+    </div>
+    <button id="btn-chat-clear" onclick="clearChatHistory()" title="Clear history" style="background:none;border:none;cursor:pointer;font-size:13px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background 0.15s;flex-shrink:0;">✕</button>
+    <button id="btn-chat-settings" onclick="toggleChatSettings()" title="Manage providers">⚙</button>
+  </div>
+
+  <div id="chat-messages">
+    <div class="chat-msg assistant">Hi! Tell me what to update — e.g. "Invoice for Sarah, logo design, $5000 USD, balance due."</div>
+  </div>
+
+  <!-- Settings overlay -->
+  <div id="chat-settings-panel">
+    <div id="settings-header">
+      <span>Providers</span>
+      <button id="btn-add-provider" onclick="addProvider()">+ Add</button>
+    </div>
+    <div id="provider-list"></div>
+  </div>
+
+  <!-- Address book panel (swaps with messages like settings) -->
+  <div id="client-book-panel">
+    <div id="client-book-header">
+      <span>Address Book</span>
+      <button id="btn-add-client" onclick="addClient()">+ Add Client</button>
+    </div>
+    <div id="client-list"></div>
+  </div>
+
+  <!-- Client chips row -->
+  <div id="client-picker-row">
+    <span class="cp-label">Clients</span>
+    <div id="client-chips"></div>
+    <button class="btn-manage-clients" onclick="toggleClientBook()" title="Manage address book">✎</button>
+  </div>
+
+  <div id="chat-image-preview"></div>
+
+  <div id="chat-input-row">
+    <input type="file" id="chat-file-input" accept="image/*" multiple style="display:none;" onchange="handleImageFiles(this.files)">
+    <button id="btn-chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach image">📎</button>
+    <textarea id="chat-input" rows="1" placeholder="Describe the invoice changes…" onkeydown="chatInputKey(event)" onpaste="handleImagePaste(event)"></textarea>
+    <button id="btn-chat-voice" onclick="toggleVoice()" title="Voice input">🎙</button>
+    <button id="btn-chat-send" onclick="sendChat()">↑</button>
+  </div>
+</div>
+
+<!-- PRINT CONFIRM DIALOG -->
+<div id="print-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id === 'print-overlay') closeDialog()">
+  <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:500px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
+    <button onclick="closeDialog()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center; transition:all 0.15s;">✕</button>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Before you print</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Print &amp; update the ledger</div>
+
+    <!-- New row preview -->
+    <div id="ledger-preview" style="background:#f6f6f4; border-radius:6px; padding:14px 16px; font-size:11.5px; line-height:1.8; color:#14202e; font-family:monospace; margin-bottom:12px; white-space:pre-wrap; word-break:break-all;"></div>
+
+    <!-- Existing rows status editor -->
+    <div id="ledger-history" style="display:none; margin-bottom:14px;">
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Update existing entries</div>
+      <div id="ledger-rows-list" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto;"></div>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <button onclick="updateLedger()" id="btn-update-ledger"
+        style="flex:1; padding:10px; background:#2a8c55; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        ✅ Save to Ledger
+      </button>
+      <button onclick="exportLedger()"
+        style="flex:1; padding:10px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        ↓ Export .md
+      </button>
+    </div>
+
+    <!-- Filename -->
+    <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">PDF Filename</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <input id="company-prefix" type="text" placeholder="Company (e.g. moo)" oninput="saveCompanyPrefix(); updateFilenamePreview();"
+          style="font-family:'Roboto',sans-serif; font-size:12.5px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; width:140px; outline:none; color:#14202e;">
+        <span style="font-size:11px; color:#9aa2ac; flex:1;">optional — prepends to filename</span>
+      </div>
+      <div id="filename-presets" style="display:flex; flex-direction:column; gap:6px; margin-bottom:10px;"></div>
+      <div style="font-size:11px; color:#9aa2ac; margin-top:6px;">Preview: <span id="filename-preview" style="color:#14202e; font-weight:600; font-family:monospace;"></span></div>
+    </div>
+
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
+      <button onclick="proceedPrint()"
+        style="flex:1; padding:10px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        ⎙ Print / Save PDF
+      </button>
+      <button id="btn-email-client" onclick="openEmail()"
+        style="flex:1; padding:10px; background:#5b4fcf; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        ✉ Email Client
+      </button>
+      <button onclick="closeDialog()"
+        style="padding:10px 20px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">
+        Cancel
+      </button>
+    </div>
+
+    <div id="ledger-confirm" style="display:none; margin-top:14px; font-size:12px; color:#2a8c55; font-weight:600;">✓ Ledger updated successfully.</div>
+
+    <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">Gmail OAuth (Optional)</div>
+      <div style="font-size:11px; color:#9aa2ac; margin-bottom:10px;">Add your Google OAuth Client ID to email invoices with attachments. Without it, the email button opens Gmail compose directly (still works, no attachment).</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+        <input id="oauth-client-id-input" type="password" placeholder="Paste your Client ID here…"
+          style="font-family:'Roboto',sans-serif; font-size:12.5px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; flex:1; outline:none; color:#14202e;"
+          oninput="saveOAuthClientIdInput()">
+        <button onclick="resetGmailClientId()" style="background:none;border:none;color:#5b4fcf;font-size:11px;cursor:pointer;padding:0;font-family:'Roboto',sans-serif; font-weight:600;">Clear</button>
+      </div>
+      <div style="font-size:10px; color:#9aa2ac;">Status: <span id="gmail-id-status">not set</span></div>
+    </div>
+
+    <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">Google Sheets Sync (Optional)</div>
+      <div style="font-size:11px; color:#9aa2ac; margin-bottom:10px;">Sync invoices to a Google Sheet called "InvoiceLedger" for automatic tracking.</div>
+      <button onclick="promptForSheetsId()" style="background:#5b4fcf; color:#fff; border:none; border-radius:6px; padding:8px 12px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer; font-weight:500;">
+        Set Spreadsheet ID
+      </button>
+      <div style="font-size:10px; color:#9aa2ac; margin-top:8px;">ID: <span id="sheets-id-status" style="font-family:monospace;">not set</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="page" id="invoice">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="title-block">
+      <span class="this-is-your">This is your</span>
+      <span class="invoice-word">Invoice</span>
+      <div class="meta">
+        <span>Date</span>      <span class="v" data-field="date"></span>
+        <span>Receipt №</span> <span class="v" data-field="receiptNumber"></span>
+        <span>Currency</span>  <span class="v" data-field="currency"></span>
+      </div>
+    </div>
+
+    <div class="right-col">
+      <div class="party from">
+        <div class="lbl">From</div>
+        <div class="name" data-field="from.name"></div>
+        <div class="sub" id="from-sub"></div>
+      </div>
+      <div class="party to">
+        <div class="lbl">To</div>
+        <div class="name" data-field="to.name"></div>
+        <div class="sub" id="to-sub"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABLE -->
+  <table class="invoice-table">
+    <thead>
+      <tr>
+        <th class="col-service">Service</th>
+        <th class="col-details">Details</th>
+        <th class="col-rate">Rate</th>
+        <th class="col-cost num">Cost</th>
+      </tr>
+    </thead>
+    <tbody id="line-items"></tbody>
+  </table>
+
+  <!-- TOTAL -->
+  <div class="total-wrap">
+    <div class="total-block">
+      <div class="project-total-row">
+        <span class="ptl">Project Total</span>
+        <span class="ptv">JMD $<span data-field="projectTotal"></span></span>
+      </div>
+      <div class="total-card">
+        <div class="total-amount">
+          <span class="qualifier">
+            <span data-field="totalLabelTop"></span>
+            <span data-field="totalLabelBottom"></span>
+          </span>
+          <span data-field="totalAmount"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pay-period">
+    Pay Period — <span data-field="payPeriod"></span>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <div class="thank-you">Thank You!</div>
+    <div class="footer-divider"></div>
+    <div class="payment-note" id="payment-note-el"></div>
+  </div>
+
+</div>
+
+<script>
+// ── Font selector ────────────────────────────────────────────
+
+function changeTitleFont(fontName) {
+  const titleEl = document.querySelector('.invoice-word');
+  const fromNameEl = document.querySelector('.party.from .name');
+  const thankYouEl = document.querySelector('.thank-you');
+  if (titleEl) titleEl.style.fontFamily = `'${fontName}', sans-serif`;
+  if (fromNameEl) fromNameEl.style.fontFamily = `'${fontName}', sans-serif`;
+  if (thankYouEl) thankYouEl.style.fontFamily = `'${fontName}', sans-serif`;
+  localStorage.setItem('invoice-title-font', fontName);
+}
+
+function restoreTitleFont() {
+  const saved = localStorage.getItem('invoice-title-font') || 'Bauhaus93';
+  document.getElementById('font-selector').value = saved;
+  changeTitleFont(saved);
+}
+
+// ── Date & Receipt helpers ────────────────────────────────────
+
+function todayFormatted() {
+  const d = new Date();
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return { dd, mm, yy, yyyy: d.getFullYear() };
+}
+
+// Receipt format: YYMMDD + suffix letter (A, B, C…)
+// Suffix is stored in sessionStorage so refreshing the same day keeps it stable.
+// To get B on the same day, change receiptOverride in the JSON.
+function autoReceiptNumber() {
+  const { dd, mm, yy } = todayFormatted();
+  return `${yy}${mm}${dd}A`;
+}
+
+function autoDate() {
+  const { dd, mm, yyyy } = todayFormatted();
+  return `${dd} / ${mm} / ${yyyy}`;
+}
+
+// ── Data ─────────────────────────────────────────────────────
+
+function getData() {
+  const raw = JSON.parse(document.getElementById('invoice-data').textContent);
+  raw.date          = raw.dateOverride    || autoDate();
+  raw.receiptNumber = raw.receiptOverride || autoReceiptNumber();
+  // Migrate old single totalLabel to split fields
+  if (raw.totalLabel && !raw.totalLabelTop) {
+    const parts = raw.totalLabel.split(' ');
+    raw.totalLabelTop    = parts[0] || 'Deposit';
+    raw.totalLabelBottom = parts.slice(1).join(' ') || 'Due';
+    delete raw.totalLabel;
+  }
+  return raw;
+}
+
+function get(obj, path) {
+  return path.split('.').reduce((o, k) => (o || {})[k], obj);
+}
+
+// ── Render ───────────────────────────────────────────────────
+
+function safeText(el, ...lines) {
+  el.innerHTML = '';
+  lines.forEach((line, i) => {
+    el.appendChild(document.createTextNode(line));
+    if (i < lines.length - 1) el.appendChild(document.createElement('br'));
+  });
+}
+
+function render(data) {
+  // Persist invoice state so it survives page refresh
+  try { localStorage.setItem('invoice-last-state', JSON.stringify(data)); } catch(e) {}
+
+  const fromSub = document.getElementById('from-sub');
+  if (fromSub) safeText(fromSub, data.from.email, data.from.phone);
+
+  const toSub = document.getElementById('to-sub');
+  if (toSub) safeText(toSub, data.to.address, data.to.email, data.to.phone);
+
+  const pn = document.getElementById('payment-note-el');
+  if (pn) pn.textContent = data.paymentNote || '';
+
+  document.querySelectorAll('[data-field]').forEach(el => {
+    const val = get(data, el.dataset.field);
+    if (val !== undefined) el.textContent = val;
+  });
+
+
+  const tbody = document.getElementById('line-items');
+  tbody.innerHTML = '';
+  data.lineItems.forEach((item, i) => {
+    const ratesHtml = item.rates.map((r, ri) =>
+      `<span class="rate-tag" data-field="lineItems.${i}.rates.${ri}">${r}</span>`
+    ).join('');
+    const costsHtml = item.costs.map((c, ci) =>
+      `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${c}</span>`
+    ).join('');
+    tbody.innerHTML += `
+      <tr>
+        <td class="col-service"><div class="service-name" data-field="lineItems.${i}.service">${item.service}</div></td>
+        <td class="col-details" data-field="lineItems.${i}.details">${item.details}</td>
+        <td class="col-rate"><div class="rate-rows">${ratesHtml}</div></td>
+        <td class="col-cost num"><div class="cost-rows">${costsHtml}</div></td>
+      </tr>`;
+  });
+}
+
+// ── Edit mode ────────────────────────────────────────────────
+
+let snapshot = '';
+
+function startEdit() {
+  snapshot = document.getElementById('invoice-data').textContent;
+  document.body.classList.add('editing');
+  document.querySelectorAll('[data-field]').forEach(el => {
+    el.contentEditable = 'true';
+    el.spellcheck = false;
+  });
+  const pn = document.getElementById('payment-note-el');
+  if (pn) { pn.contentEditable = 'true'; pn.spellcheck = false; pn.dataset.field = 'paymentNote'; }
+  document.getElementById('btn-edit').style.display   = 'none';
+  document.getElementById('btn-save').style.display   = 'inline-block';
+  document.getElementById('btn-cancel').style.display = 'inline-block';
+}
+
+function saveEdit() {
+  const data = getData();
+  document.querySelectorAll('[data-field]').forEach(el => {
+    setNestedField(data, el.dataset.field, el.textContent.trim());
+  });
+  // Persist overrides so edits stick
+  data.dateOverride    = data.date;
+  data.receiptOverride = data.receiptNumber;
+  document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  stopEdit();
+  render(data);
+}
+
+function cancelEdit() {
+  document.getElementById('invoice-data').textContent = snapshot;
+  stopEdit();
+  render(getData());
+}
+
+function stopEdit() {
+  document.body.classList.remove('editing');
+  document.querySelectorAll('[data-field]').forEach(el => {
+    el.contentEditable = 'false';
+  });
+  document.getElementById('btn-edit').style.display   = 'inline-block';
+  document.getElementById('btn-save').style.display   = 'none';
+  document.getElementById('btn-cancel').style.display = 'none';
+}
+
+function setNestedField(obj, path, value) {
+  const keys = path.split('.');
+  let cur = obj;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const k = isNaN(keys[i]) ? keys[i] : Number(keys[i]);
+    cur = cur[k];
+    if (!cur) return;
+  }
+  const last = isNaN(keys[keys.length - 1]) ? keys[keys.length - 1] : Number(keys[keys.length - 1]);
+  cur[last] = value;
+}
+
+// ── Print & Ledger ───────────────────────────────────────────
+
+const STATUSES = [
+  { value: '⬜ Unpaid',  label: 'Unpaid'  },
+  { value: '💰 Deposit', label: 'Deposit' },
+  { value: '✅ Paid',    label: 'Paid'    },
+];
+
+// Ledger lives entirely in localStorage as an array of row objects
+function loadLedgerRows() {
+  return JSON.parse(localStorage.getItem('invoice-ledger-rows') || '[]');
+}
+function saveLedgerRows(rows) {
+  localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows));
+}
+
+let _pendingRow = null; // the row object for the current invoice, set on dialog open
+
+async function confirmPrint() {
+  const data = getData();
+  const services = data.lineItems.map(l => l.service).join(', ');
+  _pendingRow = {
+    receipt:      data.receiptNumber,
+    date:         data.date,
+    client:       data.to.name,
+    service:      services,
+    projectTotal: `${data.currency} ${data.projectTotal}`,
+    amountDue:    data.totalAmount,
+    status:       '⬜ Unpaid',
+  };
+
+  // Show the row that will be added
+  const preview = `| ${_pendingRow.receipt} | ${_pendingRow.date} | ${_pendingRow.client} | ${_pendingRow.service} | ${_pendingRow.projectTotal} | ${_pendingRow.amountDue} | ${_pendingRow.status} |`;
+  document.getElementById('ledger-preview').textContent = preview;
+  document.getElementById('ledger-confirm').style.display = 'none';
+
+  await renderLedgerHistory();
+  renderFilenamePresets();
+  refreshGmailIdStatus();
+  refreshSheetsIdStatus();
+
+  // Focus the OAuth input so it's visible
+  setTimeout(() => {
+    const oauthInput = document.getElementById('oauth-client-id-input');
+    if (oauthInput) oauthInput.focus();
+  }, 50);
+
+  document.getElementById('print-overlay').style.display = 'flex';
+}
+
+async function renderLedgerHistory() {
+  // Load from sheet if token is valid, otherwise fall back to localStorage
+  let rows = await loadLedgerFromSheet();
+
+  // Fallback to localStorage if sheet unavailable
+  if (!rows) {
+    rows = loadLedgerRows();
+  }
+
+  const histEl = document.getElementById('ledger-history');
+  const listEl = document.getElementById('ledger-rows-list');
+  listEl.innerHTML = '';
+
+  if (!rows.length) { histEl.style.display = 'none'; return; }
+  histEl.style.display = 'block';
+
+  rows.slice().reverse().forEach((row, ri) => {
+    const realIdx = rows.length - 1 - ri;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex; align-items:center; justify-content:space-between; background:#f6f6f4; border-radius:6px; padding:8px 12px; gap:10px;';
+
+    const info = document.createElement('div');
+    info.style.cssText = 'font-size:11.5px; color:#14202e; line-height:1.5; min-width:0; flex:1;';
+    info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br><span style="color:#6c7682;">${row.amountDue} — ${row.date}</span>`;
+
+    const sel = document.createElement('select');
+    sel.style.cssText = 'font-family:Roboto,sans-serif; font-size:12px; padding:4px 8px; border:1.5px solid #ddd; border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
+    STATUSES.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.value;
+      opt.textContent = s.label;
+      if (s.value === row.status) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', async () => {
+      rows[realIdx].status = sel.value;
+      saveLedgerRows(rows); // Also save to localStorage as backup
+      await updateLedgerStatusOnSheet(realIdx, sel.value);
+    });
+
+    wrap.append(info, sel);
+    listEl.appendChild(wrap);
+  });
+}
+
+async function updateLedger() {
+  const rows = loadLedgerRows();
+  const data = getData();
+
+  // Add new row if not already present
+  if (!rows.find(r => r.receipt === _pendingRow.receipt)) {
+    rows.push({ ..._pendingRow });
+    saveLedgerRows(rows);
+  }
+
+  // Save client to address book
+  if (data.to?.name) {
+    upsertClient({ name: data.to.name, address: data.to.address || '', email: data.to.email || '', phone: data.to.phone || '' });
+    renderClientChips();
+  }
+
+  // Sync to Google Sheets if configured
+  if (_sheetsSpreadsheetId && _gmailToken) {
+    await syncToGoogleSheets(data);
+  }
+
+  // Re-render history so the new row appears with a status selector
+  renderLedgerHistory();
+
+  const confirmEl = document.getElementById('ledger-confirm');
+  confirmEl.style.display = 'block';
+  confirmEl.style.color   = '#2a8c55';
+  confirmEl.textContent   = `✓ Saved — ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} in ledger${_sheetsSpreadsheetId ? ' & synced to Sheets' : ''}.`;
+}
+
+function exportLedger() {
+  const rows = loadLedgerRows();
+  const header = `# Invoice Ledger\n\n> Auto-updated when invoices are printed/saved to PDF.\n> Set status to \`✅ Paid\` once payment is confirmed.\n\n| Receipt # | Date | Client | Service | Project Total | Amount Due | Status |\n|-----------|------|--------|---------|---------------|------------|--------|\n`;
+  const body   = rows.map(r => `| ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | ${r.projectTotal} | ${r.amountDue} | ${r.status} |`).join('\n');
+  const blob   = new Blob([header + body + '\n'], { type: 'text/markdown' });
+  const a      = document.createElement('a');
+  a.href       = URL.createObjectURL(blob);
+  a.download   = 'InvoiceLedger.md';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── Filename ─────────────────────────────────────────────────
+
+const FILENAME_PRESETS = [
+  { id: 'hyphen',     build: (d, pfx) => `${pfx}INV-${d.receipt}-${firstName(d.client)}-${serviceSlug(d.service)}` },
+  { id: 'underscore', build: (d, pfx) => `${pfx}${d.receipt}_${fullNameSlug(d.client)}_${serviceSlug(d.service)}` },
+  { id: 'readable',   build: (d, pfx) => `${pfx}${d.from} ${d.client} ${d.service} ${d.receipt}` },
+];
+
+function firstName(name)    { return name.split(' ')[0]; }
+function fullNameSlug(name) { return name.replace(/\s+/g, ''); }
+function serviceSlug(str) {
+  return str
+    .split(/[,]+/)                                           // split on commas — each is a distinct service
+    .map(s => s.trim()
+      .split(/[\s\/&+]+/)                                    // split service words on spaces, /, &, +
+      .filter(w => w && /[a-zA-Z0-9]/.test(w))              // drop empty and symbol-only tokens
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()) // CamelCase each word
+      .join('')                                              // join words within a service — no separator
+    )
+    .filter(Boolean)
+    .join('_');                                              // underscore between distinct services
+}
+function slug(str, sep='-') { return str.replace(/[^a-zA-Z0-9]+/g, sep).replace(new RegExp(`^${sep}|${sep}$`,'g'),''); }
+
+function getCompanyPrefix() {
+  const val = localStorage.getItem('invoice-company-prefix') || '';
+  return val.trim() ? val.trim() + '-' : '';
+}
+function saveCompanyPrefix() {
+  const val = document.getElementById('company-prefix').value;
+  localStorage.setItem('invoice-company-prefix', val);
+}
+
+function buildFilename(presetId, data) {
+  const preset = FILENAME_PRESETS.find(p => p.id === presetId) || FILENAME_PRESETS[0];
+  const pfx = getCompanyPrefix();
+  const d = {
+    receipt: data.receiptNumber,
+    client:  data.to?.name || 'Client',
+    service: data.lineItems.map(l => l.service).join(', ') || 'Invoice',
+    from:    data.from?.name || '',
+  };
+  return preset.build(d, pfx);
+}
+
+function renderFilenamePresets() {
+  const data      = getData();
+  const saved     = localStorage.getItem('invoice-filename-preset') || 'hyphen';
+  const container = document.getElementById('filename-presets');
+  container.innerHTML = '';
+
+  // Restore saved company prefix into field
+  const prefixEl = document.getElementById('company-prefix');
+  if (prefixEl) prefixEl.value = localStorage.getItem('invoice-company-prefix') || '';
+
+  FILENAME_PRESETS.forEach(p => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:8px; cursor:pointer; border:1.5px solid transparent; transition:border-color 0.12s, background 0.12s;';
+    if (p.id === saved) row.style.cssText += 'border-color:#14202e; background:#f6f6f4;';
+
+    const radio = document.createElement('input');
+    radio.type  = 'radio';
+    radio.name  = 'filename-preset';
+    radio.value = p.id;
+    radio.checked = p.id === saved;
+    radio.style.accentColor = '#14202e';
+    radio.onchange = () => {
+      localStorage.setItem('invoice-filename-preset', p.id);
+      document.querySelectorAll('#filename-presets label').forEach(l => {
+        l.style.borderColor = 'transparent';
+        l.style.background  = '';
+      });
+      row.style.borderColor = '#14202e';
+      row.style.background  = '#f6f6f4';
+      updateFilenamePreview();
+    };
+
+    const lbl = document.createElement('span');
+    lbl.style.cssText  = 'font-size:12px; font-family:monospace; color:#14202e;';
+    lbl.textContent    = buildFilename(p.id, data) + '.pdf';
+
+    row.append(radio, lbl);
+    container.appendChild(row);
+  });
+
+  updateFilenamePreview();
+}
+
+function updateFilenamePreview() {
+  const data   = getData();
+  const saved  = localStorage.getItem('invoice-filename-preset') || 'hyphen';
+  const name   = buildFilename(saved, data) + '.pdf';
+  document.getElementById('filename-preview').textContent = name;
+  document.title = buildFilename(saved, data);
+}
+
+function proceedPrint() {
+  updateFilenamePreview();
+  closeDialog();
+  window.print();
+  setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
+}
+
+function openEmail() {
+  const data    = getData();
+  const to      = encodeURIComponent(data.to.email || '');
+  const service = data.lineItems.map(l => l.service).join(', ');
+  const subject = encodeURIComponent(`moo Invoice ${data.receiptNumber} - ${service}`);
+  const body    = encodeURIComponent('Please review the attached invoice.');
+  window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${subject}&body=${body}`, '_blank');
+}
+
+function closeDialog() {
+  document.getElementById('print-overlay').style.display = 'none';
+}
+
+// ── AI Chat ──────────────────────────────────────────────────
+
+const PROVIDERS = {
+  openai:     { label: 'OpenAI',     color: '#10a37f', emoji: '⬡',
+                url: 'https://api.openai.com/v1/chat/completions',
+                authHeader: k => ({ Authorization: `Bearer ${k}` }),
+                defaultModel: 'gpt-4o',
+                listModels: async k => {
+                  const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${k}` } });
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j.error?.message || r.statusText);
+                  return j.data.map(m => m.id).filter(id => id.startsWith('gpt-') || id.startsWith('o')).sort();
+                }},
+  anthropic:  { label: 'Anthropic',  color: '#c96442', emoji: '◈',
+                url: 'https://api.anthropic.com/v1/messages',
+                authHeader: k => ({ 'x-api-key': k, 'anthropic-version': '2023-06-01' }),
+                defaultModel: 'claude-sonnet-4-6',
+                listModels: async k => {
+                  const r = await fetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': k, 'anthropic-version': '2023-06-01' } });
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j.error?.message || r.statusText);
+                  return j.data.map(m => m.id).sort();
+                }},
+  gemini:     { label: 'Gemini',     color: '#4285f4', emoji: '✦',
+                url: m => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+                authHeader: k => ({ 'x-goog-api-key': k }),
+                defaultModel: 'gemini-2.5-flash-preview-05-20',
+                listModels: async k => {
+                  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(k)}`);
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j.error?.message || r.statusText);
+                  return j.models
+                    .map(m => m.name.replace('models/', ''))
+                    .sort();
+                }},
+  deepseek:   { label: 'DeepSeek',   color: '#4d6bfe', emoji: '⟁',
+                url: 'https://api.deepseek.com/chat/completions',
+                authHeader: k => ({ Authorization: `Bearer ${k}` }),
+                defaultModel: 'deepseek-chat',
+                listModels: async k => {
+                  const r = await fetch('https://api.deepseek.com/models', { headers: { Authorization: `Bearer ${k}` } });
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j.error?.message || r.statusText);
+                  return j.data.map(m => m.id).sort();
+                }},
+  openrouter: { label: 'OpenRouter', color: '#6366f1', emoji: '⇋',
+                url: 'https://openrouter.ai/api/v1/chat/completions',
+                authHeader: k => ({ Authorization: `Bearer ${k}` }),
+                defaultModel: 'anthropic/claude-sonnet-4-6',
+                listModels: async k => {
+                  const r = await fetch('https://openrouter.ai/api/v1/models', { headers: { Authorization: `Bearer ${k}` } });
+                  const j = await r.json();
+                  if (!r.ok) throw new Error(j.error?.message || r.statusText);
+                  return j.data.map(m => m.id).sort();
+                }},
+};
+
+function loadChatProviders() {
+  return JSON.parse(localStorage.getItem('invoice-ai-providers') || '[]');
+}
+function saveChatProviders(list) {
+  localStorage.setItem('invoice-ai-providers', JSON.stringify(list));
+}
+function getSelectedIdx() {
+  return parseInt(localStorage.getItem('invoice-ai-selected') || '0', 10);
+}
+function setSelectedIdx(i) {
+  localStorage.setItem('invoice-ai-selected', String(i));
+  updateActiveProviderPill();
+}
+
+function updateActiveProviderPill() {
+  const list = loadChatProviders();
+  const idx  = getSelectedIdx();
+  const cfg  = list[idx];
+  const dot  = document.getElementById('chat-active-dot');
+  const name = document.getElementById('chat-active-name');
+  if (cfg) {
+    const prov = PROVIDERS[cfg.type] || {};
+    dot.style.background = prov.color || '#aaa';
+    name.textContent = cfg.name;
+  } else {
+    dot.style.background = '#aaa';
+    name.textContent = 'No provider — ⚙ add one';
+  }
+}
+
+function renderProviderList() {
+  const list    = loadChatProviders();
+  const selIdx  = getSelectedIdx();
+  const el      = document.getElementById('provider-list');
+  el.innerHTML  = '';
+
+  if (!list.length) {
+    el.innerHTML = '<div style="text-align:center;color:#9aa2ac;font-size:12px;padding:24px 0;">No providers yet.<br>Hit <strong>+ Add</strong> to connect one.</div>';
+    return;
+  }
+
+  list.forEach((p, i) => {
+    const prov   = PROVIDERS[p.type] || { color: '#aaa', emoji: '●', label: p.type };
+    const isActive = i === selIdx;
+
+    const card = document.createElement('div');
+    card.className = 'prov-card' + (isActive ? ' active-card' : '');
+
+    // Top row — badge, name, use button, expand toggle
+    const top = document.createElement('div');
+    top.className = 'prov-card-top';
+    top.onclick = () => toggleProviderExpand(i);
+
+    const badge = document.createElement('div');
+    badge.className = 'prov-badge';
+    badge.style.background = prov.color;
+    badge.textContent = prov.emoji;
+
+    const info = document.createElement('div');
+    info.className = 'prov-card-info';
+    info.innerHTML = `<div class="prov-card-name">${p.name}</div><div class="prov-card-sub">${prov.label} · ${p.model || prov.defaultModel}</div>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'prov-card-actions';
+
+    const useBtn = document.createElement('button');
+    useBtn.className = 'btn-use-provider' + (isActive ? ' active' : '');
+    useBtn.textContent = isActive ? '✓ Active' : 'Use';
+    useBtn.onclick = e => { e.stopPropagation(); setSelectedIdx(i); renderProviderList(); };
+
+    const expandBtn = document.createElement('button');
+    expandBtn.className = 'btn-expand-provider';
+    expandBtn.textContent = '···';
+    expandBtn.onclick = e => { e.stopPropagation(); toggleProviderExpand(i); };
+
+    actions.append(useBtn, expandBtn);
+    top.append(badge, info, actions);
+
+    // Expandable fields
+    const fields = document.createElement('div');
+    fields.className = 'prov-card-fields';
+    fields.id = `prov-fields-${i}`;
+
+    // Name field
+    const nameRow = document.createElement('div');
+    nameRow.className = 'field-row';
+    nameRow.innerHTML = '<label>Display Name</label>';
+    const nameIn = document.createElement('input');
+    nameIn.value = p.name;
+    nameIn.placeholder = 'e.g. My Claude';
+    nameIn.oninput = () => { list[i].name = nameIn.value; saveChatProviders(list); info.querySelector('.prov-card-name').textContent = nameIn.value; updateActiveProviderPill(); };
+    nameRow.appendChild(nameIn);
+
+    // Provider type + model (2-col)
+    const twoCol = document.createElement('div');
+    twoCol.className = 'field-row-2col';
+
+    const typeRow = document.createElement('div');
+    typeRow.className = 'field-row';
+    typeRow.innerHTML = '<label>Provider</label>';
+    const typeSel = document.createElement('select');
+    Object.entries(PROVIDERS).forEach(([k, v]) => {
+      const o = document.createElement('option');
+      o.value = k; o.textContent = v.label;
+      if (k === p.type) o.selected = true;
+      typeSel.appendChild(o);
+    });
+    typeSel.onchange = () => {
+      list[i].type  = typeSel.value;
+      list[i].model = PROVIDERS[typeSel.value]?.defaultModel || '';
+      modelIn.value = list[i].model;
+      saveChatProviders(list);
+      renderProviderList();
+    };
+    typeRow.appendChild(typeSel);
+
+    const modelRow = document.createElement('div');
+    modelRow.className = 'field-row';
+
+    const modelLabel = document.createElement('label');
+    modelLabel.style.cssText = 'display:flex; align-items:center; justify-content:space-between;';
+    modelLabel.innerHTML = '<span>Model</span>';
+    const fetchBtn = document.createElement('button');
+    fetchBtn.type = 'button';
+    fetchBtn.textContent = '⟳ fetch';
+    fetchBtn.style.cssText = 'font-size:10px; font-family:Roboto,sans-serif; background:none; border:none; color:#5b4fcf; cursor:pointer; padding:0; font-weight:600; letter-spacing:0.5px;';
+    modelLabel.appendChild(fetchBtn);
+    modelRow.appendChild(modelLabel);
+
+    // Free-text input shown before fetch, replaced by select after fetch
+    const modelIn = document.createElement('input');
+    modelIn.value = p.model || prov.defaultModel || '';
+    modelIn.placeholder = prov.defaultModel || 'model-name';
+    modelIn.oninput = () => { list[i].model = modelIn.value; saveChatProviders(list); info.querySelector('.prov-card-sub').textContent = `${PROVIDERS[list[i].type]?.label || ''} · ${modelIn.value}`; };
+
+    const modelSel = document.createElement('select');
+    modelSel.style.display = 'none';
+    modelSel.onchange = () => { list[i].model = modelSel.value; modelIn.value = modelSel.value; saveChatProviders(list); info.querySelector('.prov-card-sub').textContent = `${PROVIDERS[list[i].type]?.label || ''} · ${modelSel.value}`; };
+
+    modelRow.append(modelIn, modelSel);
+
+    fetchBtn.onclick = async () => {
+      if (!list[i].key) { fetchBtn.textContent = '⚠ no key'; setTimeout(() => { fetchBtn.textContent = '⟳ fetch'; }, 2000); return; }
+      fetchBtn.textContent = '…';
+      fetchBtn.disabled = true;
+      try {
+        const currentProv = PROVIDERS[list[i].type];
+        const models = await currentProv.listModels(list[i].key);
+        const current = list[i].model || currentProv.defaultModel || '';
+        modelSel.innerHTML = models.map(m => `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`).join('');
+        // If saved model isn't in list, prepend it
+        if (current && !models.includes(current)) {
+          modelSel.innerHTML = `<option value="${current}" selected>${current}</option>` + modelSel.innerHTML;
+        }
+        modelIn.style.display = 'none';
+        modelSel.style.display = '';
+        list[i].model = modelSel.value;
+        saveChatProviders(list);
+        info.querySelector('.prov-card-sub').textContent = `${currentProv.label} · ${modelSel.value}`;
+        fetchBtn.textContent = `✓ ${models.length}`;
+        setTimeout(() => { fetchBtn.textContent = '⟳ fetch'; }, 2500);
+      } catch (e) {
+        fetchBtn.textContent = '✗ error';
+        setTimeout(() => { fetchBtn.textContent = '⟳ fetch'; }, 2500);
+      } finally {
+        fetchBtn.disabled = false;
+      }
+    };
+
+    twoCol.append(typeRow, modelRow);
+
+    // API Key
+    const keyRow = document.createElement('div');
+    keyRow.className = 'field-row';
+    keyRow.innerHTML = '<label>API Key</label>';
+    const keyIn = document.createElement('input');
+    keyIn.type = 'password';
+    keyIn.value = p.key;
+    keyIn.placeholder = 'sk-…';
+    keyIn.oninput = () => { list[i].key = keyIn.value; saveChatProviders(list); };
+    keyRow.appendChild(keyIn);
+
+    // Delete
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-del-provider';
+    delBtn.textContent = 'Remove provider';
+    delBtn.onclick = () => {
+      list.splice(i, 1);
+      saveChatProviders(list);
+      if (getSelectedIdx() >= list.length) setSelectedIdx(Math.max(0, list.length - 1));
+      renderProviderList();
+      updateActiveProviderPill();
+    };
+
+    fields.append(nameRow, twoCol, keyRow, delBtn);
+    card.append(top, fields);
+    el.appendChild(card);
+  });
+}
+
+function toggleProviderExpand(i) {
+  const fields = document.getElementById(`prov-fields-${i}`);
+  if (fields) fields.classList.toggle('open');
+}
+
+function addProvider() {
+  const list = loadChatProviders();
+  list.push({ name: 'New Provider', type: 'openai', key: '', model: 'gpt-4o' });
+  saveChatProviders(list);
+  renderProviderList();
+  updateActiveProviderPill();
+  // Auto-expand the new card
+  setTimeout(() => toggleProviderExpand(list.length - 1), 50);
+}
+
+function toggleChat() {
+  const panel = document.getElementById('chat-panel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    updateActiveProviderPill();
+    renderClientChips();
+    renderChatHistory();
+    document.getElementById('chat-input').focus();
+  }
+}
+
+function toggleChatSettings() {
+  const s    = document.getElementById('chat-settings-panel');
+  const msgs = document.getElementById('chat-messages');
+  const isOpen = s.classList.toggle('open');
+  msgs.style.display = isOpen ? 'none' : 'flex';
+  if (isOpen) renderProviderList();
+}
+
+function chatInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function loadChatHistory() {
+  return JSON.parse(localStorage.getItem('invoice-chat-history') || '[]');
+}
+function saveChatHistory(history) {
+  // Keep last 100 messages to avoid unbounded growth
+  localStorage.setItem('invoice-chat-history', JSON.stringify(history.slice(-100)));
+}
+
+// ── Image attachments ─────────────────────────────────────────
+
+let _pendingImages = []; // array of { base64, mediaType }
+
+function handleImageFiles(files) {
+  Array.from(files).forEach(file => {
+    if (!file.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = e => addPendingImage(e.target.result, file.type);
+    reader.readAsDataURL(file);
+  });
+  // Reset so same file can be picked again
+  document.getElementById('chat-file-input').value = '';
+}
+
+function handleImagePaste(e) {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  Array.from(items).forEach(item => {
+    if (!item.type.startsWith('image/')) return;
+    const file = item.getAsFile();
+    const reader = new FileReader();
+    reader.onload = ev => addPendingImage(ev.target.result, item.type);
+    reader.readAsDataURL(file);
+  });
+}
+
+function addPendingImage(dataUrl, mediaType) {
+  const idx = _pendingImages.length;
+  _pendingImages.push({ dataUrl, mediaType: mediaType || 'image/png' });
+
+  const strip = document.getElementById('chat-image-preview');
+  strip.classList.add('has-images');
+
+  const thumb = document.createElement('div');
+  thumb.className = 'chat-img-thumb';
+  thumb.id = `thumb-${idx}`;
+
+  const img = document.createElement('img');
+  img.src = dataUrl;
+
+  const rm = document.createElement('button');
+  rm.className = 'rm-img';
+  rm.textContent = '✕';
+  rm.onclick = () => removePendingImage(idx);
+
+  thumb.append(img, rm);
+  strip.appendChild(thumb);
+}
+
+function removePendingImage(idx) {
+  _pendingImages[idx] = null;
+  const thumb = document.getElementById(`thumb-${idx}`);
+  if (thumb) thumb.remove();
+  if (_pendingImages.every(i => i === null)) {
+    _pendingImages = [];
+    document.getElementById('chat-image-preview').classList.remove('has-images');
+  }
+}
+
+function clearPendingImages() {
+  _pendingImages = [];
+  const strip = document.getElementById('chat-image-preview');
+  strip.innerHTML = '';
+  strip.classList.remove('has-images');
+}
+
+function appendMsg(role, text, persist = true) {
+  const el = document.createElement('div');
+  el.className = `chat-msg ${role}`;
+  el.textContent = text;
+  const msgs = document.getElementById('chat-messages');
+  msgs.appendChild(el);
+  msgs.scrollTop = msgs.scrollHeight;
+  // Don't persist the temporary "…" thinking placeholder
+  if (persist && text !== '…') {
+    const history = loadChatHistory();
+    history.push({ role, text });
+    saveChatHistory(history);
+  }
+  return el;
+}
+
+function renderChatHistory() {
+  const msgs    = document.getElementById('chat-messages');
+  const history = loadChatHistory();
+  if (!history.length) return;
+  // Clear the default greeting and replace with saved history
+  msgs.innerHTML = '';
+  history.forEach(m => appendMsg(m.role, m.text, false));
+}
+
+function clearChatHistory() {
+  localStorage.removeItem('invoice-chat-history');
+  const msgs = document.getElementById('chat-messages');
+  msgs.innerHTML = '';
+  appendMsg('assistant', 'Hi! Tell me what to update — e.g. "Invoice for Sarah, logo design, $5000 USD, balance due."', false);
+}
+
+async function sendChat() {
+  const input   = document.getElementById('chat-input');
+  const sendBtn = document.getElementById('btn-chat-send');
+  const text    = input.value.trim();
+  if (!text) return;
+
+  const list = loadChatProviders();
+  const cfg  = list[getSelectedIdx()];
+  if (!cfg) { appendMsg('error', 'No provider selected. Open ⚙ settings to add one.'); return; }
+
+  const prov = PROVIDERS[cfg.type];
+  if (!prov) { appendMsg('error', `Unknown provider type: ${cfg.type}`); return; }
+  if (!cfg.key) { appendMsg('error', 'API key is missing. Open ⚙ settings to add it.'); return; }
+
+  // Close settings if open
+  const settingsPanel = document.getElementById('chat-settings-panel');
+  if (settingsPanel.classList.contains('open')) toggleChatSettings();
+
+  const images = _pendingImages.filter(Boolean);
+  appendMsg('user', text + (images.length ? ` [${images.length} image${images.length > 1 ? 's' : ''}]` : ''));
+  input.value = '';
+  clearPendingImages();
+  sendBtn.disabled = true;
+  const thinking = appendMsg('assistant', '…');
+
+  const currentData = JSON.stringify(getData(), null, 2);
+  const systemPrompt = `You are an invoice data assistant. The user will describe changes to make to an invoice.
+Return ONLY a valid JSON object containing only the fields that need to change — nothing else, no markdown, no explanation.
+Field reference: date, receiptNumber, currency, payPeriod, from (name/email/phone), to (name/address/email/phone), lineItems (array of {service, details, rates[], costs[]}), projectTotal, totalLabelTop (e.g. "Deposit"), totalLabelBottom (e.g. "Due"), totalAmount, paymentNote, paid.
+Current invoice data:
+${currentData}`;
+
+  try {
+    let responseText = '';
+
+    if (cfg.type === 'anthropic') {
+      // Build content array — text + images
+      const content = [];
+      images.forEach(img => {
+        const b64 = img.dataUrl.split(',')[1];
+        content.push({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: b64 } });
+      });
+      content.push({ type: 'text', text });
+
+      const res = await fetch(prov.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
+        body: JSON.stringify({ model: cfg.model, max_tokens: 1024, system: systemPrompt, messages: [{ role: 'user', content }] })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || json.type || res.statusText);
+      responseText = json.content?.[0]?.text || '';
+
+    } else if (cfg.type === 'gemini') {
+      const parts = [];
+      images.forEach(img => {
+        const b64 = img.dataUrl.split(',')[1];
+        parts.push({ inlineData: { mimeType: img.mediaType, data: b64 } });
+      });
+      parts.push({ text: systemPrompt + '\n\nUser: ' + text });
+
+      const url = typeof prov.url === 'function' ? prov.url(cfg.model) : prov.url;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
+        body: JSON.stringify({ contents: [{ parts }] })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || res.statusText);
+      responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    } else {
+      // OpenAI-compatible: supports image_url with base64
+      const userContent = [];
+      images.forEach(img => {
+        userContent.push({ type: 'image_url', image_url: { url: img.dataUrl } });
+      });
+      userContent.push({ type: 'text', text });
+
+      const res = await fetch(prov.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
+        body: JSON.stringify({ model: cfg.model, messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userContent }] })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || res.statusText);
+      responseText = json.choices?.[0]?.message?.content || '';
+    }
+
+    responseText = responseText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
+
+    let patch;
+    try { patch = JSON.parse(responseText); }
+    catch { throw new Error('Model returned non-JSON. Try rephrasing.'); }
+
+    const data = getData();
+    function deepMerge(target, source) {
+      Object.entries(source).forEach(([k, v]) => {
+        if (v && typeof v === 'object' && !Array.isArray(v) && typeof target[k] === 'object') deepMerge(target[k], v);
+        else target[k] = v;
+      });
+    }
+    deepMerge(data, patch);
+    data.dateOverride    = data.date;
+    data.receiptOverride = data.receiptNumber;
+    document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+    render(data);
+
+    const changed = Object.keys(patch).join(', ');
+    thinking.textContent = `✓ Updated: ${changed}`;
+    const h = loadChatHistory(); h.push({ role: 'assistant', text: thinking.textContent }); saveChatHistory(h);
+
+  } catch (err) {
+    thinking.className = 'chat-msg error';
+    thinking.textContent = `✗ ${err.message}`;
+    const h = loadChatHistory(); h.push({ role: 'error', text: thinking.textContent }); saveChatHistory(h);
+  } finally {
+    sendBtn.disabled = false;
+  }
+}
+
+// ── Address Book ─────────────────────────────────────────────
+
+function loadClients() {
+  return JSON.parse(localStorage.getItem('invoice-clients') || '[]');
+}
+function saveClients(list) {
+  localStorage.setItem('invoice-clients', JSON.stringify(list));
+}
+
+function upsertClient(client) {
+  const list = loadClients();
+  const idx  = list.findIndex(c => c.name.toLowerCase() === client.name.toLowerCase());
+  if (idx >= 0) list[idx] = { ...list[idx], ...client };
+  else list.push(client);
+  saveClients(list);
+}
+
+function applyClient(client) {
+  const data = getData();
+  data.to = { name: client.name, address: client.address || '', email: client.email || '', phone: client.phone || '' };
+  data.dateOverride    = data.date;
+  data.receiptOverride = data.receiptNumber;
+  document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  render(data);
+}
+
+function renderClientChips() {
+  const list = loadClients();
+  const el   = document.getElementById('client-chips');
+  const data = getData();
+  const currentClient = data.to?.name;
+  el.innerHTML = '';
+  list.forEach(c => {
+    const chip = document.createElement('button');
+    chip.className   = 'client-chip';
+    chip.textContent = c.name.split(' ')[0]; // first name only for brevity
+    chip.title       = c.name;
+    if (c.name === currentClient) {
+      chip.style.background = '#14202e';
+      chip.style.color = '#fff';
+      chip.style.borderColor = '#14202e';
+    }
+    chip.onclick     = () => { applyClient(c); renderClientChips(); };
+    el.appendChild(chip);
+  });
+}
+
+function renderClientBook() {
+  const list = loadClients();
+  const el   = document.getElementById('client-list');
+  el.innerHTML = '';
+
+  if (!list.length) {
+    el.innerHTML = '<div style="text-align:center;color:#9aa2ac;font-size:12px;padding:24px 0;">No clients yet.<br>They\'ll appear here after you update the ledger,<br>or hit <strong>+ Add Client</strong>.</div>';
+    return;
+  }
+
+  list.forEach((c, i) => {
+    const initials = c.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+
+    const card = document.createElement('div');
+    card.className = 'client-card';
+
+    const top = document.createElement('div');
+    top.className = 'client-card-top';
+
+    const avatar = document.createElement('div');
+    avatar.className   = 'client-avatar';
+    avatar.textContent = initials;
+
+    const info = document.createElement('div');
+    info.className = 'client-card-info';
+    info.innerHTML = `<div class="client-card-name">${c.name}</div><div class="client-card-sub">${c.email || c.phone || c.address || '—'}</div>`;
+
+    const useBtn = document.createElement('button');
+    useBtn.className   = 'btn-use-client';
+    useBtn.textContent = 'Use';
+    useBtn.onclick     = () => { applyClient(c); toggleClientBook(); };
+
+    const expandBtn = document.createElement('button');
+    expandBtn.className   = 'btn-expand-client';
+    expandBtn.textContent = '···';
+    expandBtn.onclick     = () => document.getElementById(`client-fields-${i}`)?.classList.toggle('open');
+
+    top.append(avatar, info, useBtn, expandBtn);
+
+    // Editable fields
+    const fields = document.createElement('div');
+    fields.className = 'client-card-fields';
+    fields.id        = `client-fields-${i}`;
+
+    ['name', 'address', 'email', 'phone'].forEach(key => {
+      const row = document.createElement('div');
+      row.className = 'field-row';
+      row.innerHTML = `<label>${key.charAt(0).toUpperCase() + key.slice(1)}</label>`;
+      const inp = document.createElement('input');
+      inp.value       = c[key] || '';
+      inp.placeholder = key;
+      inp.oninput     = () => {
+        list[i][key] = inp.value;
+        saveClients(list);
+        info.querySelector('.client-card-name').textContent = list[i].name;
+        info.querySelector('.client-card-sub').textContent  = list[i].email || list[i].phone || list[i].address || '—';
+        renderClientChips();
+      };
+      row.appendChild(inp);
+      fields.appendChild(row);
+    });
+
+    const delBtn = document.createElement('button');
+    delBtn.className   = 'btn-del-provider';
+    delBtn.textContent = 'Remove client';
+    delBtn.onclick     = () => { list.splice(i, 1); saveClients(list); renderClientBook(); renderClientChips(); };
+    fields.appendChild(delBtn);
+
+    card.append(top, fields);
+    el.appendChild(card);
+  });
+}
+
+function addClient() {
+  const list = loadClients();
+  list.push({ name: 'New Client', address: '', email: '', phone: '' });
+  saveClients(list);
+  renderClientBook();
+  renderClientChips();
+  setTimeout(() => document.getElementById(`client-fields-${list.length - 1}`)?.classList.add('open'), 50);
+}
+
+function toggleClientBook() {
+  const book = document.getElementById('client-book-panel');
+  const msgs = document.getElementById('chat-messages');
+  const sets = document.getElementById('chat-settings-panel');
+  const isOpen = book.classList.toggle('open');
+  // Close settings if open
+  if (isOpen && sets.classList.contains('open')) toggleChatSettings();
+  msgs.style.display = isOpen ? 'none' : 'flex';
+  if (isOpen) renderClientBook();
+}
+
+// ── Gmail OAuth ───────────────────────────────────────────────
+
+// ⚠ Replace this with your own OAuth Client ID from Google Cloud Console
+// console.cloud.google.com → APIs & Services → Credentials → Create OAuth 2.0 Client ID
+// Application type: Web application. Add your file:// or localhost origin.
+let GMAIL_CLIENT_ID = localStorage.getItem('gmail-client-id') || '';
+
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets';
+
+function saveOAuthClientIdInput() {
+  const input = document.getElementById('oauth-client-id-input');
+  const id = input.value.trim();
+  if (id) {
+    GMAIL_CLIENT_ID = id;
+    localStorage.setItem('gmail-client-id', id);
+    refreshGmailIdStatus();
+  }
+}
+
+let _gmailToken     = null;
+let _gmailTokenExp  = 0;
+let _gmailTokenClient = null;
+let _sheetsSpreadsheetId = localStorage.getItem('sheets-spreadsheet-id') || '';
+
+function gmailTokenValid() {
+  return _gmailToken && Date.now() < _gmailTokenExp - 30000;
+}
+
+function saveTokenToStorage() {
+  if (_gmailToken) {
+    localStorage.setItem('gmail-token', _gmailToken);
+    localStorage.setItem('gmail-token-exp', _gmailTokenExp);
+  }
+}
+
+function restoreTokenFromStorage() {
+  const token = localStorage.getItem('gmail-token');
+  const exp = localStorage.getItem('gmail-token-exp');
+  if (token && exp && Date.now() < parseInt(exp) - 30000) {
+    _gmailToken = token;
+    _gmailTokenExp = parseInt(exp);
+    console.log('✓ Restored token from storage');
+    return true;
+  }
+  return false;
+}
+
+function initGmailAuth(onToken) {
+  if (!GMAIL_CLIENT_ID) {
+    const msg = `Enter your Google OAuth Client ID.
+
+To get one:
+1. Go to console.cloud.google.com
+2. Create a project
+3. Search "Gmail API" and Enable it
+4. Go to APIs & Services → Credentials
+5. Create Credentials → OAuth 2.0 Client ID
+6. Application type: Web application
+7. Authorized origins: http://localhost:3000 (or leave blank for local use)
+8. Copy the Client ID and paste it below
+
+The ID is saved locally in your browser and never sent anywhere.`;
+    const id = prompt(msg);
+    if (!id) return;
+    localStorage.setItem('gmail-client-id', id.trim());
+    location.reload();
+    return;
+  }
+
+  _gmailTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GMAIL_CLIENT_ID,
+    scope:     GMAIL_SCOPE,
+    callback:  resp => {
+      if (resp.error) { console.error(resp); return; }
+      _gmailToken    = resp.access_token;
+      _gmailTokenExp = Date.now() + resp.expires_in * 1000;
+      saveTokenToStorage();
+      updateEmailBtn();
+      if (onToken) onToken();
+    },
+  });
+}
+
+function requestGmailToken(onToken) {
+  if (!_gmailTokenClient) initGmailAuth(onToken);
+  if (!_gmailTokenClient) return;
+  if (gmailTokenValid()) { if (onToken) onToken(); return; }
+  // Try silent mode first (no prompt)
+  _gmailTokenClient.requestAccessToken({ prompt: 'none' });
+  // If that doesn't work within 2 seconds, the user needs to grant permission
+  setTimeout(() => {
+    if (!gmailTokenValid()) {
+      console.log('Silent token request failed, user may need to grant permission');
+      if (onToken) onToken(); // Call callback anyway, let it fail gracefully
+    } else if (onToken) {
+      onToken();
+    }
+  }, 2000);
+}
+
+function updateEmailBtn() {
+  const btn = document.getElementById('btn-email-client');
+  if (!btn) return;
+  if (gmailTokenValid()) {
+    btn.textContent = '✉ Email Client';
+    btn.style.opacity = '1';
+  } else {
+    btn.textContent = '✉ Email Client';
+    btn.style.opacity = '1';
+  }
+}
+
+async function openEmail() {
+  const data    = getData();
+  const service = data.lineItems.map(l => l.service).join(', ');
+  const to      = encodeURIComponent(data.to.email || '');
+  const subject = encodeURIComponent(`moo Invoice ${data.receiptNumber} - ${service}`);
+  const body    = encodeURIComponent('Please review the attached invoice.');
+
+  const sendViaDraft = async () => {
+    try {
+      // Generate PDF using html2pdf
+      const invoiceEl = document.getElementById('invoice');
+      const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
+      console.log('Generating PDF...');
+
+      // Temporarily hide UI elements and strip padding
+      const toolbar = document.getElementById('toolbar');
+      const chatPanel = document.getElementById('chat-panel');
+      const origToolbarDisplay = toolbar.style.display;
+      const origChatDisplay = chatPanel.style.display;
+      const origMargin = invoiceEl.style.margin;
+      const origPadding = invoiceEl.style.padding;
+      const origBg = invoiceEl.style.background;
+      const origBoxShadow = invoiceEl.style.boxShadow;
+      const origBorderRadius = invoiceEl.style.borderRadius;
+      const origMinHeight = invoiceEl.style.minHeight;
+      const origHeight = invoiceEl.style.height;
+
+      toolbar.style.display = 'none';
+      chatPanel.style.display = 'none';
+      invoiceEl.style.margin = '0';
+      invoiceEl.style.padding = '62px 67px 58px';
+      invoiceEl.style.background = '#fff';
+      invoiceEl.style.boxShadow = 'none';
+      invoiceEl.style.borderRadius = '0';
+      invoiceEl.style.minHeight = 'unset';
+      invoiceEl.style.height = 'auto';
+
+      // Use browser's print-to-PDF by capturing it
+      const pdfBlob = await new Promise((resolve, reject) => {
+        const opt = {
+          margin: 0,
+          filename: filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 1 },
+          jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
+        };
+        html2pdf().set(opt).from(invoiceEl).toPdf().output('blob').then(resolve).catch(reject);
+      });
+
+      // Restore styles
+      toolbar.style.display = origToolbarDisplay;
+      chatPanel.style.display = origChatDisplay;
+      invoiceEl.style.margin = origMargin;
+      invoiceEl.style.padding = origPadding;
+      invoiceEl.style.background = origBg;
+      invoiceEl.style.boxShadow = origBoxShadow;
+      invoiceEl.style.borderRadius = origBorderRadius;
+      invoiceEl.style.minHeight = origMinHeight;
+      invoiceEl.style.height = origHeight;
+
+      const pdfBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(pdfBlob);
+      });
+      console.log('PDF generated, size:', Math.round(pdfBase64.length / 1024), 'KB');
+
+      // Build multipart MIME message
+      const boundary = '===============' + Date.now() + '===============';
+      const textBody = 'Please review the attached invoice.';
+      const textPart = [
+        `--${boundary}`,
+        'Content-Type: text/plain; charset=utf-8',
+        'Content-Transfer-Encoding: 7bit',
+        '',
+        textBody,
+      ].join('\r\n');
+
+      const pdfPart = [
+        `--${boundary}`,
+        'Content-Type: application/pdf; name="' + filename + '"',
+        'Content-Disposition: attachment; filename="' + filename + '"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        pdfBase64,
+      ].join('\r\n');
+
+      const fullMessage = [
+        `From: ${data.from.email}`,
+        `To: ${data.to.email}`,
+        `Subject: ${decodeURIComponent(subject)}`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        textPart,
+        pdfPart,
+        `--${boundary}--`,
+      ].join('\r\n');
+
+      const encoded = btoa(unescape(encodeURIComponent(fullMessage)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${_gmailToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: { raw: encoded } }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        console.error('Gmail API error:', json);
+        throw new Error(json.error?.message || res.statusText);
+      }
+      window.open(`https://mail.google.com/mail/#drafts/${json.id}`, '_blank');
+    } catch (e) {
+      console.error('Draft creation failed:', e.message);
+      fallbackEmail();
+    }
+  };
+
+  const fallbackEmail = () => {
+    window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${subject}&body=${body}`, '_blank');
+  };
+
+  if (!GMAIL_CLIENT_ID) {
+    fallbackEmail();
+    return;
+  }
+
+  if (gmailTokenValid()) {
+    await sendViaDraft();
+  } else {
+    if (!_gmailTokenClient) initGmailAuth(null);
+    _gmailTokenClient.requestAccessToken({ prompt: '' });
+    const orig = _gmailTokenClient.callback;
+    _gmailTokenClient.callback = async resp => {
+      orig(resp);
+      if (!resp.error) await sendViaDraft();
+      else fallbackEmail();
+    };
+  }
+}
+
+function resetGmailClientId() {
+  localStorage.removeItem('gmail-client-id');
+  location.reload();
+}
+
+// ── Google Sheets Sync ───────────────────────────────────────
+
+async function syncToGoogleSheets(invoiceData) {
+  if (!_gmailToken || !_sheetsSpreadsheetId) {
+    console.log('Sheets sync skipped: no token or spreadsheet ID');
+    return;
+  }
+
+  try {
+    const services = invoiceData.lineItems.map(l => l.service).join(', ');
+    const row = [
+      invoiceData.receiptNumber,
+      invoiceData.date,
+      invoiceData.to.name,
+      services,
+      invoiceData.currency + ' ' + invoiceData.projectTotal,
+      invoiceData.totalAmount,
+      '⬜ Unpaid'
+    ];
+
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A:G:append?valueInputOption=USER_ENTERED`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${_gmailToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: [row] })
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.json();
+      console.error('Sheets sync error:', err);
+    } else {
+      console.log('✓ Invoice synced to Google Sheets');
+    }
+  } catch (e) {
+    console.error('Sheets sync failed:', e.message);
+  }
+}
+
+function promptForSheetsId() {
+  const msg = `Enter your Google Sheet ID for the InvoiceLedger.
+
+You can find it in the URL: https://docs.google.com/spreadsheets/d/{ID}/edit
+
+The sheet must have columns: Receipt #, Date, Client, Service, Project Total, Amount Due, Status`;
+  const id = prompt(msg);
+  if (id) {
+    _sheetsSpreadsheetId = id.trim();
+    localStorage.setItem('sheets-spreadsheet-id', id);
+    alert('✓ Spreadsheet ID saved. Invoices will now sync to Google Sheets.');
+  }
+}
+
+async function loadLedgerFromSheet() {
+  if (!_sheetsSpreadsheetId || !_gmailToken) {
+    console.log('Sheet sync not available: missing ID or token');
+    return null;
+  }
+
+  try {
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A:G`,
+      {
+        headers: { Authorization: `Bearer ${_gmailToken}` }
+      }
+    );
+
+    if (!res.ok) {
+      const err = await res.json();
+      console.error('Failed to load ledger from sheet:', err.error?.message || res.statusText);
+      return null;
+    }
+
+    const data = await res.json();
+    const rows = data.values || [];
+
+    console.log('Loaded', rows.length, 'rows from sheet');
+
+    // Skip header row and convert to ledger format
+    return rows.slice(1).map(row => ({
+      receipt: row[0] || '',
+      date: row[1] || '',
+      client: row[2] || '',
+      service: row[3] || '',
+      projectTotal: row[4] || '',
+      amountDue: row[5] || '',
+      status: row[6] || '⬜ Unpaid'
+    }));
+  } catch (e) {
+    console.error('Ledger load error:', e.message);
+    return null;
+  }
+}
+
+async function updateLedgerStatusOnSheet(rowIndex, status) {
+  if (!_sheetsSpreadsheetId || !_gmailToken) return;
+
+  try {
+    const cell = `Sheet1!G${rowIndex + 2}`; // +2 for header + 0-index
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${_gmailToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values: [[status]] })
+      }
+    );
+
+    if (res.ok) {
+      console.log('✓ Status updated on sheet');
+    }
+  } catch (e) {
+    console.error('Status update error:', e.message);
+  }
+}
+
+function refreshGmailIdStatus() {
+  const el = document.getElementById('gmail-id-status');
+  const input = document.getElementById('oauth-client-id-input');
+  if (!el) return;
+  const id = localStorage.getItem('gmail-client-id');
+  el.textContent = id ? '✓ set' : 'not set';
+  if (input) input.value = id || '';
+}
+
+function refreshSheetsIdStatus() {
+  const el = document.getElementById('sheets-id-status');
+  if (!el) return;
+  const id = localStorage.getItem('sheets-spreadsheet-id');
+  el.textContent = id ? id.slice(0, 20) + '…' : 'not set';
+}
+
+// ── Voice input ───────────────────────────────────────────────
+
+let _recognition = null;
+let _recognizing = false;
+
+function toggleVoice() {
+  const btn = document.getElementById('btn-chat-voice');
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRecognition) {
+    appendMsg('error', '✗ Voice not supported in this browser. Try Chrome or Edge.');
+    return;
+  }
+
+  if (_recognizing) {
+    _recognition.stop();
+    return;
+  }
+
+  _recognition = new SpeechRecognition();
+  _recognition.continuous      = false;
+  _recognition.interimResults  = true;
+  _recognition.lang            = 'en-US';
+
+  _recognition.onstart = () => {
+    _recognizing = true;
+    btn.classList.add('recording');
+    btn.title = 'Stop recording';
+  };
+
+  _recognition.onresult = e => {
+    const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+    document.getElementById('chat-input').value = transcript;
+  };
+
+  _recognition.onend = () => {
+    _recognizing = false;
+    btn.classList.remove('recording');
+    btn.title = 'Voice input';
+    // Auto-send if we got something
+    const val = document.getElementById('chat-input').value.trim();
+    if (val) sendChat();
+  };
+
+  _recognition.onerror = e => {
+    _recognizing = false;
+    btn.classList.remove('recording');
+    if (e.error !== 'aborted') appendMsg('error', `✗ Voice error: ${e.error}`);
+  };
+
+  _recognition.start();
+}
+
+// ── Init ─────────────────────────────────────────────────────
+// Restore last saved state, migrating old fields as needed
+try {
+  const saved = localStorage.getItem('invoice-last-state');
+  if (saved) {
+    const parsed = JSON.parse(saved);
+    // Migrate old totalLabel
+    if (parsed.totalLabel && !parsed.totalLabelTop) {
+      const parts = parsed.totalLabel.split(' ');
+      parsed.totalLabelTop    = parts[0] || 'Deposit';
+      parsed.totalLabelBottom = parts.slice(1).join(' ') || 'Due';
+      delete parsed.totalLabel;
+    }
+    if (parsed.receiptOverride) {
+      document.getElementById('invoice-data').textContent = JSON.stringify(parsed, null, 2);
+    }
+  }
+} catch(e) {}
+
+render(getData());
+renderClientChips();
+restoreTitleFont();
+
+// Restore token from storage if available
+restoreTokenFromStorage();
+
+// Init Gmail auth silently if client ID already saved
+if (localStorage.getItem('gmail-client-id')) {
+  window.addEventListener('load', () => {
+    try { initGmailAuth(null); } catch(e) {}
+  });
+}
+
+// Register service worker for PWA
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').then(reg => {
+    console.log('✓ Service worker registered');
+  }).catch(err => {
+    console.log('Service worker registration failed:', err);
+  });
+}
+</script>
+</body>
+</html>

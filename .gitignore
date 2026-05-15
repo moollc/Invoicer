@@ -1,0 +1,23 @@
+# Ignore everything
+*
+*/
+
+# Allow core project files
+!index.html
+!manifest.json
+!sw.js
+
+# Allow icon files related to the tool
+!icon*.png
+!icon*.svg
+!icon*.ico
+!favicon*
+
+# Allow git and essential config
+!.gitignore
+!.git/
+!.gitattributes
+
+# Allow documentation at root only (if any)
+!README.md
+!LICENSE
