@@ -1879,27 +1879,21 @@ async function proceedPrint() {
   window.print();
   setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
 
-  // Also save to Drive silently if signed in
+  // Save to Drive after print completes, using a clone so live DOM is never touched
   if (gmailTokenValid() && _driveFolderId) {
-    const data = getData();
-    const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
-    const invoiceEl = document.getElementById('invoice');
-    const toolbar = document.getElementById('toolbar');
-    const chatPanel = document.getElementById('chat-panel');
-    toolbar.style.display = 'none';
-    chatPanel.style.display = 'none';
-    const origMargin = invoiceEl.style.margin;
-    invoiceEl.style.margin = '0';
-    invoiceEl.style.boxShadow = 'none';
-    invoiceEl.style.borderRadius = '0';
-    const opt = { margin: 0, filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 1 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
-    const pdfBlob = await html2pdf().set(opt).from(invoiceEl).toPdf().output('blob');
-    toolbar.style.display = '';
-    chatPanel.style.display = '';
-    invoiceEl.style.margin = origMargin;
-    invoiceEl.style.boxShadow = '';
-    invoiceEl.style.borderRadius = '';
-    savePdfToDrive(pdfBlob, filename);
+    setTimeout(async () => {
+      try {
+        const data = getData();
+        const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
+        const clone = document.getElementById('invoice').cloneNode(true);
+        clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
+        document.body.appendChild(clone);
+        const opt = { margin: 0, filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 1 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
+        document.body.removeChild(clone);
+        savePdfToDrive(pdfBlob, filename);
+      } catch(e) { console.error('Drive PDF save failed:', e.message); }
+    }, 3000);
   }
 }
 
