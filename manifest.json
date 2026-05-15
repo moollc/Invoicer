@@ -10,8 +10,8 @@
   "theme_color": "#14202e",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect fill='%2314202e' width='192' height='192'/><text x='96' y='120' font-size='80' font-weight='bold' text-anchor='middle' fill='%23fff' font-family='sans-serif'>moo</text></svg>",
-      "sizes": "192x192",
+      "src": "data:image/svg+xml,<svg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><defs><linearGradient id='goldGradient' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23967423'/><stop offset='50%' stop-color='%23FCDD76'/><stop offset='100%' stop-color='%23967423'/></linearGradient><linearGradient id='silverGradient' x1='23.731039' y1='-4.3318563' x2='105.99892' y2='92.268921' gradientTransform='matrix(1.1909821,0,0,1.1909821,-23.762691,-11.826319)'><stop offset='0%' stop-color='%23757575'/><stop offset='50%' stop-color='%23E8E8E8'/><stop offset='100%' stop-color='%23757575'/></linearGradient><linearGradient id='linearGradient7' xlink:href='%23goldGradient' x1='0%' y1='0%' x2='100%' y2='100%' gradientTransform='translate(1.110285,-0.47583643)'/></defs><circle cx='64' cy='64' r='52' fill='none' stroke='url(%23goldGradient)' stroke-width='10'/><g fill='none' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'><path d='m 31.610286,76.524164 v -16 q 0,-10 9,-10 9,0 9,10 v 16 m 0,-16 q 0,-10 9,-10 9,0 9,10 v 16' stroke='url(%23linearGradient7)'/><path d='m 68.538416,40.57689 h 23.81964 m -11.909821,0 v 47.63928 m -11.909819,0 h 23.81964' stroke='url(%23silverGradient)' style='stroke-width:10.7188'/></g></svg>",
+      "sizes": "128x128",
       "type": "image/svg+xml",
       "purpose": "any"
     }
