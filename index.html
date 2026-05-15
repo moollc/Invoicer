@@ -2540,6 +2540,7 @@ Do not repeat fields that are already correct. Do not return markdown, explanati
 If nothing needs to change, return an empty object: {}
 Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, paid.
 When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
+To save a contact to the address book, include "_addContact": { "name": "...", "address": "...", "email": "...", "phone": "..." } in your response. Only include fields you know. This does not update the invoice — combine with "to" if you also want to set the client.
 Current invoice data:
 ${currentData}`;
 
@@ -2631,6 +2632,10 @@ ${currentData}`;
     try { patch = JSON.parse(responseText); }
     catch { throw new Error('Model returned non-JSON. Try rephrasing.'); }
 
+    // Extract _addContact before merge so it never touches invoice data
+    const contactToAdd = patch._addContact || null;
+    delete patch._addContact;
+
     const data = getData();
     function deepMerge(target, source) {
       Object.entries(source).forEach(([k, v]) => {
@@ -2639,6 +2644,16 @@ ${currentData}`;
       });
     }
     deepMerge(data, patch);
+
+    if (contactToAdd && contactToAdd.name) {
+      upsertClient({
+        name:    contactToAdd.name    || '',
+        address: contactToAdd.address || '',
+        email:   contactToAdd.email   || '',
+        phone:   contactToAdd.phone   || '',
+      });
+      renderClientChips();
+    }
     data.dateOverride    = data.date;
     data.receiptOverride = data.receiptNumber;
     document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
@@ -2652,7 +2667,8 @@ ${currentData}`;
     };
     const changedKeys = Object.keys(patch);
     const changed = changedKeys.map(k => fieldLabels[k] || k).filter((v, i, a) => a.indexOf(v) === i).join(', ');
-    thinking.textContent = `✓ Updated: ${changed}`;
+    const contactNote = (contactToAdd && contactToAdd.name) ? ` · ${contactToAdd.name} saved to contacts` : '';
+    thinking.textContent = `✓ Updated: ${changed}${contactNote}`;
     const h = loadChatHistory(); h.push({ role: 'assistant', text: thinking.textContent }); saveChatHistory(h);
 
   } catch (err) {
