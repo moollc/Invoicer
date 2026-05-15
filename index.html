@@ -189,6 +189,37 @@
     outline: 2px solid rgba(255,255,255,0.8);
   }
 
+  /* Rate / cost textareas in edit mode */
+  body.editing .rate-edit-ta,
+  body.editing .cost-edit-ta {
+    width: 100%;
+    min-height: 40px;
+    background: transparent;
+    border: 2px dashed rgba(208,36,27,0.5);
+    border-radius: 3px;
+    color: inherit;
+    font-family: inherit;
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    line-height: 1.8;
+    padding: 4px 6px;
+    resize: vertical;
+    outline: none;
+  }
+  body.editing .rate-edit-ta:focus,
+  body.editing .cost-edit-ta:focus {
+    border-color: var(--red);
+    background: rgba(208,36,27,0.06);
+  }
+  body.editing .cost-edit-ta {
+    text-align: right;
+    font-size: 15px;
+    letter-spacing: 0.3px;
+    font-weight: 600;
+    text-transform: none;
+  }
+
   /* title size slider shown in edit mode */
   #title-size-wrap {
     display: none;
@@ -326,7 +357,7 @@
   .party.from .name {
     font-family: 'Bebas Neue', 'Bauhaus93', sans-serif;
     font-size: 20px;
-    font-weight: normal;
+    font-weight: 700;
     letter-spacing: -0.5px;
   }
 
@@ -1681,8 +1712,8 @@ function render(data) {
       <tr>
         <td class="col-service"><div class="service-name" data-field="lineItems.${i}.service">${item.service}</div></td>
         <td class="col-details" data-field="lineItems.${i}.details">${item.details}</td>
-        <td class="col-rate"><div class="rate-rows">${ratesHtml}</div></td>
-        <td class="col-cost num"><div class="cost-rows">${costsHtml}</div></td>
+        <td class="col-rate"><div class="rate-rows" id="rate-rows-${i}">${ratesHtml}</div></td>
+        <td class="col-cost num"><div class="cost-rows" id="cost-rows-${i}">${costsHtml}</div></td>
       </tr>`;
   });
 }
@@ -1697,6 +1728,31 @@ function startEdit() {
   document.querySelectorAll('[data-field]').forEach(el => {
     el.contentEditable = 'true';
     el.spellcheck = false;
+  });
+
+  // Swap rate/cost span groups → textareas (Enter works natively in textarea)
+  const editData = getData();
+  editData.lineItems.forEach(function(item, i) {
+    const rateWrap = document.getElementById('rate-rows-' + i);
+    const costWrap = document.getElementById('cost-rows-' + i);
+    if (rateWrap) {
+      const ta = document.createElement('textarea');
+      ta.className = 'rate-edit-ta';
+      ta.value = item.rates.join('\n');
+      ta.dataset.lineIndex = i;
+      ta.rows = Math.max(item.rates.length, 1);
+      rateWrap.innerHTML = '';
+      rateWrap.appendChild(ta);
+    }
+    if (costWrap) {
+      const ta = document.createElement('textarea');
+      ta.className = 'cost-edit-ta';
+      ta.value = item.costs.join('\n');
+      ta.dataset.lineIndex = i;
+      ta.rows = Math.max(item.costs.length, 1);
+      costWrap.innerHTML = '';
+      costWrap.appendChild(ta);
+    }
   });
   const pn = document.getElementById('payment-note-el');
   if (pn) { pn.contentEditable = 'true'; pn.spellcheck = false; pn.dataset.field = 'paymentNote'; }
@@ -1715,6 +1771,17 @@ function startEdit() {
 
 function saveEdit() {
   const data = getData();
+  // Read rate/cost textareas back into arrays before the data-field loop
+  document.querySelectorAll('.rate-edit-ta').forEach(function(ta) {
+    const i = parseInt(ta.dataset.lineIndex);
+    const vals = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    data.lineItems[i].rates = vals.length ? vals : [''];
+  });
+  document.querySelectorAll('.cost-edit-ta').forEach(function(ta) {
+    const i = parseInt(ta.dataset.lineIndex);
+    const vals = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    data.lineItems[i].costs = vals.length ? vals : ['0'];
+  });
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
     // Sub fields are stored as "· "-joined strings — parse them back
@@ -2025,15 +2092,6 @@ async function proceedPrint() {
       } catch(e) { console.error('Drive PDF save failed:', e.message); }
     }, 3000);
   }
-}
-
-function openEmail() {
-  const data    = getData();
-  const to      = encodeURIComponent(data.to.email || '');
-  const service = data.lineItems.map(l => l.service).join(', ');
-  const subject = encodeURIComponent(`moo Invoice ${data.receiptNumber} - ${service}`);
-  const body    = encodeURIComponent('Please review the attached invoice.');
-  window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${subject}&body=${body}`, '_blank');
 }
 
 function closeDialog() {
@@ -3109,6 +3167,12 @@ async function openEmail() {
       window.open(`https://mail.google.com/mail/#drafts/${json.id}`, '_blank');
     } catch (e) {
       console.error('Draft creation failed:', e.message);
+      const confirmEl = document.getElementById('ledger-confirm');
+      if (confirmEl) {
+        confirmEl.style.display = 'block';
+        confirmEl.style.color = '#d0241b';
+        confirmEl.textContent = '⚠ Could not attach PDF — opening Gmail compose instead. Check console for details.';
+      }
       fallbackEmail();
     }
   };
@@ -3231,7 +3295,7 @@ async function ensureLedgerSheet(folderId) {
   if (_sheetsSpreadsheetId) return _sheetsSpreadsheetId;
 
   // Search for existing ledger in folder
-  const search = await driveRequest('GET', `/files?q=name%3D'mooInvoicer+Ledger'+and+'${folderId}'+in+parents+and+trashed%3Dfalse&fields=files(id,name)`);
+  const search = await driveRequest('GET', `/files?q=name%3D'Invoice+Ledger'+and+'${folderId}'+in+parents+and+trashed%3Dfalse&fields=files(id,name)`);
   if (search.files && search.files.length > 0) {
     _sheetsSpreadsheetId = search.files[0].id;
     localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
@@ -3240,7 +3304,7 @@ async function ensureLedgerSheet(folderId) {
 
   // Create spreadsheet via Drive (so it lands in our folder)
   const file = await driveRequest('POST', '/files', {
-    name: 'mooInvoicer Ledger',
+    name: 'Invoice Ledger',
     mimeType: 'application/vnd.google-apps.spreadsheet',
     parents: [folderId]
   });
