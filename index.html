@@ -3065,79 +3065,76 @@ async function openEmail() {
 
   const sendViaDraft = async () => {
     try {
+      const invoiceEl = document.getElementById('invoice');
       const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
+      console.log('Generating PDF...');
 
-      // Guard — need a valid To address before building MIME
-      if (!data.to.email || !data.to.email.includes('@')) {
-        throw new Error('No valid client email — add one to the To field first.');
-      }
-
-      console.log('Generating PDF for email...');
-      const clone = document.getElementById('invoice').cloneNode(true);
+      // Clone so we never touch the live DOM
+      const clone = invoiceEl.cloneNode(true);
       clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
       document.body.appendChild(clone);
 
-      const opt = {
-        margin: 0, filename,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 1 },
-        jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
-      };
-      const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
+      const pdfBlob = await new Promise((resolve, reject) => {
+        const opt = {
+          margin: 0, filename,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 1 },
+          jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
+        };
+        html2pdf().set(opt).from(clone).toPdf().output('blob').then(resolve).catch(reject);
+      });
       document.body.removeChild(clone);
 
       if (gmailTokenValid()) savePdfToDrive(pdfBlob, filename);
 
-      // Convert blob → clean base64, chunked to avoid call stack overflow
-      const arrayBuf = await pdfBlob.arrayBuffer();
-      const uint8 = new Uint8Array(arrayBuf);
-      let pdfBinary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < uint8.length; i += chunkSize) {
-        pdfBinary += String.fromCharCode(...uint8.subarray(i, i + chunkSize));
-      }
-      const pdfBase64 = btoa(pdfBinary);
+      const pdfBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(pdfBlob);
+      });
       console.log('PDF generated, size:', Math.round(pdfBase64.length / 1024), 'KB');
 
-      // Build multipart MIME — flat single array, no nested joins that corrupt boundaries
       const boundary = '===============' + Date.now() + '===============';
-      const subjectLine = `moo Invoice ${data.receiptNumber} - ${data.lineItems.map(l => l.service).join(', ')}`;
-
-      const fullMessage = [
-        `From: ${data.from.email}`,
-        `To: ${data.to.email}`,
-        `Subject: ${subjectLine}`,
-        'MIME-Version: 1.0',
-        `Content-Type: multipart/mixed; boundary="${boundary}"`,
-        '',
+      const textBody = 'Please review the attached invoice.';
+      const textPart = [
         `--${boundary}`,
         'Content-Type: text/plain; charset=utf-8',
         'Content-Transfer-Encoding: 7bit',
         '',
-        'Please find your invoice attached.',
-        '',
+        textBody,
+      ].join('\r\n');
+
+      const pdfPart = [
         `--${boundary}`,
-        `Content-Type: application/pdf; name="${filename}"`,
-        `Content-Disposition: attachment; filename="${filename}"`,
+        'Content-Type: application/pdf; name="' + filename + '"',
+        'Content-Disposition: attachment; filename="' + filename + '"',
         'Content-Transfer-Encoding: base64',
         '',
         pdfBase64,
+      ].join('\r\n');
+
+      const fullMessage = [
+        `From: ${data.from.email}`,
+        `To: ${data.to.email}`,
+        `Subject: ${decodeURIComponent(subject)}`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/mixed; boundary="${boundary}"`,
+        '',
+        textPart,
+        pdfPart,
         `--${boundary}--`,
       ].join('\r\n');
 
-      console.log('MIME headers:', fullMessage.substring(0, 400));
-
-      // Encode for Gmail API — chunked to handle large messages
-      const msgBytes = new TextEncoder().encode(fullMessage);
-      let binary = '';
-      for (let i = 0; i < msgBytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...msgBytes.subarray(i, i + chunkSize));
-      }
-      const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const encoded = btoa(unescape(encodeURIComponent(fullMessage)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
       const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+        method:  'POST',
+        headers: {
+          Authorization:  `Bearer ${_gmailToken}`,
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({ message: { raw: encoded } }),
       });
       const json = await res.json();
