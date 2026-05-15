@@ -8,7 +8,7 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><defs><linearGradient id='goldGradient' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23967423'/><stop offset='50%' stop-color='%23FCDD76'/><stop offset='100%' stop-color='%23967423'/></linearGradient><linearGradient id='silverGradient' x1='23.731039' y1='-4.3318563' x2='105.99892' y2='92.268921' gradientTransform='matrix(1.1909821,0,0,1.1909821,-23.762691,-11.826319)'><stop offset='0%' stop-color='%23757575'/><stop offset='50%' stop-color='%23E8E8E8'/><stop offset='100%' stop-color='%23757575'/></linearGradient><linearGradient id='linearGradient7' xlink:href='%23goldGradient' x1='0%' y1='0%' x2='100%' y2='100%' gradientTransform='translate(1.110285,-0.47583643)'/></defs><circle cx='64' cy='64' r='52' fill='none' stroke='url(%23goldGradient)' stroke-width='10'/><g fill='none' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'><path d='m 31.610286,76.524164 v -16 q 0,-10 9,-10 9,0 9,10 v 16 m 0,-16 q 0,-10 9,-10 9,0 9,10 v 16' stroke='url(%23linearGradient7)'/><path d='m 68.538416,40.57689 h 23.81964 m -11.909821,0 v 47.63928 m -11.909819,0 h 23.81964' stroke='url(%23silverGradient)' style='stroke-width:10.7188'/></g></svg>">
 <title>moo Invoicer</title>
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Bebas+Neue&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
@@ -17,15 +17,6 @@
     src: url('./BAUHS93.TTF') format('truetype');
     font-weight: normal;
     font-display: swap;
-  }
-
-  /* Fallback for mobile if TTF doesn't load */
-  @supports not (font-family: 'Bauhaus93') {
-    .invoice-word, .party.from .name {
-      font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
-      font-weight: 900;
-      letter-spacing: -1px;
-    }
   }
 </style>
 
@@ -159,8 +150,9 @@
   #toolbar button:hover { opacity: 0.85; }
   #btn-edit   { background: var(--ink); color: #fff; }
   #btn-print  { background: var(--red);  color: #fff; }
-  #btn-save   { background: #2a8c55; color: #fff; display: none; }
-  #btn-cancel { background: #888;    color: #fff; display: none; }
+  #btn-save        { background: #2a8c55; color: #fff; display: none; }
+  #btn-cancel      { background: #888;    color: #fff; display: none; }
+  #font-selector   { display: none; }
 
   /* editable fields highlight in edit mode */
   body.editing [data-field] {
@@ -227,14 +219,15 @@
   }
 
   .invoice-word {
-    font-family: 'Bauhaus93', sans-serif;
+    font-family: 'Bebas Neue', 'Bauhaus93', sans-serif;
     font-weight: 900;
-    font-size: 86px;
+    font-size: clamp(48px, 10vw, 82px);
     text-transform: uppercase;
-    letter-spacing: -2px;
+    letter-spacing: -1px;
     color: var(--ink);
     line-height: 0.88;
     display: block;
+    overflow: hidden;
   }
 
   .meta {
@@ -278,7 +271,7 @@
   }
 
   .party.from .name {
-    font-family: 'Bauhaus93', sans-serif;
+    font-family: 'Bebas Neue', 'Bauhaus93', sans-serif;
     font-size: 20px;
     font-weight: normal;
     letter-spacing: -0.5px;
@@ -466,7 +459,7 @@
   }
 
   .thank-you {
-    font-family: 'Bauhaus93', sans-serif;
+    font-family: 'Bebas Neue', 'Bauhaus93', sans-serif;
     font-weight: 900;
     font-size: 38px;
     text-transform: uppercase;
@@ -1252,7 +1245,8 @@
   <button id="btn-save"   onclick="saveEdit()">✓ Save</button>
   <button id="btn-cancel" onclick="cancelEdit()">✕ Cancel</button>
   <select id="font-selector" onchange="changeTitleFont(this.value)" style="font-family:'Roboto',sans-serif; font-size:12px; padding:8px 12px; border:none; border-radius:6px; background:#14202e; color:#fff; cursor:pointer;">
-    <option value="Bauhaus93">Bauhaus93</option>
+    <option value="Bebas Neue">Bebas Neue</option>
+    <option value="Bauhaus93">Bauhaus93 (local)</option>
     <option value="Roboto">Roboto</option>
     <option value="Georgia">Georgia</option>
     <option value="Courier New">Courier New</option>
@@ -1373,12 +1367,6 @@
     <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
       <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">Google Account</div>
       <div style="font-size:11px; color:#9aa2ac; margin-bottom:10px;">Sign in once to unlock Gmail, Sheets sync, and Gemini AI — no API keys needed.</div>
-      <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-        <input id="oauth-client-id-input" type="password" placeholder="Paste your OAuth Client ID…"
-          style="font-family:'Roboto',sans-serif; font-size:12.5px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; flex:1; min-width:0; outline:none; color:#14202e;"
-          oninput="saveOAuthClientIdInput()">
-        <button onclick="resetGmailClientId()" style="background:none;border:none;color:#5b4fcf;font-size:11px;cursor:pointer;padding:0;font-family:'Roboto',sans-serif; font-weight:600; flex-shrink:0;">Clear</button>
-      </div>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
         <button id="btn-google-signin" onclick="googleSignIn()"
           style="display:flex; align-items:center; gap:8px; padding:8px 14px; background:#fff; color:#14202e; border:1.5px solid rgba(20,32,46,0.18); border-radius:8px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer; transition:background 0.15s;">
@@ -1387,7 +1375,6 @@
         </button>
         <span id="google-signin-status" style="font-size:11px; color:#9aa2ac;"></span>
       </div>
-      <div style="font-size:10px; color:#9aa2ac; margin-top:8px;">Client ID: <span id="gmail-id-status">not set</span></div>
     </div>
 
     <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
@@ -1485,7 +1472,7 @@ function changeTitleFont(fontName) {
 }
 
 function restoreTitleFont() {
-  const saved = localStorage.getItem('invoice-title-font') || 'Bauhaus93';
+  const saved = localStorage.getItem('invoice-title-font') || 'Bebas Neue';
   document.getElementById('font-selector').value = saved;
   changeTitleFont(saved);
 }
@@ -1594,9 +1581,10 @@ function startEdit() {
   });
   const pn = document.getElementById('payment-note-el');
   if (pn) { pn.contentEditable = 'true'; pn.spellcheck = false; pn.dataset.field = 'paymentNote'; }
-  document.getElementById('btn-edit').style.display   = 'none';
-  document.getElementById('btn-save').style.display   = 'inline-block';
-  document.getElementById('btn-cancel').style.display = 'inline-block';
+  document.getElementById('btn-edit').style.display        = 'none';
+  document.getElementById('btn-save').style.display        = 'inline-block';
+  document.getElementById('btn-cancel').style.display      = 'inline-block';
+  document.getElementById('font-selector').style.display   = 'inline-block';
 }
 
 function saveEdit() {
@@ -1623,9 +1611,10 @@ function stopEdit() {
   document.querySelectorAll('[data-field]').forEach(el => {
     el.contentEditable = 'false';
   });
-  document.getElementById('btn-edit').style.display   = 'inline-block';
-  document.getElementById('btn-save').style.display   = 'none';
-  document.getElementById('btn-cancel').style.display = 'none';
+  document.getElementById('btn-edit').style.display       = 'inline-block';
+  document.getElementById('btn-save').style.display       = 'none';
+  document.getElementById('btn-cancel').style.display     = 'none';
+  document.getElementById('font-selector').style.display  = 'none';
 }
 
 function setNestedField(obj, path, value) {
@@ -2581,7 +2570,7 @@ function toggleClientBook() {
 // ⚠ Replace this with your own OAuth Client ID from Google Cloud Console
 // console.cloud.google.com → APIs & Services → Credentials → Create OAuth 2.0 Client ID
 // Application type: Web application. Add your file:// or localhost origin.
-let GMAIL_CLIENT_ID = localStorage.getItem('gmail-client-id') || '';
+const GMAIL_CLIENT_ID = '622970529535-p38faf23t1pn0nhrhktam3c8gcf4r303.apps.googleusercontent.com';
 
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/generative-language https://www.googleapis.com/auth/drive.file';
 
@@ -2624,27 +2613,6 @@ function restoreTokenFromStorage() {
 }
 
 function initGmailAuth(onToken) {
-  if (!GMAIL_CLIENT_ID) {
-    const msg = `Enter your Google OAuth Client ID.
-
-To get one:
-1. Go to console.cloud.google.com
-2. Create a project
-3. Search "Gmail API" and Enable it
-4. Go to APIs & Services → Credentials
-5. Create Credentials → OAuth 2.0 Client ID
-6. Application type: Web application
-7. Authorized origins: http://localhost:3000 (or leave blank for local use)
-8. Copy the Client ID and paste it below
-
-The ID is saved locally in your browser and never sent anywhere.`;
-    const id = prompt(msg);
-    if (!id) return;
-    localStorage.setItem('gmail-client-id', id.trim());
-    location.reload();
-    return;
-  }
-
   _gmailTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GMAIL_CLIENT_ID,
     scope:     GMAIL_SCOPE,
@@ -2703,13 +2671,6 @@ function updateEmailBtn() {
 }
 
 function googleSignIn() {
-  if (!GMAIL_CLIENT_ID) {
-    const id = prompt('Enter your Google OAuth Client ID first.\n\nGet one at: console.cloud.google.com → APIs & Services → Credentials');
-    if (!id) return;
-    GMAIL_CLIENT_ID = id.trim();
-    localStorage.setItem('gmail-client-id', GMAIL_CLIENT_ID);
-    refreshGmailIdStatus();
-  }
   initGmailAuth(() => {
     updateEmailBtn();
     setupDrive();
@@ -2846,11 +2807,6 @@ async function openEmail() {
   const fallbackEmail = () => {
     window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${subject}&body=${body}`, '_blank');
   };
-
-  if (!GMAIL_CLIENT_ID) {
-    fallbackEmail();
-    return;
-  }
 
   if (gmailTokenValid()) {
     await sendViaDraft();
@@ -3196,17 +3152,15 @@ restoreTitleFont();
 // Restore token from storage if available
 restoreTokenFromStorage();
 
-// Init Gmail auth silently if client ID already saved
-if (localStorage.getItem('gmail-client-id')) {
-  window.addEventListener('load', () => {
-    try {
-      initGmailAuth(() => {
-        updateEmailBtn();
-        setupDrive();
-      });
-    } catch(e) {}
-  });
-}
+// Init Google auth silently on load
+window.addEventListener('load', () => {
+  try {
+    initGmailAuth(() => {
+      updateEmailBtn();
+      setupDrive();
+    });
+  } catch(e) {}
+});
 
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {
