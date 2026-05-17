@@ -1,0 +1,21 @@
+<svg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'>
+  <defs>
+    <linearGradient id='goldGradient' x1='0%' y1='0%' x2='100%' y2='100%'>
+      <stop offset='0%' stop-color='#967423'/>
+      <stop offset='50%' stop-color='#FCDD76'/>
+      <stop offset='100%' stop-color='#967423'/>
+    </linearGradient>
+    <linearGradient id='silverGradient' x1='23.731039' y1='-4.3318563' x2='105.99892' y2='92.268921' gradientTransform='matrix(1.1909821,0,0,1.1909821,-23.762691,-11.826319)'>
+      <stop offset='0%' stop-color='#757575'/>
+      <stop offset='50%' stop-color='#E8E8E8'/>
+      <stop offset='100%' stop-color='#757575'/>
+    </linearGradient>
+    <linearGradient id='linearGradient7' xlink:href='#goldGradient' x1='0%' y1='0%' x2='100%' y2='100%' gradientTransform='translate(1.110285,-0.47583643)'/>
+  </defs>
+  <rect width='128' height='128' rx='24' fill='#14202e'/>
+  <circle cx='64' cy='64' r='52' fill='none' stroke='url(#goldGradient)' stroke-width='10'/>
+  <g fill='none' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'>
+    <path d='m 31.610286,76.524164 v -16 q 0,-10 9,-10 9,0 9,10 v 16 m 0,-16 q 0,-10 9,-10 9,0 9,10 v 16' stroke='url(#linearGradient7)'/>
+    <path d='m 68.538416,40.57689 h 23.81964 m -11.909821,0 v 47.63928 m -11.909819,0 h 23.81964' stroke='url(#silverGradient)' style='stroke-width:10.7188'/>
+  </g>
+</svg>
