@@ -121,31 +121,90 @@
   }
 
   /* ── EDIT-MODE TOOLBAR ── */
+  /* ── TOOLBAR RAIL ── */
   #toolbar {
     position: fixed;
-    bottom: 20px;
-    right: 20px;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
     z-index: 999;
     display: flex;
-    gap: 8px;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    background: #14202e;
+    border-radius: 14px;
+    padding: 10px 8px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.18);
+  }
+  .tb-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .tb-divider {
+    width: 22px;
+    height: 1px;
+    background: rgba(255,255,255,0.12);
+    margin: 4px 0;
   }
   #toolbar button {
     font-family: 'Roboto', sans-serif;
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 500;
-    letter-spacing: 0.5px;
-    padding: 8px 16px;
+    letter-spacing: 0.3px;
+    width: 40px;
+    height: 40px;
+    padding: 0;
     border: none;
-    border-radius: 6px;
+    border-radius: 9px;
     cursor: pointer;
-    transition: opacity 0.15s;
+    background: transparent;
+    color: rgba(255,255,255,0.65);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    transition: background 0.15s, color 0.15s;
+    position: relative;
   }
-  #toolbar button:hover { opacity: 0.85; }
-  #btn-edit   { background: var(--ink); color: #fff; }
-  #btn-print  { background: var(--red);  color: #fff; }
-  #btn-save        { background: #2a8c55; color: #fff; display: none; }
-  #btn-cancel      { background: #888;    color: #fff; display: none; }
-  #font-selector   { display: none; }
+  #toolbar button:hover {
+    background: rgba(255,255,255,0.1);
+    color: #fff;
+  }
+  #toolbar button .tb-label {
+    font-size: 9px;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+  #toolbar button svg { flex-shrink: 0; }
+  #btn-edit   { color: rgba(255,255,255,0.75); }
+  #btn-print  { color: #ff7b6b; }
+  #btn-save   { color: #5dba7d; display: none !important; }
+  #btn-cancel { color: rgba(255,255,255,0.5); display: none !important; }
+  body.editing #btn-edit   { display: none !important; }
+  body.editing #btn-save,
+  body.editing #btn-cancel { display: flex !important; }
+  #btn-chat   { color: #a89cf7; }
+  #btn-clear-invoice { color: #ff6b6b; }
+  #font-selector {
+    display: none;
+    background: rgba(255,255,255,0.08);
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 10px;
+    padding: 4px 4px;
+    cursor: pointer;
+    width: 40px;
+    text-align: center;
+    margin-top: 2px;
+  }
+  body.editing #font-selector { display: block; }
 
   /* editable fields highlight in edit mode */
   body.editing [data-field] {
@@ -682,21 +741,30 @@
     }
 
     #toolbar {
-      position: static;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      padding: 12px;
-      margin: 0;
-      background: #f6f6f4;
-      justify-content: space-between;
+      position: fixed;
+      right: auto;
+      top: auto;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      flex-direction: row;
+      border-radius: 40px;
+      padding: 8px 12px;
+      gap: 4px;
+      width: auto;
+      max-width: calc(100vw - 32px);
     }
-
-    #toolbar button, #toolbar select {
-      flex: 1;
-      min-width: 80px;
-      font-size: 11px !important;
-      padding: 6px 8px !important;
+    .tb-group { flex-direction: row; gap: 4px; }
+    .tb-divider { width: 1px; height: 22px; margin: 0 4px; }
+    #toolbar button {
+      width: 36px;
+      height: 36px;
+    }
+    #toolbar button .tb-label { display: none; }
+    #font-selector {
+      width: 36px;
+      height: 36px;
+      padding: 2px;
     }
 
     .page {
@@ -1409,33 +1477,80 @@
 
 <!-- TOOLBAR (hidden on print) -->
 <div id="toolbar">
-  <button id="btn-edit"   onclick="startEdit()">✏️ Edit</button>
-  <button id="btn-save"   onclick="saveEdit()">✓ Save</button>
-  <button id="btn-cancel" onclick="cancelEdit()">✕ Cancel</button>
-  <button id="btn-clear-invoice" onclick="clearInvoice()" style="background:#d9534f; color:#fff;" title="Start a fresh invoice">🗑 Clear</button>
-  <button id="btn-load-profile" onclick="applyBusinessProfile()" title="Fill From section with your saved business profile">⚙ My Business</button>
-  <select id="font-selector" onchange="changeTitleFont(this.value)" style="font-family:'Roboto',sans-serif; font-size:12px; padding:8px 12px; border:none; border-radius:6px; background:#14202e; color:#fff; cursor:pointer;">
-    <option value="Bebas Neue">Bebas Neue</option>
-    <option value="Outfit">Outfit</option>
-    <option value="Space Grotesk">Space Grotesk</option>
-    <option value="Sora">Sora</option>
-    <option value="Playfair Display">Playfair Display</option>
-    <option value="Anton">Anton</option>
-    <option value="Black Han Sans">Black Han Sans</option>
-    <option value="Oswald">Oswald</option>
-    <option value="Barlow Condensed">Barlow Condensed</option>
-    <option value="Teko">Teko</option>
-    <option value="Big Shoulders Display">Big Shoulders Display</option>
-    <option value="Roboto">Roboto</option>
-    <option value="Georgia">Georgia</option>
-    <option value="Courier New">Courier New</option>
-    <option value="Comic Sans MS">Comic Sans MS</option>
-  </select>
-  <button id="btn-print"  onclick="confirmPrint()">⎙ Print / PDF</button>
-  <button id="btn-chat"   onclick="toggleChat()" style="background:#5b4fcf; color:#fff;">✦ AI</button>
-  <button id="btn-templates" onclick="openTemplatesModal()" style="background:#14202e; color:#fff; padding:8px 10px; line-height:0;" title="Templates"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
-  <button id="btn-calendar" onclick="openCalendarImport()" style="background:#1a73e8; color:#fff; display:none; padding:8px 10px; line-height:0;" title="Import from Calendar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
-  <button id="btn-dashboard" onclick="openDashboard()" style="background:#14202e; color:#fff; padding:8px 10px; line-height:0;" title="Business Dashboard"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="9" height="9"/><rect x="13" y="2" width="9" height="9"/><rect x="2" y="13" width="9" height="9"/><rect x="13" y="13" width="9" height="9"/></svg></button>
+
+  <!-- Document group -->
+  <div class="tb-group">
+    <button id="btn-edit" onclick="startEdit()" title="Edit invoice">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      <span class="tb-label">Edit</span>
+    </button>
+    <button id="btn-save" onclick="saveEdit()" title="Save changes">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      <span class="tb-label">Save</span>
+    </button>
+    <button id="btn-cancel" onclick="cancelEdit()" title="Cancel editing">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <span class="tb-label">Cancel</span>
+    </button>
+    <select id="font-selector" onchange="changeTitleFont(this.value)" title="Title font">
+      <option value="Bebas Neue">Bebas Neue</option>
+      <option value="Outfit">Outfit</option>
+      <option value="Space Grotesk">Space Grotesk</option>
+      <option value="Sora">Sora</option>
+      <option value="Playfair Display">Playfair Display</option>
+      <option value="Anton">Anton</option>
+      <option value="Black Han Sans">Black Han Sans</option>
+      <option value="Oswald">Oswald</option>
+      <option value="Barlow Condensed">Barlow Condensed</option>
+      <option value="Teko">Teko</option>
+      <option value="Big Shoulders Display">Big Shoulders Display</option>
+      <option value="Roboto">Roboto</option>
+      <option value="Georgia">Georgia</option>
+      <option value="Courier New">Courier New</option>
+      <option value="Comic Sans MS">Comic Sans MS</option>
+    </select>
+    <button id="btn-print" onclick="confirmPrint()" title="Publish / Print / PDF">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      <span class="tb-label">Publish</span>
+    </button>
+    <button id="btn-clear-invoice" onclick="clearInvoice()" title="Clear invoice">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      <span class="tb-label">Clear</span>
+    </button>
+  </div>
+
+  <div class="tb-divider"></div>
+
+  <!-- App group -->
+  <div class="tb-group">
+    <button id="btn-chat" onclick="toggleChat()" title="AI Assistant">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      <span class="tb-label">AI</span>
+    </button>
+    <button id="btn-templates" onclick="openTemplatesModal()" title="Templates">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      <span class="tb-label">Templates</span>
+    </button>
+    <button id="btn-dashboard" onclick="openDashboard()" title="Dashboard">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span class="tb-label">Dashboard</span>
+    </button>
+    <button id="btn-calendar" onclick="openCalendarImport()" title="Import from Calendar" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span class="tb-label">Calendar</span>
+    </button>
+  </div>
+
+  <div class="tb-divider"></div>
+
+  <!-- Profile group -->
+  <div class="tb-group">
+    <button id="btn-load-profile" onclick="applyBusinessProfile()" title="My Business Profile">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+      <span class="tb-label">Profile</span>
+    </button>
+  </div>
+
 </div>
 
 <!-- AI CHAT PANEL -->
@@ -2015,10 +2130,7 @@ function startEdit() {
   });
   const pn = document.getElementById('payment-note-el');
   if (pn) { pn.contentEditable = 'true'; pn.spellcheck = false; pn.dataset.field = 'paymentNote'; }
-  document.getElementById('btn-edit').style.display        = 'none';
-  document.getElementById('btn-save').style.display        = 'inline-block';
-  document.getElementById('btn-cancel').style.display      = 'inline-block';
-  document.getElementById('font-selector').style.display   = 'inline-block';
+  // visibility handled by body.editing CSS class
   // Sync slider to current rendered font size
   const titleEl = document.querySelector('.invoice-word');
   if (titleEl) {
@@ -2095,10 +2207,7 @@ function stopEdit() {
   document.querySelectorAll('[data-field]').forEach(el => {
     el.contentEditable = 'false';
   });
-  document.getElementById('btn-edit').style.display       = 'inline-block';
-  document.getElementById('btn-save').style.display       = 'none';
-  document.getElementById('btn-cancel').style.display     = 'none';
-  document.getElementById('font-selector').style.display  = 'none';
+  // visibility handled by body.editing CSS class
 }
 
 function setNestedField(obj, path, value) {
@@ -2236,6 +2345,12 @@ async function renderLedgerHistory() {
         sel.disabled = false;
       }
     });
+
+    // If already Paid when modal opens, show allocation UI immediately
+    if (row.status === '✅ Paid') {
+      renderAllocationUI(allocWrap, rows[realIdx]);
+      allocWrap.style.display = 'flex';
+    }
 
     rowMain.append(info, sel);
     wrap.append(rowMain, allocWrap);
@@ -4295,7 +4410,7 @@ function renderAllocationUI(container, row) {
         confirmBtn.textContent = 'Apply';
       }
     } else {
-      alert("Allocation logic is being built by Claude in Task #26!");
+      alert("Allocation logic unavailable — please reload the page.");
       confirmBtn.disabled = false;
       confirmBtn.textContent = 'Apply';
     }
@@ -4325,6 +4440,7 @@ function renderAllocationUI(container, row) {
       btn.style.borderColor = '#14202e';
       selectedGoal = g;
       inputWrap.style.display = 'flex';
+      if (g.allocationPct) pctInput.value = g.allocationPct;
       pctInput.focus();
     };
     
