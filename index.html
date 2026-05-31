@@ -3939,6 +3939,9 @@ async function ensureAllTabs(spreadsheetId) {
       requests.push({ addSheet: { properties: { title: tab } } });
     }
   }
+  if (!existing.includes('_AppData')) {
+    requests.push({ addSheet: { properties: { title: '_AppData', hidden: true } } });
+  }
 
   if (requests.length) {
     await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}:batchUpdate`, { requests });
@@ -3952,6 +3955,9 @@ async function ensureAllTabs(spreadsheetId) {
   }
   if (!existing.includes('Analysis')) {
     await writeAnalysisFormulas(spreadsheetId);
+  }
+  if (!existing.includes('_AppData')) {
+    await sheetsWrite(spreadsheetId, '_AppData!A1:C1', [['Currency', 'Rate (to USD)', 'Last Read']]);
   }
 }
 
@@ -4778,34 +4784,80 @@ function refreshSheetsIdStatus() {
 // ── FX Rate Service ───────────────────────────────────────────
 
 async function fetchFxRate(fromCurrency) {
+  const from = (fromCurrency || 'USD').toUpperCase();
+
+  // 1. If already USD, no conversion needed
+  if (from === 'USD') return 1;
+
+  // 2. Manual override in Developer Settings takes priority
   const override = localStorage.getItem('fx-rate-override');
   if (override && parseFloat(override) > 0) return parseFloat(override);
 
   const cacheKey = 'fx-rate-cache';
   const cached = JSON.parse(localStorage.getItem(cacheKey) || '{}');
-  const from = (fromCurrency || 'JMD').toUpperCase();
   const now = Date.now();
+  const SIX_HOURS = 6 * 60 * 60 * 1000;
 
-  if (cached[from] && cached.timestamp && (now - cached.timestamp) < 6 * 60 * 60 * 1000) {
+  // 3. Use cached rate if fresh enough
+  if (cached[from] && cached[from + '_ts'] && (now - cached[from + '_ts']) < SIX_HOURS) {
     return cached[from];
   }
 
-  try {
-    const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=USD`);
-    if (!res.ok) throw new Error('FX fetch failed');
-    const json = await res.json();
-    const rate = json.rates && json.rates.USD;
-    if (!rate) throw new Error('No USD rate returned');
-    cached[from] = rate;
-    cached.timestamp = now;
-    localStorage.setItem(cacheKey, JSON.stringify(cached));
-    const displayEl = document.getElementById('fx-rate-display');
-    if (displayEl) displayEl.textContent = `1 ${from} = ${rate.toFixed(6)} USD`;
-    return rate;
-  } catch (e) {
-    if (cached[from]) return cached[from];
-    throw new Error(`Could not get FX rate for ${from}→USD and no cached rate available.`);
+  // 4. Pull from Google Sheets _AppData tab (requires signed-in token)
+  if (_gmailToken && _sheetsSpreadsheetId) {
+    try {
+      // Read existing rows to find this currency
+      const rows = await sheetsRead(_sheetsSpreadsheetId, '_AppData!A2:B');
+      const rowIdx = rows.findIndex(r => r[0] && r[0].toUpperCase() === from);
+
+      if (rowIdx === -1) {
+        // Currency not in sheet yet — write a new row with GOOGLEFINANCE formula
+        const newRow = rowIdx === -1 ? rows.length + 2 : rowIdx + 2;
+        await sheetsWrite(_sheetsSpreadsheetId, `_AppData!A${newRow}:C${newRow}`, [
+          [from, `=GOOGLEFINANCE("CURRENCY:${from}USD")`, new Date().toISOString().slice(0, 10)]
+        ]);
+        // Read back the computed value (give Sheets a moment to evaluate)
+        await new Promise(r => setTimeout(r, 1500));
+        const updated = await sheetsRead(_sheetsSpreadsheetId, `_AppData!B${newRow}`);
+        const rate = updated && updated[0] && parseFloat(updated[0][0]);
+        if (rate && rate > 0) {
+          cached[from] = rate;
+          cached[from + '_ts'] = now;
+          localStorage.setItem(cacheKey, JSON.stringify(cached));
+          _updateFxDisplay(from, rate);
+          return rate;
+        }
+      } else {
+        // Row exists — update last-read timestamp and return rate
+        const sheetRow = rowIdx + 2;
+        const rate = parseFloat(rows[rowIdx][1]);
+        if (rate && rate > 0) {
+          await sheetsWrite(_sheetsSpreadsheetId, `_AppData!C${sheetRow}`, [[new Date().toISOString().slice(0, 10)]]);
+          cached[from] = rate;
+          cached[from + '_ts'] = now;
+          localStorage.setItem(cacheKey, JSON.stringify(cached));
+          _updateFxDisplay(from, rate);
+          return rate;
+        }
+      }
+    } catch (e) {
+      console.warn('FX sheet lookup failed:', e.message);
+    }
   }
+
+  // 5. Fall back to stale cache if available
+  if (cached[from]) {
+    console.warn(`Using stale FX rate for ${from}`);
+    return cached[from];
+  }
+
+  // 6. No rate available — prompt user to set manual override
+  throw new Error(`Could not get FX rate for ${from}→USD. Please set a manual rate in Developer Settings (print modal).`);
+}
+
+function _updateFxDisplay(from, rate) {
+  const displayEl = document.getElementById('fx-rate-display');
+  if (displayEl) displayEl.textContent = `1 ${from} = ${rate.toFixed(6)} USD (via Sheets)`;
 }
 
 function saveFxRateOverride() {
