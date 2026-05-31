@@ -1579,6 +1579,15 @@
         <div style="margin-top:6px; font-size:11px; color:#9aa2ac;">
           Status: <span id="gmail-id-status" style="color:#14202e; font-weight:600;">not set</span>
         </div>
+        <div style="margin-top:12px; border-top:1px solid #f0f0f0; padding-top:10px;">
+          <div style="font-size:11px; color:#9aa2ac; margin-bottom:6px;">Manual FX rate override (USD per 1 unit of invoice currency). Leave blank to use live ECB rates.</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="fx-rate-override" type="number" min="0" step="0.0001" placeholder="e.g. 0.0065 for JMD→USD"
+              style="flex:1; font-family:'Roboto',sans-serif; font-size:12px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e; min-width:0;"
+              oninput="saveFxRateOverride()">
+          </div>
+          <div style="margin-top:4px; font-size:11px; color:#9aa2ac;">Live rate: <span id="fx-rate-display">not fetched</span></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1616,6 +1625,31 @@
     <div style="display:flex; gap:10px; margin-top:20px;">
       <button onclick="submitGoalModal()" style="flex:1; padding:10px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer;">+ Add Goal</button>
       <button onclick="closeGoalModal()" style="padding:10px 20px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="claim-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='claim-overlay') closeClaimModal()">
+  <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:400px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
+    <button onclick="closeClaimModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Claim Goal</div>
+    <div id="claim-modal-title" style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Claim: Goal Name</div>
+    
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <div>
+        <label style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#6c7682; display:block; margin-bottom:4px;">Receipt # / Reference *</label>
+        <input id="claim-input-receipt" type="text" placeholder="e.g. Amazon Order #123"
+          style="width:100%; box-sizing:border-box; font-family:'Roboto',sans-serif; font-size:13px; padding:8px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+      </div>
+      <div>
+        <label style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#6c7682; display:block; margin-bottom:4px;">Upload Receipt Image (Optional)</label>
+        <input id="claim-input-file" type="file" accept="image/*,application/pdf"
+          style="width:100%; box-sizing:border-box; font-family:'Roboto',sans-serif; font-size:12px; padding:8px 10px; border:1.5px dashed rgba(20,32,46,0.3); border-radius:7px; outline:none; color:#14202e; cursor:pointer;">
+      </div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:20px;">
+      <button id="btn-submit-claim" onclick="submitClaimModal()" style="flex:1; padding:10px; background:#155724; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer;">Submit Claim</button>
+      <button onclick="closeClaimModal()" style="padding:10px 20px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">Cancel</button>
     </div>
   </div>
 </div>
@@ -2121,7 +2155,10 @@ async function renderLedgerHistory() {
   rows.slice().reverse().forEach((row, ri) => {
     const realIdx = rows.length - 1 - ri;
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'display:flex; align-items:center; justify-content:space-between; background:#f6f6f4; border-radius:6px; padding:8px 12px; gap:10px;';
+    wrap.style.cssText = 'display:flex; flex-direction:column; background:#f6f6f4; border-radius:6px; padding:8px 12px; gap:0;';
+
+    const rowMain = document.createElement('div');
+    rowMain.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
 
     const info = document.createElement('div');
     info.style.cssText = 'font-size:11.5px; color:#14202e; line-height:1.5; min-width:0; flex:1;';
@@ -2137,18 +2174,30 @@ async function renderLedgerHistory() {
       if (s.value === row.status) opt.selected = true;
       sel.appendChild(opt);
     });
+
+    const allocWrap = document.createElement('div');
+    allocWrap.style.cssText = 'display:none; flex-direction:column; gap:8px; margin-top:10px; padding-top:10px; border-top:1px dashed #ccc;';
+
     sel.addEventListener('change', async () => {
       sel.disabled = true;
       try {
         rows[realIdx].status = sel.value;
         saveLedgerRows(rows); // Also save to localStorage as backup
         await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value);
+        if (sel.value === '✅ Paid') {
+          renderAllocationUI(allocWrap, rows[realIdx]);
+          allocWrap.style.display = 'flex';
+        } else {
+          allocWrap.style.display = 'none';
+          allocWrap.innerHTML = '';
+        }
       } finally {
         sel.disabled = false;
       }
     });
 
-    wrap.append(info, sel);
+    rowMain.append(info, sel);
+    wrap.append(rowMain, allocWrap);
     listEl.appendChild(wrap);
   });
 }
@@ -2995,27 +3044,60 @@ async function syncGoalsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   const goals = loadGoals();
   if (!goals.length) return;
-  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:E');
+  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:K');
   for (const goal of goals) {
     const rowIdx = existing.findIndex(r => r[0] && r[0].toLowerCase() === goal.name.toLowerCase());
-    const newRow = [goal.name, goal.amount || '', goal.deadline || '', goal.notes || '', goal.created || ''];
+    const newRow = [
+      goal.name, 
+      goal.amount || '', 
+      goal.deadline || '', 
+      goal.notes || '', 
+      goal.created || '',
+      goal.amountReached || '0',
+      goal.lastContributionDate || '',
+      goal.status || 'Active',
+      goal.claimDate || '',
+      goal.receiptNumber || '',
+      goal.receiptFilename || ''
+    ];
     if (rowIdx === -1) {
-      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A:E', [newRow]);
+      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A:K', [newRow]);
     } else {
       const sheetRow = rowIdx + 2;
-      await sheetsWrite(_sheetsSpreadsheetId, `Goals!A${sheetRow}:E${sheetRow}`, [newRow]);
+      await sheetsWrite(_sheetsSpreadsheetId, `Goals!A${sheetRow}:K${sheetRow}`, [newRow]);
     }
   }
 }
 
 async function loadGoalsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:E');
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:K');
   if (!rows.length) return;
-  const goals = rows
+  const sheetGoals = rows
     .filter(r => r[0])
-    .map(r => ({ name: r[0], amount: r[1] || '0', deadline: r[2] || '', notes: r[3] || '', created: r[4] || '' }));
-  saveGoals(goals);
+    .map(r => ({ 
+      name: r[0], 
+      amount: r[1] || '0', 
+      deadline: r[2] || '', 
+      notes: r[3] || '', 
+      created: r[4] || '',
+      amountReached: r[5] || '0',
+      lastContributionDate: r[6] || '',
+      status: r[7] || 'Active',
+      claimDate: r[8] || '',
+      receiptNumber: r[9] || '',
+      receiptFilename: r[10] || ''
+    }));
+  const local = loadGoals();
+  sheetGoals.forEach(sg => {
+    const idx = local.findIndex(g => g.name.toLowerCase() === sg.name.toLowerCase());
+    if (idx >= 0) {
+      local[idx] = { ...local[idx], ...sg };
+    } else {
+      local.push(sg);
+    }
+  });
+  saveGoals(local);
 }
 
 function applyClient(client) {
@@ -3713,6 +3795,40 @@ async function ensureLedgerSheet(folderId) {
 
   // Create spreadsheet via Drive (so it lands in our folder)
   const file = await driveRequest('POST', '/files', {
+    let filename = '';
+    if (file) {
+      if (!_driveFolderId) await ensureDriveFolder();
+      const query = `name = 'receipts' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
+      let receiptsFolderId;
+      if (search && search.files && search.files.length > 0) {
+        receiptsFolderId = search.files[0].id;
+      } else {
+        const folder = await driveRequest('POST', '/files', { name: 'receipts', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
+        receiptsFolderId = folder.id;
+      }
+      
+      // Step 1: Create metadata to get a File ID
+      const metaRes = await driveRequest('POST', '/files', { 
+        name: file.name, 
+        parents: [receiptsFolderId] 
+      });
+      if (!metaRes.id) throw new Error("Failed to create receipt metadata in Drive.");
+      
+      // Step 2: Upload file media to the newly created File ID
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 
+          'Authorization': `Bearer ${_gmailToken}`,
+          'Content-Type': file.type || 'application/octet-stream'
+        },
+        body: file
+      });
+      
+      if (!uploadRes.ok) throw new Error("Failed to upload receipt image data to Drive.");
+      const uploaded = await uploadRes.json();
+      filename = uploaded.name || metaRes.name || file.name;
+    },
     name: 'Invoice Ledger',
     mimeType: 'application/vnd.google-apps.spreadsheet',
     parents: [folderId]
@@ -3858,9 +3974,12 @@ async function openDashboard() {
   const emptyEl = document.getElementById('dash-empty');
   if (emptyEl) {
     emptyEl.style.display = 'block';
-    emptyEl.textContent = 'Syncing ledger...';
+    emptyEl.textContent = 'Syncing...';
   }
-  const rows = await loadLedgerFromSheet();
+  const [rows] = await Promise.all([
+    loadLedgerFromSheet(),
+    loadGoalsFromSheet(),
+  ]);
   if (rows) saveLedgerRows(rows);
   if (emptyEl) {
     emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
@@ -3958,24 +4077,48 @@ function renderGoalsList() {
     return;
   }
   goals.forEach((g, i) => {
-    const target = parseFloat(g.amount) || 0;
     const div = document.createElement('div');
-    div.style.cssText = 'background:#f6f6f4; border-radius:8px; padding:12px 14px; margin-bottom:8px;';
+    let bg = '#f6f6f4';
+    let claimBtn = '';
+    const reached = parseFloat(g.amountReached) || 0;
+    const target = parseFloat(g.amount) || 0;
+    
+    if (g.status === 'Claimed') {
+      bg = '#e2e3e5';
+      claimBtn = `<span style="font-size:11px; color:#6c7682; font-weight:600; display:flex; align-items:center; gap:4px;">✓ Claimed</span>`;
+    } else if (reached >= target && target > 0) {
+      bg = '#d4edda';
+      claimBtn = `<button onclick="openClaimModal('${g.name}')" style="background:#155724; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;">Claim Reward</button>`;
+    } else if (reached > 0) {
+      bg = '#cce5ff';
+    }
+    
+    div.style.cssText = `background:${bg}; border-radius:8px; padding:12px 14px; margin-bottom:8px; position:relative; overflow:hidden;`;
+    
     div.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; position:relative; z-index:2;">
         <strong style="font-size:13px; color:#14202e;">${g.name}</strong>
         <div style="display:flex; align-items:center; gap:8px;">
+          ${claimBtn}
           ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
-          <span style="font-size:12px; color:#6c7682;">$${target.toLocaleString()}</span>
+          <span style="font-size:12px; color:#6c7682;">$${reached.toLocaleString()} / $${target.toLocaleString()}</span>
+          <button onclick="editGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:11px; color:#9aa2ac; padding:0; line-height:1; letter-spacing:0.5px;" title="Edit goal">Edit</button>
           <button onclick="deleteGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:13px; color:#9aa2ac; padding:0; line-height:1;" title="Delete goal">✕</button>
         </div>
       </div>
-      <div style="font-size:11px; color:#9aa2ac;">Target amount · deadline only — track progress in your Sheets Analysis tab</div>`;
+      <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes || 'No notes provided'}</div>
+      <!-- Progress Bar -->
+      <div style="width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2;">
+         <div style="height:100%; width:${target > 0 ? Math.min(100, (reached/target)*100) : 0}%; background:#14202e; transition:width 0.3s;"></div>
+      </div>`;
     el.appendChild(div);
   });
 }
 
+let _editingGoalIdx = -1;
+
 function addGoal() {
+  _editingGoalIdx = -1;
   const overlay = document.getElementById('goal-overlay');
   ['goal-input-name','goal-input-amount','goal-input-deadline','goal-input-notes'].forEach(id => {
     const el = document.getElementById(id);
@@ -3983,6 +4126,20 @@ function addGoal() {
   });
   document.getElementById('goal-modal-error').style.display = 'none';
   overlay.style.display = 'flex';
+  setTimeout(() => document.getElementById('goal-input-name').focus(), 50);
+}
+
+function editGoal(idx) {
+  const goals = loadGoals();
+  const g = goals[idx];
+  if (!g) return;
+  _editingGoalIdx = idx;
+  document.getElementById('goal-input-name').value    = g.name || '';
+  document.getElementById('goal-input-amount').value  = g.amount || '';
+  document.getElementById('goal-input-deadline').value = g.deadline || '';
+  document.getElementById('goal-input-notes').value   = g.notes || '';
+  document.getElementById('goal-modal-error').style.display = 'none';
+  document.getElementById('goal-overlay').style.display = 'flex';
   setTimeout(() => document.getElementById('goal-input-name').focus(), 50);
 }
 
@@ -4012,7 +4169,12 @@ function submitGoalModal() {
   }
 
   const goals = loadGoals();
-  goals.push({ name, amount: String(amount), deadline, notes, created: new Date().toISOString().slice(0, 10) });
+  if (_editingGoalIdx >= 0 && _editingGoalIdx < goals.length) {
+    goals[_editingGoalIdx] = { ...goals[_editingGoalIdx], name, amount: String(amount), deadline, notes };
+  } else {
+    goals.push({ name, amount: String(amount), deadline, notes, created: new Date().toISOString().slice(0, 10) });
+  }
+  _editingGoalIdx = -1;
   saveGoals(goals);
   syncGoalsToSheet();
   renderGoalsList();
@@ -4025,6 +4187,179 @@ function deleteGoal(idx) {
   saveGoals(goals);
   syncGoalsToSheet();
   renderGoalsList();
+}
+
+// ── Goal Allocations & Claims ─────────────────────────────────
+
+function renderAllocationUI(container, row) {
+  container.innerHTML = '';
+  const goals = loadGoals().filter(g => g.status !== 'Claimed');
+  if (!goals.length) {
+    container.innerHTML = '<div style="font-size:11px; color:#6c7682;">No active goals. Create one in the dashboard to allocate funds.</div>';
+    return;
+  }
+  
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:11px; font-weight:600; color:#14202e; text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;';
+  title.textContent = 'Allocate Funds to Goal';
+  
+  const grid = document.createElement('div');
+  grid.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px;';
+  
+  let selectedGoal = null;
+  const inputWrap = document.createElement('div');
+  inputWrap.style.cssText = 'display:none; align-items:center; gap:8px; margin-top:8px;';
+  
+  const pctInput = document.createElement('input');
+  pctInput.type = 'number';
+  pctInput.min = '1';
+  pctInput.max = '100';
+  pctInput.placeholder = '%';
+  pctInput.style.cssText = 'width:60px; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:12px; text-align:center; outline:none;';
+  
+  const confirmBtn = document.createElement('button');
+  confirmBtn.textContent = 'Apply';
+  confirmBtn.style.cssText = 'padding:6px 12px; background:#14202e; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;';
+  
+  confirmBtn.onclick = async () => {
+    if (!selectedGoal || !pctInput.value) return;
+    const pct = parseFloat(pctInput.value);
+    if (isNaN(pct) || pct <= 0) return;
+    
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '...';
+    
+    if (typeof window.allocateToGoal === 'function') {
+      try {
+        await window.allocateToGoal(row, selectedGoal, pct);
+        container.innerHTML = `<div style="font-size:11px; color:#155724; background:#d4edda; padding:6px 10px; border-radius:4px;">✓ Allocated ${pct}% to ${selectedGoal.name}</div>`;
+      } catch (err) {
+        alert(err.message);
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Apply';
+      }
+    } else {
+      alert("Allocation logic is being built by Claude in Task #26!");
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Apply';
+    }
+  };
+  
+  inputWrap.append(pctInput, document.createTextNode('%'), confirmBtn);
+  
+  const buttons = [];
+  goals.forEach(g => {
+    const btn = document.createElement('button');
+    const target = parseFloat(g.amount) || 0;
+    const reached = parseFloat(g.amountReached) || 0;
+    
+    let bg = '#e0e0e0';
+    let color = '#333';
+    if (reached >= target && target > 0) {
+       bg = '#d4edda'; color = '#155724';
+    } else if (reached > 0) {
+       bg = '#cce5ff'; color = '#004085';
+    }
+    
+    btn.style.cssText = `padding:4px 8px; border:1px solid transparent; border-radius:4px; background:${bg}; color:${color}; font-size:11px; cursor:pointer; transition:all 0.1s;`;
+    btn.textContent = g.name;
+    
+    btn.onclick = () => {
+      buttons.forEach(b => b.style.borderColor = 'transparent');
+      btn.style.borderColor = '#14202e';
+      selectedGoal = g;
+      inputWrap.style.display = 'flex';
+      pctInput.focus();
+    };
+    
+    buttons.push(btn);
+    grid.appendChild(btn);
+  });
+  
+  container.append(title, grid, inputWrap);
+}
+
+let _claimingGoal = null;
+function openClaimModal(goalName) {
+  _claimingGoal = loadGoals().find(g => g.name === goalName);
+  if (!_claimingGoal) return;
+  document.getElementById('claim-modal-title').textContent = `Claim: ${_claimingGoal.name}`;
+  document.getElementById('claim-input-receipt').value = '';
+  document.getElementById('claim-input-file').value = '';
+  document.getElementById('claim-overlay').style.display = 'flex';
+}
+function closeClaimModal() {
+  document.getElementById('claim-overlay').style.display = 'none';
+  _claimingGoal = null;
+}
+async function submitClaimModal() {
+  const receipt = document.getElementById('claim-input-receipt').value.trim();
+  if (!receipt) {
+    alert("Receipt reference is required.");
+    return;
+  }
+  const fileInput = document.getElementById('claim-input-file');
+  const file = fileInput.files[0];
+  
+  const btn = document.getElementById('btn-submit-claim');
+  btn.disabled = true;
+  btn.textContent = 'Processing...';
+  
+  try {
+    let filename = '';
+    if (file) {
+      if (!_driveFolderId) await ensureDriveFolder();
+      const query = `name = 'receipts' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
+      let receiptsFolderId;
+      if (search && search.files && search.files.length > 0) {
+        receiptsFolderId = search.files[0].id;
+      } else {
+        const folder = await driveRequest('POST', '/files', { name: 'receipts', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
+        receiptsFolderId = folder.id;
+      }
+      
+      // Step 1: Create metadata to get a File ID
+      const metaRes = await driveRequest('POST', '/files', { 
+        name: file.name, 
+        parents: [receiptsFolderId] 
+      });
+      if (!metaRes.id) throw new Error("Failed to create receipt metadata in Drive.");
+      
+      // Step 2: Upload file media to the newly created File ID
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 
+          'Authorization': `Bearer ${_gmailToken}`,
+          'Content-Type': file.type || 'application/octet-stream'
+        },
+        body: file
+      });
+      
+      if (!uploadRes.ok) throw new Error("Failed to upload receipt image data to Drive.");
+      const uploaded = await uploadRes.json();
+      filename = uploaded.name || metaRes.name || file.name;
+    }
+    
+    const goals = loadGoals();
+    const idx = goals.findIndex(g => g.name === _claimingGoal.name);
+    if (idx !== -1) {
+      goals[idx].status = "Claimed";
+      goals[idx].claimDate = new Date().toISOString().split('T')[0];
+      goals[idx].receiptNumber = receipt;
+      goals[idx].receiptFilename = filename;
+      saveGoals(goals);
+      await syncGoalsToSheet();
+      renderGoalsList();
+    }
+    closeClaimModal();
+    alert("Goal claimed successfully!");
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Submit Claim';
+  }
 }
 
 // ── AI chat dispatch functions ────────────────────────────────
@@ -4268,6 +4603,120 @@ function refreshSheetsIdStatus() {
   el.textContent = id ? id.slice(0, 20) + '…' : 'not set';
 }
 
+// ── FX Rate Service ───────────────────────────────────────────
+
+async function fetchFxRate(fromCurrency) {
+  const override = localStorage.getItem('fx-rate-override');
+  if (override && parseFloat(override) > 0) return parseFloat(override);
+
+  const cacheKey = 'fx-rate-cache';
+  const cached = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+  const from = (fromCurrency || 'JMD').toUpperCase();
+  const now = Date.now();
+
+  if (cached[from] && cached.timestamp && (now - cached.timestamp) < 6 * 60 * 60 * 1000) {
+    return cached[from];
+  }
+
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=USD`);
+    if (!res.ok) throw new Error('FX fetch failed');
+    const json = await res.json();
+    const rate = json.rates && json.rates.USD;
+    if (!rate) throw new Error('No USD rate returned');
+    cached[from] = rate;
+    cached.timestamp = now;
+    localStorage.setItem(cacheKey, JSON.stringify(cached));
+    const displayEl = document.getElementById('fx-rate-display');
+    if (displayEl) displayEl.textContent = `1 ${from} = ${rate.toFixed(6)} USD`;
+    return rate;
+  } catch (e) {
+    if (cached[from]) return cached[from];
+    throw new Error(`Could not get FX rate for ${from}→USD and no cached rate available.`);
+  }
+}
+
+function saveFxRateOverride() {
+  const val = document.getElementById('fx-rate-override').value;
+  if (val && parseFloat(val) > 0) {
+    localStorage.setItem('fx-rate-override', val);
+  } else {
+    localStorage.removeItem('fx-rate-override');
+  }
+}
+
+function restoreFxRateOverride() {
+  const saved = localStorage.getItem('fx-rate-override');
+  const el = document.getElementById('fx-rate-override');
+  if (saved && el) el.value = saved;
+}
+
+// ── Goal Allocation Logic ─────────────────────────────────────
+
+window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
+  if (!pct || pct <= 0 || pct > 100) throw new Error('Percentage must be between 1 and 100.');
+
+  const invoiceAmount = parseFloat((invoiceRow.amountDue || '0').replace(/[^0-9.]/g, '')) || 0;
+  if (!invoiceAmount) throw new Error('Could not read invoice amount.');
+
+  const invoiceCurrency = (invoiceRow.projectTotal || '').split(' ')[0] || 'JMD';
+  let rate;
+  try {
+    rate = await fetchFxRate(invoiceCurrency);
+  } catch (e) {
+    throw new Error(e.message);
+  }
+
+  const contributionLocal = invoiceAmount * (pct / 100);
+  const contributionUSD   = contributionLocal * rate;
+
+  const goals = loadGoals().sort((a, b) => {
+    if (!a.deadline) return 1;
+    if (!b.deadline) return -1;
+    return new Date(a.deadline) - new Date(b.deadline);
+  });
+
+  let remaining = contributionUSD;
+  const messages = [];
+  let startIdx = goals.findIndex(g => g.name === selectedGoal.name);
+  if (startIdx === -1) startIdx = 0;
+
+  for (let i = startIdx; i < goals.length && remaining > 0; i++) {
+    const g = goals[i];
+    if (g.status === 'Claimed') continue;
+    const target  = parseFloat(g.amount) || 0;
+    const reached = parseFloat(g.amountReached) || 0;
+    const needed  = Math.max(0, target - reached);
+    if (needed <= 0) continue;
+
+    const applied = Math.min(remaining, needed);
+    g.amountReached = String(Math.round((reached + applied) * 100) / 100);
+    g.lastContributionDate = new Date().toISOString().slice(0, 10);
+
+    if (parseFloat(g.amountReached) >= target) {
+      g.status = 'Funded';
+      messages.push(`✅ "${g.name}" is fully funded!`);
+    } else {
+      messages.push(`+$${applied.toFixed(2)} → "${g.name}"`);
+    }
+
+    remaining -= applied;
+    if (remaining > 0.01 && i === startIdx && i + 1 < goals.length) {
+      messages.push(`↪ $${remaining.toFixed(2)} rolled over to "${goals[i + 1].name}"`);
+    }
+  }
+
+  saveGoals(goals);
+  await syncGoalsToSheet();
+  renderGoalsList();
+  renderDashboard();
+
+  if (messages.length) {
+    const notice = messages.join('\n');
+    setTimeout(() => alert(notice), 100);
+  }
+};
+
 // ── Voice input ───────────────────────────────────────────────
 
 let _recognition = null;
@@ -4445,6 +4894,7 @@ renderClientChips();
 restoreTitleFont();
 restoreTitleSize();
 initLogo();
+restoreFxRateOverride();
 
 // Restore token from storage if available
 if (restoreTokenFromStorage()) {
