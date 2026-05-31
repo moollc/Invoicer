@@ -1706,6 +1706,15 @@
           </div>
           <div style="margin-top:4px; font-size:11px; color:#9aa2ac;">Live rate: <span id="fx-rate-display">not fetched</span></div>
         </div>
+        <div style="margin-top:12px; border-top:1px solid #f0f0f0; padding-top:10px;">
+          <div style="font-size:11px; color:#9aa2ac; margin-bottom:6px;">Data Backup & Reset</div>
+          <div style="display:flex; gap:8px;">
+            <button onclick="exportLocalData()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600;">Export Data</button>
+            <button onclick="document.getElementById('import-file').click()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600;">Import Data</button>
+            <input type="file" id="import-file" style="display:none" accept=".json" onchange="importLocalData(event)">
+          </div>
+          <button onclick="resetAllData()" style="width:100%; margin-top:8px; background:rgba(208,36,27,0.1); border:1px solid rgba(208,36,27,0.2); color:#d0241b; padding:6px 0; border-radius:5px; font-size:11px; cursor:pointer; font-weight:600;">⚠️ Factory Reset</button>
+        </div>
       </div>
     </div>
   </div>
@@ -4383,77 +4392,75 @@ function renderAllocationUI(container, row) {
   const grid = document.createElement('div');
   grid.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px;';
   
-  let selectedGoal = null;
+  // Manual % input — only shown for goals without a fixed allocationPct
   const inputWrap = document.createElement('div');
   inputWrap.style.cssText = 'display:none; align-items:center; gap:8px; margin-top:8px;';
-  
   const pctInput = document.createElement('input');
-  pctInput.type = 'number';
-  pctInput.min = '1';
-  pctInput.max = '100';
-  pctInput.placeholder = '%';
-  pctInput.style.cssText = 'width:60px; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:12px; text-align:center; outline:none;';
-  
-  const confirmBtn = document.createElement('button');
-  confirmBtn.textContent = 'Apply';
-  confirmBtn.style.cssText = 'padding:6px 12px; background:#14202e; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;';
-  
-  confirmBtn.onclick = async () => {
+  pctInput.type = 'number'; pctInput.min = '1'; pctInput.max = '100';
+  pctInput.placeholder = '% of invoice';
+  pctInput.style.cssText = 'width:80px; padding:6px; border:1px solid #ddd; border-radius:4px; font-size:12px; text-align:center; outline:none;';
+  const manualConfirmBtn = document.createElement('button');
+  manualConfirmBtn.textContent = 'Apply';
+  manualConfirmBtn.style.cssText = 'padding:6px 12px; background:#14202e; color:#fff; border:none; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;';
+
+  let selectedGoal = null;
+
+  const doAllocate = async (goal, pct, btn) => {
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      await window.allocateToGoal(row, goal, pct);
+      container.innerHTML = `<div style="font-size:11px; color:#155724; background:#d4edda; padding:6px 10px; border-radius:4px;">✓ ${pct}% allocated to "${goal.name}"</div>`;
+    } catch (err) {
+      alert(err.message);
+      btn.disabled = false;
+      btn.textContent = 'Apply';
+    }
+  };
+
+  manualConfirmBtn.onclick = () => {
     if (!selectedGoal || !pctInput.value) return;
     const pct = parseFloat(pctInput.value);
     if (isNaN(pct) || pct <= 0) return;
-    
-    confirmBtn.disabled = true;
-    confirmBtn.textContent = '...';
-    
-    if (typeof window.allocateToGoal === 'function') {
-      try {
-        await window.allocateToGoal(row, selectedGoal, pct);
-        container.innerHTML = `<div style="font-size:11px; color:#155724; background:#d4edda; padding:6px 10px; border-radius:4px;">✓ Allocated ${pct}% to ${selectedGoal.name}</div>`;
-      } catch (err) {
-        alert(err.message);
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = 'Apply';
-      }
-    } else {
-      alert("Allocation logic unavailable — please reload the page.");
-      confirmBtn.disabled = false;
-      confirmBtn.textContent = 'Apply';
-    }
+    doAllocate(selectedGoal, pct, manualConfirmBtn);
   };
-  
-  inputWrap.append(pctInput, document.createTextNode('%'), confirmBtn);
-  
+  inputWrap.append(pctInput, document.createTextNode('%  '), manualConfirmBtn);
+
   const buttons = [];
   goals.forEach(g => {
-    const btn = document.createElement('button');
+    const pct = parseFloat(g.allocationPct) || 0;
     const target = parseFloat(g.amount) || 0;
     const reached = parseFloat(g.amountReached) || 0;
-    
-    let bg = '#e0e0e0';
-    let color = '#333';
-    if (reached >= target && target > 0) {
-       bg = '#d4edda'; color = '#155724';
-    } else if (reached > 0) {
-       bg = '#cce5ff'; color = '#004085';
-    }
-    
-    btn.style.cssText = `padding:4px 8px; border:1px solid transparent; border-radius:4px; background:${bg}; color:${color}; font-size:11px; cursor:pointer; transition:all 0.1s;`;
-    btn.textContent = g.name;
-    
+
+    let bg = '#e0e0e0', color = '#333';
+    if (reached >= target && target > 0) { bg = '#d4edda'; color = '#155724'; }
+    else if (reached > 0) { bg = '#cce5ff'; color = '#004085'; }
+
+    const btn = document.createElement('button');
+    btn.style.cssText = `padding:5px 10px; border:1px solid transparent; border-radius:4px; background:${bg}; color:${color}; font-size:11px; cursor:pointer; transition:all 0.1s; text-align:left;`;
+    btn.innerHTML = `<strong>${g.name}</strong>${pct ? ` <span style="opacity:0.7;">${pct}%</span>` : ''}`;
+
     btn.onclick = () => {
       buttons.forEach(b => b.style.borderColor = 'transparent');
       btn.style.borderColor = '#14202e';
       selectedGoal = g;
-      inputWrap.style.display = 'flex';
-      if (g.allocationPct) pctInput.value = g.allocationPct;
-      pctInput.focus();
+
+      if (pct) {
+        // Fixed % set on goal — apply immediately, no manual input needed
+        inputWrap.style.display = 'none';
+        doAllocate(g, pct, btn);
+      } else {
+        // No fixed % — show manual input
+        inputWrap.style.display = 'flex';
+        pctInput.value = '';
+        pctInput.focus();
+      }
     };
-    
+
     buttons.push(btn);
     grid.appendChild(btn);
   });
-  
+
   container.append(title, grid, inputWrap);
 }
 
@@ -5212,6 +5219,61 @@ if ('serviceWorker' in navigator) {
       }
     }
   });
+function exportLocalData() {
+  const data = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key.startsWith('invoice-') || key === 'drive-folder-id' || key === 'oauth-client-id') {
+      data[key] = localStorage.getItem(key);
+    }
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mooInvoicer_backup_${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importLocalData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      let count = 0;
+      for (const key in data) {
+        if (key.startsWith('invoice-') || key === 'drive-folder-id' || key === 'oauth-client-id') {
+          localStorage.setItem(key, data[key]);
+          count++;
+        }
+      }
+      alert(`Imported ${count} keys successfully. The app will now reload.`);
+      location.reload();
+    } catch (err) {
+      alert("Invalid backup file.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+function resetAllData() {
+  if (confirm("Are you ABSOLUTELY sure? This will delete all local data, clients, and history. This cannot be undone unless you have an exported backup.")) {
+    if (confirm("FINAL WARNING: Click OK to delete everything and reload.")) {
+      const keys = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key.startsWith('invoice-') || key === 'drive-folder-id' || key === 'oauth-client-id') {
+          keys.push(key);
+        }
+      }
+      keys.forEach(k => localStorage.removeItem(k));
+      location.reload();
+    }
+  }
+}
 </script>
 </body>
 </html>
