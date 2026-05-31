@@ -8,17 +8,9 @@
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg viewBox='0 0 128 128' xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink'><defs><linearGradient id='goldGradient' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23967423'/><stop offset='50%' stop-color='%23FCDD76'/><stop offset='100%' stop-color='%23967423'/></linearGradient><linearGradient id='silverGradient' x1='23.731039' y1='-4.3318563' x2='105.99892' y2='92.268921' gradientTransform='matrix(1.1909821,0,0,1.1909821,-23.762691,-11.826319)'><stop offset='0%' stop-color='%23757575'/><stop offset='50%' stop-color='%23E8E8E8'/><stop offset='100%' stop-color='%23757575'/></linearGradient><linearGradient id='linearGradient7' xlink:href='%23goldGradient' x1='0%' y1='0%' x2='100%' y2='100%' gradientTransform='translate(1.110285,-0.47583643)'/></defs><circle cx='64' cy='64' r='52' fill='none' stroke='url(%23goldGradient)' stroke-width='10'/><g fill='none' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'><path d='m 31.610286,76.524164 v -16 q 0,-10 9,-10 9,0 9,10 v 16 m 0,-16 q 0,-10 9,-10 9,0 9,10 v 16' stroke='url(%23linearGradient7)'/><path d='m 68.538416,40.57689 h 23.81964 m -11.909821,0 v 47.63928 m -11.909819,0 h 23.81964' stroke='url(%23silverGradient)' style='stroke-width:10.7188'/></g></svg>">
 <title>moo Invoicer</title>
-<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Bebas+Neue&family=Anton&family=Black+Han+Sans&family=Oswald:wght@700&family=Barlow+Condensed:wght@800&family=Teko:wght@700&family=Big+Shoulders+Display:wght@900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Bebas+Neue&family=Anton&family=Black+Han+Sans&family=Oswald:wght@700&family=Barlow+Condensed:wght@800&family=Teko:wght@700&family=Big+Shoulders+Display:wght@900&family=Outfit:wght@300;400;500;700&family=Space+Grotesk:wght@400;500;700&family=Sora:wght@400;600;800&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-<style>
-  @font-face {
-    font-family: 'Bauhaus93';
-    src: url('./BAUHS93.TTF') format('truetype');
-    font-weight: normal;
-    font-display: swap;
-  }
-</style>
 
 <!--
 ================================================================
@@ -336,6 +328,51 @@
     padding-left: 32px;
   }
 
+  /* ── LOGO ── */
+  .logo-wrap {
+    display: flex;
+    justify-content: flex-end;
+    align-items: flex-start;
+  }
+  .logo-wrap img {
+    max-width: 160px;
+    max-height: 72px;
+    object-fit: contain;
+    display: block;
+  }
+  .logo-placeholder {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1.5px dashed var(--rule);
+    border-radius: 6px;
+    padding: 8px 14px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    user-select: none;
+  }
+  .logo-placeholder:hover { border-color: var(--ink); color: var(--ink); }
+  .logo-remove {
+    font-size: 10px;
+    color: var(--muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    margin-left: 6px;
+    padding: 0;
+    line-height: 1;
+    vertical-align: middle;
+  }
+  .logo-remove:hover { color: #d0241b; }
+  @media print {
+    .logo-placeholder { display: none !important; }
+    .logo-remove { display: none !important; }
+  }
+
   .party .lbl {
     font-size: 10px;
     font-weight: 500;
@@ -582,15 +619,56 @@
       margin: 0;
       box-shadow: none;
       border-radius: 0;
-      width: 100%;
-      min-height: 100vh;
+      width: 816px !important;
+      min-height: 1056px !important;
       padding: 62px 67px 58px !important;
     }
     body.editing [data-field] { outline: none; }
+
+    /* Restore desktop grid layout : overrides mobile @media (max-width:900px)
+       which also fires when printing from a mobile browser viewport */
+    .header {
+      display: grid !important;
+      grid-template-columns: 1fr 360px;
+      gap: 0;
+      align-items: stretch;
+      padding-bottom: 22px;
+      border-bottom: 1.5px solid var(--rule);
+    }
+    .title-block {
+      border-right: 1.5px solid var(--rule);
+      padding-right: 32px;
+      margin-bottom: 0 !important;
+    }
+    .invoice-word {
+      font-size: clamp(48px, 13cqw, 82px) !important;
+      line-height: 0.88 !important;
+      white-space: nowrap;
+    }
+    .this-is-your { font-size: 11px; }
+    .meta { font-size: 11px; gap: 7px 20px; }
+    .right-col {
+      text-align: right !important;
+      padding-left: 32px;
+      gap: 20px;
+    }
+    .party .name      { font-size: 18px; }
+    .party.from .name { font-size: 20px; }
+    .party .sub       { font-size: 11.5px; }
+    .total-block      { min-width: 320px !important; }
+    .footer {
+      flex-direction: row !important;
+      gap: 32px;
+      margin-top: 22px;
+      align-items: center;
+    }
+    .footer-divider { display: block !important; }
+    .thank-you      { font-size: 38px; }
+    .payment-note   { font-size: 12px; width: auto; }
   }
 
   /* ── MOBILE RESPONSIVE ── */
-  @media (max-width: 900px) {
+  @media screen and (max-width: 900px) {
     html, body {
       background: #fff;
     }
@@ -1332,9 +1410,13 @@
   <button id="btn-edit"   onclick="startEdit()">✏️ Edit</button>
   <button id="btn-save"   onclick="saveEdit()">✓ Save</button>
   <button id="btn-cancel" onclick="cancelEdit()">✕ Cancel</button>
+  <button id="btn-clear-invoice" onclick="clearInvoice()" style="background:#d9534f; color:#fff;" title="Start a fresh invoice">🗑 Clear</button>
   <select id="font-selector" onchange="changeTitleFont(this.value)" style="font-family:'Roboto',sans-serif; font-size:12px; padding:8px 12px; border:none; border-radius:6px; background:#14202e; color:#fff; cursor:pointer;">
     <option value="Bebas Neue">Bebas Neue</option>
-    <option value="Bauhaus93">Bauhaus93 (local)</option>
+    <option value="Outfit">Outfit</option>
+    <option value="Space Grotesk">Space Grotesk</option>
+    <option value="Sora">Sora</option>
+    <option value="Playfair Display">Playfair Display</option>
     <option value="Anton">Anton</option>
     <option value="Black Han Sans">Black Han Sans</option>
     <option value="Oswald">Oswald</option>
@@ -1349,7 +1431,8 @@
   <button id="btn-print"  onclick="confirmPrint()">⎙ Print / PDF</button>
   <button id="btn-chat"   onclick="toggleChat()" style="background:#5b4fcf; color:#fff;">✦ AI</button>
   <button id="btn-templates" onclick="openTemplatesModal()" style="background:#14202e; color:#fff; padding:8px 10px; line-height:0;" title="Templates"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></button>
-  <button id="btn-calendar" onclick="openCalendarImport()" style="background:#1a73e8; color:#fff; display:none; padding:8px 10px; line-height:0;"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
+  <button id="btn-calendar" onclick="openCalendarImport()" style="background:#1a73e8; color:#fff; display:none; padding:8px 10px; line-height:0;" title="Import from Calendar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
+  <button id="btn-dashboard" onclick="openDashboard()" style="background:#14202e; color:#fff; padding:8px 10px; line-height:0;" title="Business Dashboard"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="9" height="9"/><rect x="13" y="2" width="9" height="9"/><rect x="2" y="13" width="9" height="9"/><rect x="13" y="13" width="9" height="9"/></svg></button>
 </div>
 
 <!-- AI CHAT PANEL -->
@@ -1361,7 +1444,7 @@
       <span id="chat-active-name">No provider</span>
     </div>
     <button id="btn-chat-clear" onclick="clearChatHistory()" title="Clear history" style="background:none;border:none;cursor:pointer;font-size:13px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background 0.15s;flex-shrink:0;">✕</button>
-    <button id="btn-chat-settings" onclick="toggleChatSettings()" title="Manage providers">⚙</button>
+    <button id="btn-chat-settings" onclick="toggleChatSettings()" title="Manage providers" aria-label="Manage providers">⚙</button>
   </div>
 
   <div id="chat-messages">
@@ -1435,7 +1518,7 @@
     <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
       <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:10px;">PDF Filename</div>
       <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
-        <input id="company-prefix" type="text" placeholder="Company (e.g. moo)" oninput="saveCompanyPrefix(); updateFilenamePreview();"
+        <input id="company-prefix" type="text" placeholder="Company (e.g. moo)" maxlength="30" oninput="saveCompanyPrefix(); updateFilenamePreview();"
           style="font-family:'Roboto',sans-serif; font-size:12.5px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; width:140px; outline:none; color:#14202e;">
         <span style="font-size:11px; color:#9aa2ac; flex:1;">optional — prepends to filename</span>
       </div>
@@ -1478,6 +1561,62 @@
       <div style="font-size:11px; color:#9aa2ac; margin-bottom:10px;">After signing in, a <strong style="color:#14202e;">mooInvoicer/</strong> folder is created in your Drive automatically. PDFs save there and the ledger spreadsheet is created for you.</div>
       <div id="drive-setup-status" style="font-size:11px; color:#9aa2ac;">Sign in with Google above to activate.</div>
     </div>
+
+    <!-- Developer Settings (collapsible) -->
+    <div style="margin-top:16px; padding-top:14px; border-top:1.5px solid #f0f0f0;">
+      <button onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'; this.querySelector('.dev-chevron').style.transform = this.nextElementSibling.style.display === 'none' ? 'rotate(0deg)' : 'rotate(180deg)';"
+        style="display:flex; align-items:center; gap:6px; background:none; border:none; cursor:pointer; padding:0; width:100%;">
+        <span style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682;">Developer Settings</span>
+        <svg class="dev-chevron" width="12" height="12" viewBox="0 0 12 12" style="margin-left:4px; transition:transform 0.2s; color:#9aa2ac; flex-shrink:0;"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div style="display:none; margin-top:10px;">
+        <div style="font-size:11px; color:#9aa2ac; margin-bottom:8px;">Override the default Google OAuth Client ID if you are hosting this app yourself.</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <input id="oauth-client-id-input" type="text" placeholder="Paste your OAuth Client ID"
+            style="flex:1; font-family:'Roboto',sans-serif; font-size:12px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e; min-width:0;"
+            oninput="saveOAuthClientIdInput()">
+        </div>
+        <div style="margin-top:6px; font-size:11px; color:#9aa2ac;">
+          Status: <span id="gmail-id-status" style="color:#14202e; font-weight:600;">not set</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GOAL MODAL -->
+<div id="goal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='goal-overlay') closeGoalModal()">
+  <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:420px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
+    <button onclick="closeGoalModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">New Goal</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Add a financial goal</div>
+    <div style="display:flex; flex-direction:column; gap:12px;">
+      <div>
+        <label style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#6c7682; display:block; margin-bottom:4px;">Goal Name *</label>
+        <input id="goal-input-name" type="text" placeholder='e.g. "New Camera"' maxlength="80"
+          style="width:100%; box-sizing:border-box; font-family:'Roboto',sans-serif; font-size:13px; padding:8px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+      </div>
+      <div>
+        <label style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#6c7682; display:block; margin-bottom:4px;">Target Amount *</label>
+        <input id="goal-input-amount" type="number" min="0" placeholder="e.g. 3500"
+          style="width:100%; box-sizing:border-box; font-family:'Roboto',sans-serif; font-size:13px; padding:8px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+      </div>
+      <div>
+        <label style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#6c7682; display:block; margin-bottom:4px;">Deadline <span style="color:#9aa2ac;">(optional)</span></label>
+        <input id="goal-input-deadline" type="date"
+          style="width:100%; box-sizing:border-box; font-family:'Roboto',sans-serif; font-size:13px; padding:8px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+      </div>
+      <div>
+        <label style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#6c7682; display:block; margin-bottom:4px;">Notes <span style="color:#9aa2ac;">(optional)</span></label>
+        <input id="goal-input-notes" type="text" placeholder="Any extra context" maxlength="200"
+          style="width:100%; box-sizing:border-box; font-family:'Roboto',sans-serif; font-size:13px; padding:8px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+      </div>
+      <div id="goal-modal-error" style="display:none; font-size:11px; color:#d0241b;"></div>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:20px;">
+      <button onclick="submitGoalModal()" style="flex:1; padding:10px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer;">+ Add Goal</button>
+      <button onclick="closeGoalModal()" style="padding:10px 20px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -1515,6 +1654,50 @@
   </div>
 </div>
 
+<!-- DASHBOARD OVERLAY -->
+<div id="dashboard-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='dashboard-overlay') closeDashboard()">
+  <div style="background:#fff; border-radius:10px; padding:28px 30px; max-width:600px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
+    <button onclick="closeDashboard()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:6px;">Business</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Dashboard</div>
+
+    <!-- Stats grid -->
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
+      <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px;">
+        <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">This Month · Paid</div>
+        <div id="dash-month" style="font-size:20px; font-weight:700; color:#14202e;">—</div>
+      </div>
+      <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px;">
+        <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">This Quarter · All</div>
+        <div id="dash-quarter" style="font-size:20px; font-weight:700; color:#14202e;">—</div>
+      </div>
+      <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px;">
+        <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">Avg Invoice</div>
+        <div id="dash-avg" style="font-size:20px; font-weight:700; color:#14202e;">—</div>
+      </div>
+      <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px;">
+        <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">Outstanding</div>
+        <div id="dash-outstanding" style="font-size:20px; font-weight:700; color:#d0241b;">—</div>
+      </div>
+    </div>
+
+    <!-- Monthly bar chart -->
+    <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:10px;">Last 6 Months · Invoiced</div>
+    <div id="dash-chart" style="margin-bottom:24px;"></div>
+
+    <!-- Goals -->
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+      <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac;">Goals</div>
+      <button onclick="addGoal()" style="font-family:'Roboto',sans-serif; font-size:11px; padding:4px 12px; background:#14202e; color:#fff; border:none; border-radius:5px; cursor:pointer;">+ Add Goal</button>
+    </div>
+    <div id="dash-goals-list"></div>
+
+    <div id="dash-empty" style="display:none; font-size:12px; color:#9aa2ac; text-align:center; padding:20px 0;">
+      Sign in with Google and save an invoice to see your stats here.
+    </div>
+  </div>
+</div>
+
 <div class="page" id="invoice">
 
   <!-- HEADER -->
@@ -1534,6 +1717,12 @@
     </div>
 
     <div class="right-col">
+      <div class="logo-wrap" id="logo-wrap">
+        <div class="logo-placeholder" id="logo-placeholder" onclick="document.getElementById('logo-file-input').click()" title="Click to upload your logo">
+          ＋ Add Logo
+        </div>
+        <input id="logo-file-input" type="file" accept="image/*" style="display:none" onchange="handleLogoUpload(this)">
+      </div>
       <div class="party from">
         <div class="lbl">From</div>
         <div class="name" data-field="from.name"></div>
@@ -1565,7 +1754,7 @@
     <div class="total-block">
       <div class="project-total-row">
         <span class="ptl">Project Total</span>
-        <span class="ptv">JMD $<span data-field="projectTotal"></span></span>
+        <span class="ptv"><span data-field="currency"></span> <span data-field="projectTotal"></span></span>
       </div>
       <div class="total-card">
         <div class="total-amount">
@@ -1599,9 +1788,12 @@ function changeTitleFont(fontName) {
   const titleEl = document.querySelector('.invoice-word');
   const fromNameEl = document.querySelector('.party.from .name');
   const thankYouEl = document.querySelector('.thank-you');
-  if (titleEl) titleEl.style.fontFamily = `'${fontName}', sans-serif`;
-  if (fromNameEl) fromNameEl.style.fontFamily = `'${fontName}', sans-serif`;
-  if (thankYouEl) thankYouEl.style.fontFamily = `'${fontName}', sans-serif`;
+  const isSerif = ['Playfair Display', 'Georgia'].includes(fontName);
+  const fallback = isSerif ? 'serif' : 'sans-serif';
+  const family = `'${fontName}', ${fallback}`;
+  if (titleEl) titleEl.style.fontFamily = family;
+  if (fromNameEl) fromNameEl.style.fontFamily = family;
+  if (thankYouEl) thankYouEl.style.fontFamily = family;
   localStorage.setItem('invoice-title-font', fontName);
 }
 
@@ -1675,6 +1867,7 @@ function getData() {
 }
 
 function get(obj, path) {
+  if (!obj) return undefined;
   return path.split('.').reduce((o, k) => (o || {})[k], obj);
 }
 
@@ -1771,15 +1964,14 @@ function startEdit() {
   // Sync slider to current rendered font size
   const titleEl = document.querySelector('.invoice-word');
   if (titleEl) {
-    const curPx = Math.round(parseFloat(getComputedStyle(titleEl).fontSize));
+    const curPx = Math.min(120, Math.max(36, Math.round(parseFloat(getComputedStyle(titleEl).fontSize))));
     const slider = document.getElementById('title-size-slider');
     if (slider) { slider.value = curPx; document.getElementById('title-size-label').textContent = curPx + 'px'; }
   }
 }
 
-function saveEdit() {
+function extractEditData() {
   const data = getData();
-  // Read rate/cost textareas back into arrays before the data-field loop
   document.querySelectorAll('.rate-edit-ta').forEach(function(ta) {
     const i = parseInt(ta.dataset.lineIndex);
     const vals = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -1792,7 +1984,6 @@ function saveEdit() {
   });
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
-    // Sub fields are stored as "· "-joined strings — parse them back
     if (field === 'from._sub') {
       const parts = el.textContent.split(' · ').map(s => s.trim());
       data.from.email = parts[0] || '';
@@ -1808,13 +1999,27 @@ function saveEdit() {
     }
     setNestedField(data, field, el.textContent.trim());
   });
+  return data;
+}
+
+function saveEdit() {
+  const data = extractEditData();
   // Persist overrides so edits stick
   data.dateOverride    = data.date;
   data.receiptOverride = data.receiptNumber;
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  localStorage.removeItem('invoicer-autosave'); // clear autosave on manual save
   stopEdit();
   render(data);
 }
+
+// Background auto-save for drafts
+setInterval(() => {
+  if (document.body.classList.contains('editing')) {
+    const data = extractEditData();
+    localStorage.setItem('invoicer-autosave', JSON.stringify(data));
+  }
+}, 5000);
 
 function cancelEdit() {
   document.getElementById('invoice-data').textContent = snapshot;
@@ -1902,6 +2107,8 @@ async function renderLedgerHistory() {
   // Fallback to localStorage if sheet unavailable
   if (!rows) {
     rows = loadLedgerRows();
+  } else {
+    saveLedgerRows(rows); // warm localStorage cache so dashboard works on new devices
   }
 
   const histEl = document.getElementById('ledger-history');
@@ -1921,6 +2128,7 @@ async function renderLedgerHistory() {
     info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br><span style="color:#6c7682;">${row.amountDue} — ${row.date}</span>`;
 
     const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Ledger status for invoice ' + row.receipt);
     sel.style.cssText = 'font-family:Roboto,sans-serif; font-size:12px; padding:4px 8px; border:1.5px solid #ddd; border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
     STATUSES.forEach(s => {
       const opt = document.createElement('option');
@@ -1930,9 +2138,14 @@ async function renderLedgerHistory() {
       sel.appendChild(opt);
     });
     sel.addEventListener('change', async () => {
-      rows[realIdx].status = sel.value;
-      saveLedgerRows(rows); // Also save to localStorage as backup
-      await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value);
+      sel.disabled = true;
+      try {
+        rows[realIdx].status = sel.value;
+        saveLedgerRows(rows); // Also save to localStorage as backup
+        await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value);
+      } finally {
+        sel.disabled = false;
+      }
     });
 
     wrap.append(info, sel);
@@ -1987,7 +2200,7 @@ function exportLedger() {
 const FILENAME_PRESETS = [
   { id: 'hyphen',     build: (d, pfx) => `${pfx}INV-${d.receipt}-${firstName(d.client)}-${serviceSlug(d.service)}` },
   { id: 'underscore', build: (d, pfx) => `${pfx}${d.receipt}_${fullNameSlug(d.client)}_${serviceSlug(d.service)}` },
-  { id: 'readable',   build: (d, pfx) => `${pfx}${d.from} ${d.client} ${d.service} ${d.receipt}` },
+  { id: 'readable',   build: (d, pfx) => `${pfx}${slug(d.from, ' ')} ${slug(d.client, ' ')} ${slug(d.service, ' ')} ${d.receipt}` },
 ];
 
 function firstName(name)    { return name.split(' ')[0]; }
@@ -2097,7 +2310,10 @@ async function proceedPrint() {
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
         document.body.removeChild(clone);
         savePdfToDrive(pdfBlob, filename);
-      } catch(e) { console.error('Drive PDF save failed:', e.message); }
+      } catch(e) { 
+        console.error('Drive PDF save failed:', e.message); 
+        alert('Drive PDF save failed: ' + e.message);
+      }
     }, 3000);
   }
 }
@@ -2534,6 +2750,10 @@ async function sendChat() {
   const thinking = appendMsg('assistant', '…');
 
   const currentData = JSON.stringify(getData(), null, 2);
+  const existingGoals = loadGoals();
+  const goalNamesLine = existingGoals.length
+    ? `Existing goal names (use _updateGoal for these, not _addGoal): ${existingGoals.map(g => g.name).join(', ')}.`
+    : '';
   const systemPrompt = `You are an invoice data assistant. The current invoice data is shown below — it already reflects all previous changes.
 The user will describe what to change next. Return ONLY a single valid JSON object with the fields that need to change.
 Do not repeat fields that are already correct. Do not return markdown, explanation, or any text outside the JSON object.
@@ -2541,6 +2761,12 @@ If nothing needs to change, return an empty object: {}
 Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, paid.
 When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
 To save a contact to the address book, include "_addContact": { "name": "...", "address": "...", "email": "...", "phone": "..." } in your response. Only include fields you know. This does not update the invoice — combine with "to" if you also want to set the client.
+To add a new savings or revenue goal, include "_addGoal": { "name": "...", "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 15, "notes": "..." } — amount is a number, deadline is ISO 8601, allocationPct is 0–100 (default 0 if not mentioned), notes is optional; this does not change the invoice.
+To update an existing goal, include "_updateGoal": { "name": "...", "changes": { "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 20, "notes": "..." } } — name must match an existing goal (case-insensitive), include only the fields that are changing.
+To delete a goal, include "_deleteGoal": { "name": "..." } — name must match an existing goal (case-insensitive); only use this if the user explicitly asks to remove or delete a goal.
+To add expense line items to the current invoice, include "_addExpense": [{ "desc": "...", "amount": 120 }] — array, amount is a number, these belong to the current invoice only.
+To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "✅ Paid".
+Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}
 Current invoice data:
 ${currentData}`;
 
@@ -2636,7 +2862,18 @@ ${currentData}`;
     const contactToAdd = patch._addContact || null;
     delete patch._addContact;
 
+    // ── Part A: goal actions (before getData — don't need invoice data) ──
+    const actionNotes = [];
+    if (patch._addGoal)    { applyAddGoal(patch._addGoal, actionNotes);       delete patch._addGoal; }
+    if (patch._updateGoal) { applyUpdateGoal(patch._updateGoal, actionNotes); delete patch._updateGoal; }
+    if (patch._deleteGoal) { applyDeleteGoal(patch._deleteGoal, actionNotes); delete patch._deleteGoal; }
+
     const data = getData();
+
+    // ── Part B: actions that need the invoice data object ──
+    if (patch._addExpense)   { applyAddExpense(patch._addExpense, data, actionNotes);     delete patch._addExpense; }
+    if (patch._updateStatus) { applyUpdateStatus(patch._updateStatus, data, actionNotes); delete patch._updateStatus; }
+
     function deepMerge(target, source) {
       Object.entries(source).forEach(([k, v]) => {
         if (v && typeof v === 'object' && !Array.isArray(v) && typeof target[k] === 'object') deepMerge(target[k], v);
@@ -2663,18 +2900,24 @@ ${currentData}`;
       date: 'date', receiptNumber: 'receipt #', currency: 'currency', payPeriod: 'pay period',
       from: 'sender details', to: 'client details', lineItems: 'line items',
       projectTotal: 'project total', totalLabelTop: 'total label', totalLabelBottom: 'total label',
-      totalAmount: 'total amount', paymentNote: 'payment note', paid: 'paid status'
+      totalAmount: 'total amount', paymentNote: 'payment note', paid: 'paid status',
+      invoiceExpenses: 'expenses'
     };
     const changedKeys = Object.keys(patch);
     const changed = changedKeys.map(k => fieldLabels[k] || k).filter((v, i, a) => a.indexOf(v) === i).join(', ');
     const contactNote = (contactToAdd && contactToAdd.name) ? ` · ${contactToAdd.name} saved to contacts` : '';
-    thinking.textContent = `✓ Updated: ${changed}${contactNote}`;
+    const actionNote  = actionNotes.length ? ' · ' + actionNotes.join(' · ') : '';
+    if (!changed && !contactNote && actionNotes.length) {
+      thinking.textContent = '✓ ' + actionNotes.join(' · ');
+    } else {
+      thinking.textContent = `✓ Updated: ${changed}${contactNote}${actionNote}`;
+    }
     const h = loadChatHistory(); h.push({ role: 'assistant', text: thinking.textContent }); saveChatHistory(h);
 
   } catch (err) {
     thinking.className = 'chat-msg error';
     thinking.textContent = `✗ ${err.message}`;
-    const h = loadChatHistory(); h.push({ role: 'error', text: thinking.textContent }); saveChatHistory(h);
+    const h = loadChatHistory(); h.push({ role: 'assistant', text: thinking.textContent }); saveChatHistory(h);
   } finally {
     sendBtn.disabled = false;
   }
@@ -2695,6 +2938,62 @@ function upsertClient(client) {
   if (idx >= 0) list[idx] = { ...list[idx], ...client };
   else list.push(client);
   saveClients(list);
+  syncClientsToSheet();
+}
+
+async function syncClientsToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const list = loadClients();
+  // Clear existing data rows first to avoid stale rows when the list shrinks
+  await sheetsWrite(_sheetsSpreadsheetId, 'Clients!A2:D1000', []);
+  if (!list.length) return;
+  const rows = list.map(c => [c.name, c.address || '', c.email || '', c.phone || '']);
+  await sheetsWrite(_sheetsSpreadsheetId, `Clients!A2:D${rows.length + 1}`, rows);
+}
+
+async function loadClientsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Clients!A2:D');
+  if (!rows.length) return;
+  const sheetClients = rows
+    .filter(r => r[0])
+    .map(r => ({ name: r[0], address: r[1] || '', email: r[2] || '', phone: r[3] || '' }));
+  const local = loadClients();
+  sheetClients.forEach(sc => {
+    const idx = local.findIndex(c => c.name.toLowerCase() === sc.name.toLowerCase());
+    if (idx >= 0) local[idx] = { ...local[idx], ...sc };
+    else local.push(sc);
+  });
+  saveClients(local);
+  renderClientChips();
+}
+
+// ── Goals ─────────────────────────────────────────────────────
+
+function loadGoals() {
+  return JSON.parse(localStorage.getItem('invoice-goals') || '[]');
+}
+function saveGoals(goals) {
+  localStorage.setItem('invoice-goals', JSON.stringify(goals));
+}
+
+async function syncGoalsToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const goals = loadGoals();
+  await sheetsWrite(_sheetsSpreadsheetId, 'Goals!A2:E1000', []);
+  if (!goals.length) return;
+  const rows = goals.map(g => [g.name, g.amount || '', g.deadline || '', g.notes || '', g.created || '']);
+  await sheetsWrite(_sheetsSpreadsheetId, `Goals!A2:E${rows.length + 1}`, rows);
+}
+
+async function loadGoalsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:E');
+  if (!rows.length) return;
+  const goals = rows
+    .filter(r => r[0])
+    .map(r => ({ name: r[0], amount: r[1] || '0', deadline: r[2] || '', notes: r[3] || '', created: r[4] || '' }));
+  saveGoals(goals);
 }
 
 function applyClient(client) {
@@ -2781,6 +3080,7 @@ function renderClientBook() {
       inp.oninput     = () => {
         list[i][key] = inp.value;
         saveClients(list);
+        syncClientsToSheet();
         info.querySelector('.client-card-name').textContent = list[i].name;
         info.querySelector('.client-card-sub').textContent  = list[i].email || list[i].phone || list[i].address || '—';
         renderClientChips();
@@ -2792,7 +3092,7 @@ function renderClientBook() {
     const delBtn = document.createElement('button');
     delBtn.className   = 'btn-del-provider';
     delBtn.textContent = 'Remove client';
-    delBtn.onclick     = () => { list.splice(i, 1); saveClients(list); renderClientBook(); renderClientChips(); };
+    delBtn.onclick     = () => { list.splice(i, 1); saveClients(list); syncClientsToSheet(); renderClientBook(); renderClientChips(); };
     fields.appendChild(delBtn);
 
     card.append(top, fields);
@@ -2804,9 +3104,11 @@ function addClient() {
   const list = loadClients();
   list.push({ name: 'New Client', address: '', email: '', phone: '' });
   saveClients(list);
+  syncClientsToSheet();
   renderClientBook();
   renderClientChips();
   setTimeout(() => document.getElementById(`client-fields-${list.length - 1}`)?.classList.add('open'), 50);
+  alert('New client added to Address Book.');
 }
 
 function toggleClientBook() {
@@ -2825,7 +3127,7 @@ function toggleClientBook() {
 // ⚠ Replace this with your own OAuth Client ID from Google Cloud Console
 // console.cloud.google.com → APIs & Services → Credentials → Create OAuth 2.0 Client ID
 // Application type: Web application. Add your file:// or localhost origin.
-const GMAIL_CLIENT_ID = '622970529535-p38faf23t1pn0nhrhktam3c8gcf4r303.apps.googleusercontent.com';
+let GMAIL_CLIENT_ID = localStorage.getItem('gmail-client-id') || '622970529535-p38faf23t1pn0nhrhktam3c8gcf4r303.apps.googleusercontent.com';
 
 const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly';
 
@@ -3080,6 +3382,10 @@ function googleSignIn() {
 }
 
 async function openEmail() {
+  const btn = document.getElementById('btn-email-client');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sending…'; }
+  const restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = '✉ Email Client'; } };
+
   const data    = getData();
   const service = data.lineItems.map(l => l.service).join(', ');
   const to      = encodeURIComponent(data.to.email || '');
@@ -3173,14 +3479,16 @@ async function openEmail() {
         throw new Error(json.error?.message || res.statusText);
       }
       window.open(`https://mail.google.com/mail/#drafts/${json.id}`, '_blank');
+      restoreBtn();
     } catch (e) {
       console.error('Draft creation failed:', e.message);
       const confirmEl = document.getElementById('ledger-confirm');
       if (confirmEl) {
         confirmEl.style.display = 'block';
         confirmEl.style.color = '#d0241b';
-        confirmEl.textContent = '⚠ Could not attach PDF — opening Gmail compose instead. Check console for details.';
+        confirmEl.textContent = '⚠ Could not attach PDF — opening Gmail compose instead.';
       }
+      restoreBtn();
       fallbackEmail();
     }
   };
@@ -3198,7 +3506,7 @@ async function openEmail() {
     _gmailTokenClient.callback = async resp => {
       orig(resp);
       if (!resp.error) await sendViaDraft();
-      else fallbackEmail();
+      else { restoreBtn(); fallbackEmail(); }
     };
   }
 }
@@ -3231,7 +3539,7 @@ async function syncToGoogleSheets(invoiceData) {
     ];
 
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A:G:append?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:G:append?valueInputOption=USER_ENTERED`,
       {
         method: 'POST',
         headers: {
@@ -3281,12 +3589,32 @@ async function driveRequest(method, path, body, isUpload) {
   return res.json();
 }
 
+async function sheetsRequest(method, path, body) {
+  const res = await fetch('https://sheets.googleapis.com/v4' + path, {
+    method,
+    headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  return res.json();
+}
+async function sheetsWrite(spreadsheetId, range, values) {
+  return sheetsRequest('PUT', `/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, { values });
+}
+async function sheetsAppend(spreadsheetId, range, values) {
+  return sheetsRequest('POST', `/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, { values });
+}
+async function sheetsRead(spreadsheetId, range) {
+  const res = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/${range}`);
+  return res.values || [];
+}
+
 async function ensureDriveFolder() {
   if (_driveFolderId) return _driveFolderId;
 
   // Search for existing folder
-  const search = await driveRequest('GET', `/files?q=name%3D'mooInvoicer'+and+mimeType%3D'application%2Fvnd.google-apps.folder'+and+trashed%3Dfalse&fields=files(id,name)`);
-  if (search.files && search.files.length > 0) {
+  const query = "name = 'mooInvoicer' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
+  const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
+  if (search && search.files && search.files.length > 0) {
     _driveFolderId = search.files[0].id;
     localStorage.setItem('drive-folder-id', _driveFolderId);
     return _driveFolderId;
@@ -3299,12 +3627,63 @@ async function ensureDriveFolder() {
   return _driveFolderId;
 }
 
+async function ensureAllTabs(spreadsheetId) {
+  const meta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}?fields=sheets.properties`);
+  const existing = (meta.sheets || []).map(s => s.properties.title);
+  const requests = [];
+
+  if (existing.includes('Sheet1') && !existing.includes('Ledger')) {
+    const sheet1 = meta.sheets.find(s => s.properties.title === 'Sheet1');
+    requests.push({ updateSheetProperties: {
+      properties: { sheetId: sheet1.properties.sheetId, title: 'Ledger' },
+      fields: 'title'
+    }});
+  }
+
+  for (const tab of ['Analysis', 'Clients', 'Goals']) {
+    if (!existing.includes(tab)) {
+      requests.push({ addSheet: { properties: { title: tab } } });
+    }
+  }
+
+  if (requests.length) {
+    await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}:batchUpdate`, { requests });
+  }
+
+  if (!existing.includes('Clients')) {
+    await sheetsWrite(spreadsheetId, 'Clients!A1:D1', [['Name', 'Address', 'Email', 'Phone']]);
+  }
+  if (!existing.includes('Goals')) {
+    await sheetsWrite(spreadsheetId, 'Goals!A1:E1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created']]);
+  }
+  if (!existing.includes('Analysis')) {
+    await writeAnalysisFormulas(spreadsheetId);
+  }
+}
+
+async function writeAnalysisFormulas(spreadsheetId) {
+  const amtArr = 'IFERROR(VALUE(SUBSTITUTE(SUBSTITUTE(Ledger!F2:F1000,"$",""),",","")),0)';
+  const dateVal = 'IFERROR(DATEVALUE(SUBSTITUTE(Ledger!B2:B1000,"/ ","/")),0)';
+  const rows = [
+    ['Metric', 'Value'],
+    ['This Month (Paid)',  `=SUMPRODUCT((TEXT(${dateVal},"YYYY-MM")=TEXT(TODAY(),"YYYY-MM"))*(Ledger!G2:G1000="✅ Paid")*(${amtArr}))`],
+    ['This Quarter (All)', `=SUMPRODUCT((YEAR(${dateVal})&"-Q"&INT((MONTH(${dateVal})-1)/3+1)=YEAR(TODAY())&"-Q"&INT((MONTH(TODAY())-1)/3+1))*(${amtArr}))`],
+    ['Average Invoice',   `=IFERROR(AVERAGE(ARRAYFORMULA(IF(Ledger!F2:F1000="","",${amtArr}))),0)`],
+    ['Paid Count',        '=COUNTIF(Ledger!G2:G1000,"✅ Paid")'],
+    ['Unpaid Count',      '=COUNTIF(Ledger!G2:G1000,"⬜ Unpaid")'],
+    ['Deposit Count',     '=COUNTIF(Ledger!G2:G1000,"💰 Deposit")'],
+    ['Outstanding',       `=SUMPRODUCT((Ledger!G2:G1000<>"✅ Paid")*(Ledger!G2:G1000<>"")*(${amtArr}))`],
+  ];
+  await sheetsWrite(spreadsheetId, 'Analysis!A1:B8', rows);
+}
+
 async function ensureLedgerSheet(folderId) {
   if (_sheetsSpreadsheetId) return _sheetsSpreadsheetId;
 
-  // Search for existing ledger in folder
-  const search = await driveRequest('GET', `/files?q=name%3D'Invoice+Ledger'+and+'${folderId}'+in+parents+and+trashed%3Dfalse&fields=files(id,name)`);
-  if (search.files && search.files.length > 0) {
+  // Search for existing ledger in folder (match either 'Invoice Ledger' or 'InvoiceLedger')
+  const query = `(name = 'Invoice Ledger' or name = 'InvoiceLedger') and '${folderId}' in parents and trashed = false`;
+  const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
+  if (search && search.files && search.files.length > 0) {
     _sheetsSpreadsheetId = search.files[0].id;
     localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
     return _sheetsSpreadsheetId;
@@ -3319,7 +3698,7 @@ async function ensureLedgerSheet(folderId) {
   _sheetsSpreadsheetId = file.id;
   localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
 
-  // Write header row
+  // Write header row (tab is still called Sheet1 at creation; ensureAllTabs renames it)
   await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A1:G1?valueInputOption=USER_ENTERED`,
     {
@@ -3328,6 +3707,7 @@ async function ensureLedgerSheet(folderId) {
       body: JSON.stringify({ values: [['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status']] })
     }
   );
+  // ensureAllTabs() called immediately after in setupDrive will rename Sheet1 → Ledger
 
   return _sheetsSpreadsheetId;
 }
@@ -3336,14 +3716,23 @@ async function setupDrive() {
   if (!gmailTokenValid()) return;
   const statusEl = document.getElementById('drive-setup-status');
   try {
-    if (statusEl) statusEl.textContent = 'Setting up…';
+    if (statusEl) statusEl.textContent = 'Setting up...';
     const folderId = await ensureDriveFolder();
     await ensureLedgerSheet(folderId);
+    await ensureAllTabs(_sheetsSpreadsheetId);
+
+    // Sync latest sheet data to warm localStorage cache on load/sign-in
+    const sheetRows = await loadLedgerFromSheet();
+    if (sheetRows) saveLedgerRows(sheetRows);
+
+    await loadClientsFromSheet();
+    await loadGoalsFromSheet();
     if (statusEl) {
-      statusEl.innerHTML = '✓ <strong style="color:#2a8c55;">mooInvoicer/</strong> folder ready · Ledger connected';
+      statusEl.innerHTML = '✓ <strong style="color:#2a8c55;">mooInvoicer/</strong> folder ready : Ledger connected';
       statusEl.style.color = '#2a8c55';
     }
     refreshSheetsIdStatus();
+    renderDashboard();
   } catch (e) {
     console.error('Drive setup failed:', e);
     if (statusEl) { statusEl.textContent = '✗ Drive setup failed. Check permissions.'; statusEl.style.color = '#d0241b'; }
@@ -3440,6 +3829,245 @@ function buildDraftFromEvent(event) {
   };
 }
 
+// ── Dashboard ─────────────────────────────────────────────────
+
+function openDashboard() {
+  renderDashboard();
+  document.getElementById('dashboard-overlay').style.display = 'flex';
+}
+function closeDashboard() {
+  document.getElementById('dashboard-overlay').style.display = 'none';
+}
+
+function renderDashboard() {
+  const rows = loadLedgerRows();
+  const emptyEl = document.getElementById('dash-empty');
+  if (!rows.length) {
+    if (emptyEl) emptyEl.style.display = 'block';
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = 'none';
+
+  const now = new Date();
+
+  function parseAmt(str) {
+    return parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
+  }
+  function parseRowDate(str) {
+    const parts = (str || '').split('/').map(s => s.trim());
+    if (parts.length < 3) return null;
+    return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+  }
+  function rowYM(row) {
+    const d = parseRowDate(row.date);
+    if (!d) return '';
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+  function rowQ(row) {
+    const d = parseRowDate(row.date);
+    if (!d) return '';
+    return d.getFullYear() + '-Q' + Math.ceil((d.getMonth() + 1) / 3);
+  }
+
+  const thisYM = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const thisQ  = now.getFullYear() + '-Q' + Math.ceil((now.getMonth() + 1) / 3);
+
+  const paid = rows.filter(r => r.status === '✅ Paid');
+  const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit');
+
+  const monthPaid   = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  const quarterAll  = rows.filter(r => rowQ(r) === thisQ).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  const avgInvoice  = rows.length ? rows.reduce((s, r) => s + parseAmt(r.amountDue), 0) / rows.length : 0;
+  const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
+
+  const fmt = n => '$' + Math.round(n).toLocaleString();
+  document.getElementById('dash-month').textContent       = fmt(monthPaid);
+  document.getElementById('dash-quarter').textContent     = fmt(quarterAll);
+  document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
+  document.getElementById('dash-outstanding').textContent = fmt(outstanding);
+
+  // Last 6 months bar chart
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+  }
+  const totals = months.map(m => ({
+    label: m.slice(5),
+    total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0)
+  }));
+  const maxTotal = Math.max(...totals.map(t => t.total), 1);
+
+  const chart = document.getElementById('dash-chart');
+  chart.innerHTML = '';
+  totals.forEach(t => {
+    const pct = Math.round((t.total / maxTotal) * 100);
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:5px;';
+    bar.innerHTML = `
+      <span style="font-size:10px; width:28px; color:#9aa2ac; flex-shrink:0;">${t.label}</span>
+      <div style="flex:1; background:#eeeeec; border-radius:3px; height:14px;">
+        <div style="width:${pct}%; background:#14202e; height:100%; border-radius:3px; transition:width 0.3s;"></div>
+      </div>
+      <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">$${Math.round(t.total).toLocaleString()}</span>`;
+    chart.appendChild(bar);
+  });
+
+  renderGoalsList();
+}
+
+function renderGoalsList() {
+  const goals = loadGoals();
+  const el = document.getElementById('dash-goals-list');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!goals.length) {
+    el.innerHTML = '<p style="font-size:12px; color:#9aa2ac; margin:0 0 8px;">No goals yet.</p>';
+    return;
+  }
+  goals.forEach((g, i) => {
+    const target = parseFloat(g.amount) || 0;
+    const div = document.createElement('div');
+    div.style.cssText = 'background:#f6f6f4; border-radius:8px; padding:12px 14px; margin-bottom:8px;';
+    div.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <strong style="font-size:13px; color:#14202e;">${g.name}</strong>
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
+          <span style="font-size:12px; color:#6c7682;">$${target.toLocaleString()}</span>
+          <button onclick="deleteGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:13px; color:#9aa2ac; padding:0; line-height:1;" title="Delete goal">✕</button>
+        </div>
+      </div>
+      <div style="font-size:11px; color:#9aa2ac;">Target amount · deadline only — track progress in your Sheets Analysis tab</div>`;
+    el.appendChild(div);
+  });
+}
+
+function addGoal() {
+  const overlay = document.getElementById('goal-overlay');
+  ['goal-input-name','goal-input-amount','goal-input-deadline','goal-input-notes'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('goal-modal-error').style.display = 'none';
+  overlay.style.display = 'flex';
+  setTimeout(() => document.getElementById('goal-input-name').focus(), 50);
+}
+
+function closeGoalModal() {
+  document.getElementById('goal-overlay').style.display = 'none';
+}
+
+function submitGoalModal() {
+  const name     = (document.getElementById('goal-input-name').value || '').trim();
+  const amountRaw = (document.getElementById('goal-input-amount').value || '').trim();
+  const deadline = (document.getElementById('goal-input-deadline').value || '').trim();
+  const notes    = (document.getElementById('goal-input-notes').value || '').trim();
+  const errEl    = document.getElementById('goal-modal-error');
+
+  if (!name) {
+    errEl.textContent = 'Goal name is required.';
+    errEl.style.display = 'block';
+    document.getElementById('goal-input-name').focus();
+    return;
+  }
+  const amount = parseFloat(amountRaw);
+  if (!amountRaw || isNaN(amount) || amount < 0) {
+    errEl.textContent = 'Please enter a valid target amount (e.g. 3500).';
+    errEl.style.display = 'block';
+    document.getElementById('goal-input-amount').focus();
+    return;
+  }
+
+  const goals = loadGoals();
+  goals.push({ name, amount: String(amount), deadline, notes, created: new Date().toISOString().slice(0, 10) });
+  saveGoals(goals);
+  syncGoalsToSheet();
+  renderGoalsList();
+  closeGoalModal();
+}
+
+function deleteGoal(idx) {
+  const goals = loadGoals();
+  goals.splice(idx, 1);
+  saveGoals(goals);
+  syncGoalsToSheet();
+  renderGoalsList();
+}
+
+// ── AI chat dispatch functions ────────────────────────────────
+
+function applyAddGoal(goalData, actionNotes) {
+  if (!goalData || !goalData.name) { console.warn('[applyAddGoal] Missing name.', goalData); return; }
+  const goals = loadGoals();
+  const existing = goals.findIndex(g => g.name.toLowerCase() === goalData.name.toLowerCase());
+  if (existing >= 0) { console.warn('[applyAddGoal] Goal already exists — use _updateGoal:', goalData.name); return; }
+  goals.push({
+    name:          goalData.name,
+    amount:        typeof goalData.amount === 'number' ? goalData.amount : parseFloat(goalData.amount) || 0,
+    deadline:      goalData.deadline || '',
+    allocationPct: typeof goalData.allocationPct === 'number' ? goalData.allocationPct : 0,
+    notes:         goalData.notes || '',
+    created:       new Date().toISOString().slice(0, 10)
+  });
+  saveGoals(goals);
+  syncGoalsToSheet();
+  renderGoalsList();
+  actionNotes.push(`Goal added: ${goalData.name}`);
+}
+
+function applyUpdateGoal(updateData, actionNotes) {
+  if (!updateData || !updateData.name) { console.warn('[applyUpdateGoal] Missing name.', updateData); return; }
+  const goals = loadGoals();
+  const idx = goals.findIndex(g => g.name.toLowerCase() === updateData.name.toLowerCase());
+  if (idx < 0) { console.warn('[applyUpdateGoal] No goal found:', updateData.name); return; }
+  const c = updateData.changes || {};
+  if ('amount'        in c) goals[idx].amount        = typeof c.amount === 'number' ? c.amount : parseFloat(c.amount) || 0;
+  if ('deadline'      in c) goals[idx].deadline      = c.deadline || '';
+  if ('allocationPct' in c) goals[idx].allocationPct = typeof c.allocationPct === 'number' ? c.allocationPct : 0;
+  if ('notes'         in c) goals[idx].notes         = c.notes || '';
+  saveGoals(goals);
+  syncGoalsToSheet();
+  renderGoalsList();
+  actionNotes.push(`Goal updated: ${goals[idx].name}`);
+}
+
+function applyDeleteGoal(deleteData, actionNotes) {
+  if (!deleteData || !deleteData.name) { console.warn('[applyDeleteGoal] Missing name.', deleteData); return; }
+  const goals = loadGoals();
+  const idx = goals.findIndex(g => g.name.toLowerCase() === deleteData.name.toLowerCase());
+  if (idx < 0) { console.warn('[applyDeleteGoal] No goal found:', deleteData.name); return; }
+  const removed = goals.splice(idx, 1)[0];
+  saveGoals(goals);
+  syncGoalsToSheet();
+  renderGoalsList();
+  actionNotes.push(`Goal removed: ${removed.name}`);
+}
+
+function applyAddExpense(items, data, actionNotes) {
+  if (!Array.isArray(items) || items.length === 0) { console.warn('[applyAddExpense] Expected non-empty array.', items); return; }
+  const valid = items.filter(item => item.desc && typeof item.desc === 'string' && !isNaN(parseFloat(item.amount)))
+    .map(item => ({ desc: item.desc.trim(), amount: typeof item.amount === 'number' ? item.amount : parseFloat(item.amount) }));
+  if (!valid.length) { console.warn('[applyAddExpense] No valid items.', items); return; }
+  if (!Array.isArray(data.invoiceExpenses)) data.invoiceExpenses = [];
+  data.invoiceExpenses.push(...valid);
+  actionNotes.push(`Expense${valid.length > 1 ? 's' : ''} added: ${valid.map(i => i.desc).join(', ')}`);
+}
+
+const VALID_STATUSES = ['⬜ Unpaid', '💰 Deposit', '✅ Paid'];
+
+function applyUpdateStatus(statusData, data, actionNotes) {
+  if (!statusData || !statusData.receipt || !statusData.status) { console.warn('[applyUpdateStatus] Missing receipt or status.', statusData); return; }
+  if (statusData.receipt !== data.receiptNumber) { console.warn('[applyUpdateStatus] Receipt mismatch — AI returned', statusData.receipt, ', current is', data.receiptNumber); return; }
+  if (!VALID_STATUSES.includes(statusData.status)) { console.warn('[applyUpdateStatus] Invalid status:', statusData.status); return; }
+  updateLedgerStatusOnSheet(statusData.receipt, statusData.status);
+  const rows = loadLedgerRows();
+  const rowIdx = rows.findIndex(r => r.receipt === statusData.receipt);
+  if (rowIdx >= 0) { rows[rowIdx].status = statusData.status; saveLedgerRows(rows); }
+  else { console.warn('[applyUpdateStatus] Receipt not found in localStorage:', statusData.receipt); }
+  actionNotes.push(`Status → ${statusData.status}`);
+}
+
 function openCalendarImport() {
   if (!gmailTokenValid()) {
     alert('Please sign in with Google first.');
@@ -3524,7 +4152,7 @@ async function loadLedgerFromSheet() {
 
   try {
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A:G`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:G`,
       {
         headers: { Authorization: `Bearer ${_gmailToken}` }
       }
@@ -3562,7 +4190,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status) {
 
   try {
     const readRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A:A`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:A`,
       { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
     if (!readRes.ok) return;
@@ -3570,7 +4198,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status) {
     const colA = readJson.values || [];
     const sheetRowIdx = colA.findIndex(function(r, i) { return i > 0 && r[0] === receiptNumber; });
     if (sheetRowIdx === -1) { console.warn('Receipt not found in sheet:', receiptNumber); return; }
-    const cell = `Sheet1!G${sheetRowIdx + 1}`;
+    const cell = `Ledger!G${sheetRowIdx + 1}`;
 
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
@@ -3612,6 +4240,66 @@ function refreshSheetsIdStatus() {
 
 let _recognition = null;
 let _recognizing = false;
+
+// ── Logo Upload ───────────────────────────────────────────────
+
+function handleLogoUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    alert('Logo file is too large. Please use an image under 2MB.');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      localStorage.setItem('invoice-logo', e.target.result);
+    } catch (err) {
+      alert('Could not save logo — storage quota exceeded. Try a smaller image.');
+      input.value = '';
+      return;
+    }
+    renderLogo(e.target.result);
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+function renderLogo(dataUrl) {
+  const wrap = document.getElementById('logo-wrap');
+  if (!wrap) return;
+  const placeholder = document.getElementById('logo-placeholder');
+  if (placeholder) placeholder.style.display = 'none';
+  let img = document.getElementById('logo-img');
+  if (!img) {
+    img = document.createElement('img');
+    img.id = 'logo-img';
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'logo-remove';
+    removeBtn.title = 'Remove logo';
+    removeBtn.textContent = '✕';
+    removeBtn.onclick = removeLogo;
+    wrap.appendChild(img);
+    wrap.appendChild(removeBtn);
+  }
+  img.src = dataUrl;
+}
+
+function removeLogo() {
+  localStorage.removeItem('invoice-logo');
+  const img = document.getElementById('logo-img');
+  if (img) img.remove();
+  const removeBtn = document.querySelector('.logo-remove');
+  if (removeBtn) removeBtn.remove();
+  const placeholder = document.getElementById('logo-placeholder');
+  if (placeholder) placeholder.style.display = '';
+}
+
+function initLogo() {
+  const saved = localStorage.getItem('invoice-logo');
+  if (saved) renderLogo(saved);
+}
 
 function toggleVoice() {
   const btn = document.getElementById('btn-chat-voice');
@@ -3680,13 +4368,57 @@ try {
   }
 } catch(e) {}
 
+window.restoreDraft = function() {
+  try {
+    const data = JSON.parse(localStorage.getItem('invoicer-autosave'));
+    document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+    render(data);
+    discardDraft();
+  } catch(e) {}
+};
+
+window.discardDraft = function() {
+  localStorage.removeItem('invoicer-autosave');
+  const b = document.getElementById('draft-banner');
+  if (b) b.remove();
+};
+
+window.clearInvoice = function() {
+  if (confirm('Are you sure you want to clear this invoice and start fresh?')) {
+    localStorage.removeItem('invoice-last-state');
+    localStorage.removeItem('invoicer-autosave');
+    localStorage.removeItem('invoice-logo');
+    removeLogo();
+    document.getElementById('invoice-data').textContent = JSON.stringify(TMPL_DEFAULT, null, 2);
+    render(TMPL_DEFAULT);
+    if (document.body.classList.contains('editing')) stopEdit();
+  }
+};
+
+const autosave = localStorage.getItem('invoicer-autosave');
+if (autosave) {
+  const banner = document.createElement('div');
+  banner.id = 'draft-banner';
+  banner.style.cssText = 'position:fixed; top:0; left:0; right:0; background:#f0ad4e; color:#14202e; text-align:center; padding:10px; z-index:9999; font-size:13px; font-weight:600; display:flex; justify-content:center; gap:12px; align-items:center; box-shadow:0 2px 10px rgba(0,0,0,0.1);';
+  banner.innerHTML = `
+    <span>An unsaved draft was found.</span>
+    <button onclick="restoreDraft()" style="padding:4px 10px; border:none; border-radius:4px; background:#14202e; color:#fff; cursor:pointer;">Restore Draft</button>
+    <button onclick="discardDraft()" style="padding:4px 10px; border:none; border-radius:4px; background:rgba(0,0,0,0.1); cursor:pointer;">Discard</button>
+  `;
+  document.body.appendChild(banner);
+}
+
 render(getData());
 renderClientChips();
 restoreTitleFont();
 restoreTitleSize();
+initLogo();
 
 // Restore token from storage if available
-if (restoreTokenFromStorage()) updateEmailBtn();
+if (restoreTokenFromStorage()) {
+  updateEmailBtn();
+  setupDrive();
+}
 
 // Init Google auth silently on load
 window.addEventListener('load', () => {
@@ -3700,12 +4432,13 @@ window.addEventListener('load', () => {
 
 // Register service worker for PWA
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').then(reg => {
+  navigator.serviceWorker.register('./service-worker.js').then(reg => {
     console.log('✓ Service worker registered');
   }).catch(err => {
     console.log('Service worker registration failed:', err);
   });
 }
+
 </script>
 </body>
 </html>

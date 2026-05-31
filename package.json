@@ -1,0 +1,13 @@
+{
+  "name": "moo-invoicer",
+  "version": "1.2.0",
+  "description": "Invoice generation and ledger tracking tool",
+  "type": "module",
+  "scripts": {
+    "start": "node build/scripts/launcher.js",
+    "dev": "node build/scripts/launcher.js --dev",
+    "build": "node build/scripts/build-web.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
