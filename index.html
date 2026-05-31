@@ -67,6 +67,7 @@
 
   "from": {
     "name": "Your Business Name",
+    "address": "",
     "email": "contact@yourbusiness.com",
     "phone": "(555) 123-4567"
   },
@@ -220,6 +221,7 @@
     margin-top: 4px;
   }
   body.editing #title-size-wrap { display: flex; }
+  body.editing .edit-only { display: inline-block !important; }
   #title-size-slider {
     -webkit-appearance: none;
     appearance: none;
@@ -1411,6 +1413,7 @@
   <button id="btn-save"   onclick="saveEdit()">✓ Save</button>
   <button id="btn-cancel" onclick="cancelEdit()">✕ Cancel</button>
   <button id="btn-clear-invoice" onclick="clearInvoice()" style="background:#d9534f; color:#fff;" title="Start a fresh invoice">🗑 Clear</button>
+  <button id="btn-load-profile" onclick="applyBusinessProfile()" title="Fill From section with your saved business profile">⚙ My Business</button>
   <select id="font-selector" onchange="changeTitleFont(this.value)" style="font-family:'Roboto',sans-serif; font-size:12px; padding:8px 12px; border:none; border-radius:6px; background:#14202e; color:#fff; cursor:pointer;">
     <option value="Bebas Neue">Bebas Neue</option>
     <option value="Outfit">Outfit</option>
@@ -1761,6 +1764,10 @@
         <div class="lbl">From</div>
         <div class="name" data-field="from.name"></div>
         <div class="sub" id="from-sub" data-field="from._sub"></div>
+        <button class="edit-only" onclick="saveBusinessProfile()" title="Save these details as your default business profile"
+          style="display:none; margin-top:6px; background:none; border:1px solid rgba(20,32,46,0.2); border-radius:4px; font-size:10px; color:#6c7682; padding:3px 8px; cursor:pointer; font-family:'Roboto',sans-serif; letter-spacing:0.5px;">
+          ⬇ Save as Profile
+        </button>
       </div>
       <div class="party to">
         <div class="lbl">To</div>
@@ -1920,7 +1927,10 @@ function render(data) {
   try { localStorage.setItem('invoice-last-state', JSON.stringify(data)); } catch(e) {}
 
   const fromSub = document.getElementById('from-sub');
-  if (fromSub) fromSub.textContent = [data.from.email, data.from.phone].filter(Boolean).join(' · ');
+  if (fromSub) {
+    const fromLines = [data.from.address, [data.from.email, data.from.phone].filter(Boolean).join(' · ')].filter(Boolean);
+    fromSub.textContent = fromLines.join('\n');
+  }
 
   const toSub = document.getElementById('to-sub');
   if (toSub) toSub.textContent = [data.to.address, data.to.email, data.to.phone].filter(Boolean).join(' · ');
@@ -2019,9 +2029,14 @@ function extractEditData() {
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
     if (field === 'from._sub') {
-      const parts = el.textContent.split(' · ').map(s => s.trim());
-      data.from.email = parts[0] || '';
-      data.from.phone = parts[1] || '';
+      const lines = el.textContent.split('\n').map(s => s.trim()).filter(Boolean);
+      // Last line is "email · phone", everything before is address
+      const contactLine = lines[lines.length - 1] || '';
+      const contactParts = contactLine.split(' · ').map(s => s.trim());
+      const addressLines = lines.length > 1 ? lines.slice(0, -1) : [];
+      data.from.address = addressLines.join('\n');
+      data.from.email = contactParts[0] || '';
+      data.from.phone = contactParts[1] || '';
       return;
     }
     if (field === 'to._sub') {
@@ -2162,7 +2177,19 @@ async function renderLedgerHistory() {
 
     const info = document.createElement('div');
     info.style.cssText = 'font-size:11.5px; color:#14202e; line-height:1.5; min-width:0; flex:1;';
-    info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br><span style="color:#6c7682;">${row.amountDue} — ${row.date}</span>`;
+    
+    let overdueFlag = '';
+    if (row.status !== '✅ Paid' && row.status !== '💰 Deposit') { // Deposit implies partially paid, but if unpaid/deposit is overdue, let's flag if unpaid.
+      // Wait, '💰 Deposit' means partial. Let's flag both if past due.
+      const rowDate = typeof parseRowDate === 'function' ? parseRowDate(row.date) : new Date(row.date);
+      if (rowDate && !isNaN(rowDate.valueOf())) {
+        const diffDays = (new Date() - rowDate) / (1000 * 60 * 60 * 24);
+        const pp = parseInt(row.payPeriod) || 30; // default 30 days if not present
+        if (diffDays > pp) overdueFlag = '<span style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.5px; text-transform:uppercase;">Overdue</span>';
+      }
+    }
+
+    info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br><span style="color:#6c7682;">${row.amountDue} — ${row.date}</span>${overdueFlag}`;
 
     const sel = document.createElement('select');
     sel.setAttribute('aria-label', 'Ledger status for invoice ' + row.receipt);
@@ -2994,21 +3021,37 @@ function upsertClient(client) {
   syncClientsToSheet();
 }
 
-async function syncClientsToSheet() {
+let _clientSyncTimer = null;
+function syncClientsToSheet() {
+  clearTimeout(_clientSyncTimer);
+  _clientSyncTimer = setTimeout(() => doSyncClientsToSheet(), 1500);
+}
+
+async function doSyncClientsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   const list = loadClients();
   if (!list.length) return;
-  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Clients!A2:D');
+  
+  let existing = [];
+  try {
+    existing = await sheetsRead(_sheetsSpreadsheetId, 'Clients!A2:D');
+  } catch (err) {
+    console.warn("Clients sheet read error:", err);
+  }
+  
   for (const client of list) {
+    if (!client.name) continue;
     const rowIdx = existing.findIndex(r => r[0] && r[0].toLowerCase() === client.name.toLowerCase());
     const newRow = [client.name, client.address || '', client.email || '', client.phone || ''];
     if (rowIdx === -1) {
       await sheetsAppend(_sheetsSpreadsheetId, 'Clients!A:D', [newRow]);
+      existing.push(newRow); // Prevent duplicate appends if we loop
     } else {
       const sheetRow = rowIdx + 2; // 1-based + header offset
       const isDifferent = existing[rowIdx].join('|') !== newRow.join('|');
-      if (isDifferent && confirm(`Client "${client.name}" already exists in your sheet with different details. Update it?`)) {
+      if (isDifferent) {
         await sheetsWrite(_sheetsSpreadsheetId, `Clients!A${sheetRow}:D${sheetRow}`, [newRow]);
+        existing[rowIdx] = newRow;
       }
     }
   }
@@ -3016,18 +3059,36 @@ async function syncClientsToSheet() {
 
 async function loadClientsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Clients!A2:D');
+  let rows = [];
+  try {
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'Clients!A2:D');
+  } catch (err) {
+    return;
+  }
   if (!rows.length) return;
   const sheetClients = rows
     .filter(r => r[0])
     .map(r => ({ name: r[0], address: r[1] || '', email: r[2] || '', phone: r[3] || '' }));
-  const local = loadClients();
+    
+  let local = loadClients();
   sheetClients.forEach(sc => {
     const idx = local.findIndex(c => c.name.toLowerCase() === sc.name.toLowerCase());
     if (idx >= 0) local[idx] = { ...local[idx], ...sc };
     else local.push(sc);
   });
-  saveClients(local);
+  
+  const unique = [];
+  const seen = new Set();
+  for (const c of local) {
+    if (!c.name || c.name.trim() === '' || c.name === 'New Client') continue;
+    const key = c.name.toLowerCase().trim();
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(c);
+    }
+  }
+  
+  saveClients(unique);
   renderClientChips();
 }
 
@@ -3795,40 +3856,6 @@ async function ensureLedgerSheet(folderId) {
 
   // Create spreadsheet via Drive (so it lands in our folder)
   const file = await driveRequest('POST', '/files', {
-    let filename = '';
-    if (file) {
-      if (!_driveFolderId) await ensureDriveFolder();
-      const query = `name = 'receipts' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-      const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
-      let receiptsFolderId;
-      if (search && search.files && search.files.length > 0) {
-        receiptsFolderId = search.files[0].id;
-      } else {
-        const folder = await driveRequest('POST', '/files', { name: 'receipts', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
-        receiptsFolderId = folder.id;
-      }
-      
-      // Step 1: Create metadata to get a File ID
-      const metaRes = await driveRequest('POST', '/files', { 
-        name: file.name, 
-        parents: [receiptsFolderId] 
-      });
-      if (!metaRes.id) throw new Error("Failed to create receipt metadata in Drive.");
-      
-      // Step 2: Upload file media to the newly created File ID
-      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
-        method: 'PATCH',
-        headers: { 
-          'Authorization': `Bearer ${_gmailToken}`,
-          'Content-Type': file.type || 'application/octet-stream'
-        },
-        body: file
-      });
-      
-      if (!uploadRes.ok) throw new Error("Failed to upload receipt image data to Drive.");
-      const uploaded = await uploadRes.json();
-      filename = uploaded.name || metaRes.name || file.name;
-    },
     name: 'Invoice Ledger',
     mimeType: 'application/vnd.google-apps.spreadsheet',
     parents: [folderId]
@@ -4005,9 +4032,15 @@ function renderDashboard() {
     return parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
   }
   function parseRowDate(str) {
-    const parts = (str || '').split('/').map(s => s.trim());
-    if (parts.length < 3) return null;
-    return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+    if (!str) return null;
+    let d = new Date(str);
+    if (!isNaN(d.valueOf())) return d;
+    const parts = str.split('/').map(s => s.trim());
+    if (parts.length >= 3) {
+      d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      if (!isNaN(d.valueOf())) return d;
+    }
+    return null;
   }
   function rowYM(row) {
     const d = parseRowDate(row.date);
@@ -4722,6 +4755,55 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
 let _recognition = null;
 let _recognizing = false;
 
+// ── Business Profile ─────────────────────────────────────────
+
+function saveBusinessProfile() {
+  const data = extractEditData();
+  const profile = {
+    name:    data.from.name    || '',
+    address: data.from.address || '',
+    email:   data.from.email   || '',
+    phone:   data.from.phone   || '',
+  };
+  if (!profile.name) { alert('Please enter a business name before saving the profile.'); return; }
+  localStorage.setItem('invoice-business-profile', JSON.stringify(profile));
+  const btn = document.querySelector('.edit-only[onclick="saveBusinessProfile()"]');
+  if (btn) { btn.textContent = '✓ Profile Saved'; setTimeout(() => { btn.textContent = '⬇ Save as Profile'; }, 2000); }
+}
+
+function loadBusinessProfile() {
+  const raw = localStorage.getItem('invoice-business-profile');
+  return raw ? JSON.parse(raw) : null;
+}
+
+function applyBusinessProfile() {
+  const profile = loadBusinessProfile();
+  if (!profile) { alert('No saved business profile found. Fill in your From details and click "Save as Profile".'); return; }
+  const data = getData();
+  data.from.name    = profile.name;
+  data.from.address = profile.address;
+  data.from.email   = profile.email;
+  data.from.phone   = profile.phone;
+  document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  render(data);
+}
+
+function initBusinessProfile() {
+  const profile = loadBusinessProfile();
+  if (!profile) return;
+  // Auto-apply if the current From name is blank or still the placeholder
+  const data = getData();
+  const currentName = (data.from && data.from.name) || '';
+  if (!currentName || currentName === 'Your Business Name') {
+    data.from.name    = profile.name;
+    data.from.address = profile.address;
+    data.from.email   = profile.email;
+    data.from.phone   = profile.phone;
+    document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+    render(data);
+  }
+}
+
 // ── Logo Upload ───────────────────────────────────────────────
 
 function handleLogoUpload(input) {
@@ -4895,6 +4977,7 @@ restoreTitleFont();
 restoreTitleSize();
 initLogo();
 restoreFxRateOverride();
+initBusinessProfile();
 
 // Restore token from storage if available
 if (restoreTokenFromStorage()) {
@@ -4921,6 +5004,23 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const activeOverlays = Array.from(document.querySelectorAll('div[id$="-overlay"], #chat-settings-panel')).filter(el => {
+        const style = window.getComputedStyle(el);
+        return style.display === 'flex' || style.display === 'block';
+      });
+      if (activeOverlays.length > 0) {
+        activeOverlays.forEach(el => {
+          if (el.id === 'chat-settings-panel') {
+            document.getElementById('chat-settings-panel').classList.remove('open');
+          } else {
+            el.style.display = 'none';
+          }
+        });
+      }
+    }
+  });
 </script>
 </body>
 </html>
