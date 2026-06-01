@@ -1398,6 +1398,33 @@
     transition: opacity 0.15s;
   }
   #btn-add-client:hover { opacity: 0.85; }
+  .client-book-search-row {
+    padding: 0 14px 10px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .client-book-search-row input {
+    flex: 1;
+    background: #f1f3f5;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    outline: none;
+  }
+  .client-book-search-row input:focus {
+    box-shadow: 0 0 0 2px var(--ink);
+  }
+  #client-count-badge {
+    font-size: 11px;
+    color: #6c7682;
+    background: #e4e7eb;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
   #client-list {
     flex: 1;
     overflow-y: auto;
@@ -1631,6 +1658,10 @@
     <div id="client-book-header">
       <span>Address Book</span>
       <button id="btn-add-client" onclick="addClient()">+ Add Client</button>
+    </div>
+    <div class="client-book-search-row">
+      <input type="text" id="client-search" placeholder="Search clients..." oninput="renderClientBook()">
+      <span id="client-count-badge"></span>
     </div>
     <div id="client-list"></div>
   </div>
@@ -2061,7 +2092,16 @@ function todayFormatted() {
 // To get B on the same day, change receiptOverride in the JSON.
 function autoReceiptNumber() {
   const { dd, mm, yy } = todayFormatted();
-  return `${yy}${mm}${dd}A`;
+  const prefix = `${yy}${mm}${dd}`;
+  const rows = loadLedgerRows();
+  const used = rows
+    .map(r => (r.receipt || '').toUpperCase())
+    .filter(r => r.startsWith(prefix))
+    .map(r => r.slice(prefix.length))
+    .filter(s => /^[A-Z]$/.test(s))
+    .map(s => s.charCodeAt(0));
+  const next = used.length ? Math.max(...used) + 1 : 65; // 65 = 'A'
+  return prefix + String.fromCharCode(Math.min(next, 90)); // cap at Z
 }
 
 function autoDate() {
@@ -2413,10 +2453,65 @@ async function renderLedgerHistory() {
   if (!rows.length) { histEl.style.display = 'none'; return; }
   histEl.style.display = 'block';
 
+  // ── Summary bar (always rebuild) ──
+  const currencySymbols = { USD: '$', JMD: 'J$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$' };
+  const parseAmount = str => parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
+  const getCurrency = str => { const m = (str || '').match(/^([A-Z]{2,4})/); return m ? m[1] : ''; };
+  const totalPaid = rows.filter(r => r.status === '✅ Paid').reduce((s, r) => s + parseAmount(r.amountDue), 0);
+  const totalOutstanding = rows.filter(r => r.status !== '✅ Paid').reduce((s, r) => s + parseAmount(r.amountDue), 0);
+  const sampleCur = getCurrency(rows[0]?.amountDue || '');
+  const sym = currencySymbols[sampleCur] || sampleCur || '$';
+  const fmt = n => sym + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  let summaryEl = document.getElementById('ledger-summary');
+  if (!summaryEl) {
+    summaryEl = document.createElement('div');
+    summaryEl.id = 'ledger-summary';
+    summaryEl.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;';
+    listEl.before(summaryEl);
+  }
+  summaryEl.innerHTML = `
+    <span style="font-size:11px; background:#d4edda; color:#155724; border-radius:4px; padding:3px 8px; font-weight:600;">Paid ${fmt(totalPaid)}</span>
+    <span style="font-size:11px; background:#fff3cd; color:#856404; border-radius:4px; padding:3px 8px; font-weight:600;">Outstanding ${fmt(totalOutstanding)}</span>
+    <span style="font-size:11px; color:#9aa2ac; padding:3px 0;">${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}</span>`;
+
+  // ── Search filter ──
+  let searchEl = document.getElementById('ledger-search');
+  if (!searchEl) {
+    searchEl = document.createElement('input');
+    searchEl.id = 'ledger-search';
+    searchEl.type = 'text';
+    searchEl.placeholder = 'Filter by client or receipt…';
+    searchEl.style.cssText = 'font-family:Roboto,sans-serif; font-size:12px; padding:6px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; width:100%; box-sizing:border-box; outline:none; color:#14202e; margin-bottom:8px;';
+    searchEl.oninput = () => {
+      const q = searchEl.value.toLowerCase();
+      listEl.querySelectorAll('.ledger-row').forEach(el => {
+        el.style.display = el.dataset.search.includes(q) ? '' : 'none';
+      });
+    };
+    summaryEl.after(searchEl);
+  } else {
+    searchEl.value = '';
+  }
+
+  // ── Row colour helper ──
+  const rowBg = (row, isOverdue) => {
+    if (row.status === '✅ Paid') return '#edf7f0';
+    if (row.status === '💰 Deposit') return '#fff8e1';
+    if (isOverdue) return '#fdecea';
+    return '#f6f6f4';
+  };
+
   rows.slice().reverse().forEach((row, ri) => {
     const realIdx = rows.length - 1 - ri;
+
+    const rowDate = typeof parseRowDate === 'function' ? parseRowDate(row.date) : new Date(row.date);
+    const isOverdue = row.status !== '✅ Paid' && rowDate && !isNaN(rowDate.valueOf()) &&
+      (new Date() - rowDate) / (1000 * 60 * 60 * 24) > (parseInt(row.payPeriod) || 30);
+
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'display:flex; flex-direction:column; background:#f6f6f4; border-radius:6px; padding:8px 12px; gap:0;';
+    wrap.className = 'ledger-row';
+    wrap.dataset.search = `${(row.receipt || '').toLowerCase()} ${(row.client || '').toLowerCase()}`;
+    wrap.style.cssText = `display:flex; flex-direction:column; background:${rowBg(row, isOverdue)}; border-radius:6px; padding:8px 12px; gap:0;`;
 
     const rowMain = document.createElement('div');
     rowMain.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
@@ -2424,16 +2519,7 @@ async function renderLedgerHistory() {
     const info = document.createElement('div');
     info.style.cssText = 'font-size:11.5px; color:#14202e; line-height:1.5; min-width:0; flex:1;';
     
-    let overdueFlag = '';
-    if (row.status !== '✅ Paid' && row.status !== '💰 Deposit') { // Deposit implies partially paid, but if unpaid/deposit is overdue, let's flag if unpaid.
-      // Wait, '💰 Deposit' means partial. Let's flag both if past due.
-      const rowDate = typeof parseRowDate === 'function' ? parseRowDate(row.date) : new Date(row.date);
-      if (rowDate && !isNaN(rowDate.valueOf())) {
-        const diffDays = (new Date() - rowDate) / (1000 * 60 * 60 * 24);
-        const pp = parseInt(row.payPeriod) || 30; // default 30 days if not present
-        if (diffDays > pp) overdueFlag = '<span style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.5px; text-transform:uppercase;">Overdue</span>';
-      }
-    }
+    const overdueFlag = isOverdue ? '<span style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.5px; text-transform:uppercase;">Overdue</span>' : '';
 
     info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br><span style="color:#6c7682;">${row.amountDue} — ${row.date}</span>${overdueFlag}`;
 
@@ -2455,6 +2541,7 @@ async function renderLedgerHistory() {
       sel.disabled = true;
       try {
         rows[realIdx].status = sel.value;
+        wrap.style.background = rowBg(rows[realIdx], false);
         saveLedgerRows(rows); // Also save to localStorage as backup
         await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value);
         if (sel.value === '✅ Paid') {
@@ -2627,6 +2714,7 @@ async function proceedPrint() {
 
   // Save to Drive after print completes, using a clone so live DOM is never touched
   if (gmailTokenValid() && _driveFolderId) {
+    showToast('Generating PDF backup...', 'info');
     setTimeout(async () => {
       try {
         const data = getData();
@@ -2634,7 +2722,7 @@ async function proceedPrint() {
         const clone = document.getElementById('invoice').cloneNode(true);
         clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
         document.body.appendChild(clone);
-        const opt = { margin: 0, filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 1 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const opt = { margin: 0, filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
         document.body.removeChild(clone);
         savePdfToDrive(pdfBlob, filename);
@@ -3444,12 +3532,23 @@ function renderClientChips() {
 }
 
 function renderClientBook() {
-  const list = loadClients();
-  const el   = document.getElementById('client-list');
+  const masterList = loadClients();
+  let list = masterList.map((c, i) => ({ ...c, _origIdx: i }));
+  list.sort((a, b) => a.name.localeCompare(b.name));
+
+  const query = (document.getElementById('client-search')?.value || '').toLowerCase();
+  if (query) {
+    list = list.filter(c => c.name.toLowerCase().includes(query) || (c.email || '').toLowerCase().includes(query));
+  }
+
+  const countBadge = document.getElementById('client-count-badge');
+  if (countBadge) countBadge.textContent = `${list.length} client${list.length === 1 ? '' : 's'}`;
+
+  const el = document.getElementById('client-list');
   el.innerHTML = '';
 
   if (!list.length) {
-    el.innerHTML = '<div style="text-align:center;color:#9aa2ac;font-size:12px;padding:24px 0;">No clients yet.<br>They\'ll appear here after you update the ledger,<br>or hit <strong>+ Add Client</strong>.</div>';
+    el.innerHTML = '<div style="text-align:center;color:#9aa2ac;font-size:12px;padding:24px 0;">No clients found.</div>';
     return;
   }
 
@@ -3495,11 +3594,13 @@ function renderClientBook() {
       inp.value       = c[key] || '';
       inp.placeholder = key;
       inp.oninput     = () => {
-        list[i][key] = inp.value;
-        saveClients(list);
+        c[key] = inp.value;
+        const freshMaster = loadClients();
+        freshMaster[c._origIdx][key] = inp.value;
+        saveClients(freshMaster);
         syncClientsToSheet();
-        info.querySelector('.client-card-name').textContent = list[i].name;
-        info.querySelector('.client-card-sub').textContent  = list[i].email || list[i].phone || list[i].address || '—';
+        info.querySelector('.client-card-name').textContent = c.name;
+        info.querySelector('.client-card-sub').textContent  = c.email || c.phone || c.address || '—';
         renderClientChips();
       };
       row.appendChild(inp);
@@ -3508,8 +3609,19 @@ function renderClientBook() {
 
     const delBtn = document.createElement('button');
     delBtn.className   = 'btn-del-provider';
+    delBtn.style.marginTop = '15px';
     delBtn.textContent = 'Remove client';
-    delBtn.onclick     = () => { list.splice(i, 1); saveClients(list); syncClientsToSheet(); renderClientBook(); renderClientChips(); };
+    delBtn.onclick     = async () => {
+      const confirmed = await showConfirm(`Are you sure you want to delete ${c.name}?`);
+      if (confirmed) {
+        const freshMaster = loadClients();
+        freshMaster.splice(c._origIdx, 1);
+        saveClients(freshMaster);
+        syncClientsToSheet();
+        renderClientBook();
+        renderClientChips();
+      }
+    };
     fields.appendChild(delBtn);
 
     card.append(top, fields);
@@ -3825,7 +3937,7 @@ async function openEmail() {
         const opt = {
           margin: 0, filename,
           image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 1 },
+          html2canvas: { scale: 2 },
           jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
         };
         html2pdf().set(opt).from(clone).toPdf().output('blob').then(resolve).catch(reject);
@@ -4177,6 +4289,7 @@ async function savePdfToDrive(pdfBlob, filename) {
     });
     const json = await res.json();
     console.log('✓ PDF saved to Drive:', json.name);
+    showToast(`PDF saved to Drive: ${json.name}`, 'success');
     return json.id;
   } catch (e) {
     console.error('Drive PDF save failed:', e.message);
