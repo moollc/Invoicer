@@ -1609,11 +1609,11 @@
 <div id="print-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id === 'print-overlay') closeDialog()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:500px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
     <button onclick="closeDialog()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center; transition:all 0.15s;">✕</button>
-    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Before you print</div>
-    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Print &amp; update the ledger</div>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Publish Invoice</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Save, print &amp; sync the ledger</div>
 
     <!-- New row preview -->
-    <div id="ledger-preview" style="background:#f6f6f4; border-radius:6px; padding:14px 16px; font-size:11.5px; line-height:1.8; color:#14202e; font-family:monospace; margin-bottom:12px; white-space:pre-wrap; word-break:break-all;"></div>
+    <div id="ledger-preview" style="background:#f6f6f4; border-radius:6px; padding:10px 14px; font-size:10.5px; line-height:1.7; color:#14202e; font-family:monospace; margin-bottom:12px; white-space:pre-wrap; word-break:break-word; overflow-x:auto;"></div>
 
     <!-- Existing rows status editor -->
     <div id="ledger-history" style="display:none; margin-bottom:14px;">
@@ -2258,7 +2258,7 @@ async function confirmPrint() {
     client:       data.to.name,
     service:      services,
     projectTotal: `${data.currency} ${data.projectTotal}`,
-    amountDue:    data.totalAmount,
+    amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
     status:       '⬜ Unpaid',
   };
 
@@ -4208,7 +4208,14 @@ function renderDashboard() {
   const avgInvoice  = rows.length ? rows.reduce((s, r) => s + parseAmt(r.amountDue), 0) / rows.length : 0;
   const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
 
-  const fmt = n => '$' + Math.round(n).toLocaleString();
+  // Derive currency symbol from ledger rows (projectTotal stores e.g. "JMD 60,000")
+  const currencyCode = (() => {
+    const pt = rows[0] && rows[0].projectTotal;
+    if (!pt) return '$';
+    const parts = String(pt).trim().split(/\s+/);
+    return parts.length > 1 ? parts[0] : '$';
+  })();
+  const fmt = n => currencyCode + ' ' + Math.round(n).toLocaleString();
   document.getElementById('dash-month').textContent       = fmt(monthPaid);
   document.getElementById('dash-quarter').textContent     = fmt(quarterAll);
   document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
@@ -4220,10 +4227,13 @@ function renderDashboard() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
   }
-  const totals = months.map(m => ({
-    label: m.slice(5),
-    total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0)
-  }));
+  const totals = months.map(m => {
+    const date = new Date(m + '-01');
+    return {
+      label: date.toLocaleString('default', { month: 'short' }),
+      total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0)
+    };
+  });
   const maxTotal = Math.max(...totals.map(t => t.total), 1);
 
   const chart = document.getElementById('dash-chart');
@@ -4237,7 +4247,7 @@ function renderDashboard() {
       <div style="flex:1; background:#eeeeec; border-radius:3px; height:14px;">
         <div style="width:${pct}%; background:#14202e; height:100%; border-radius:3px; transition:width 0.3s;"></div>
       </div>
-      <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">$${Math.round(t.total).toLocaleString()}</span>`;
+      <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">${t.total > 0 ? currencyCode + ' ' + Math.round(t.total).toLocaleString() : '—'}</span>`;
     chart.appendChild(bar);
   });
 
@@ -4284,12 +4294,12 @@ function renderGoalsList() {
         <div style="display:flex; align-items:center; gap:8px;">
           ${claimBtn}
           ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
-          <span style="font-size:12px; color:#6c7682;">$${reached.toLocaleString()} / $${target.toLocaleString()}</span>
+          <span style="font-size:12px; color:#6c7682;">USD $${reached.toLocaleString()} / $${target.toLocaleString()}</span>
           <button onclick="editGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:11px; color:#9aa2ac; padding:0; line-height:1; letter-spacing:0.5px;" title="Edit goal">Edit</button>
           <button onclick="deleteGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:13px; color:#9aa2ac; padding:0; line-height:1;" title="Delete goal">✕</button>
         </div>
       </div>
-      <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes || 'No notes provided'}</div>
+      <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" style="color:#5b4fcf; word-break:break-all;">${url}</a>`) : 'No notes provided'}</div>
       <!-- Progress Bar -->
       <div style="width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2;">
          <div style="height:100%; width:${target > 0 ? Math.min(100, (reached/target)*100) : 0}%; background:#14202e; transition:width 0.3s;"></div>
@@ -4412,9 +4422,17 @@ function renderAllocationUI(container, row) {
       await window.allocateToGoal(row, goal, pct);
       container.innerHTML = `<div style="font-size:11px; color:#155724; background:#d4edda; padding:6px 10px; border-radius:4px;">✓ ${pct}% allocated to "${goal.name}"</div>`;
     } catch (err) {
-      alert(err.message);
       btn.disabled = false;
       btn.textContent = 'Apply';
+      // If FX rate unavailable, show inline hint and open Developer Settings
+      if (err.message.includes('FX rate')) {
+        container.insertAdjacentHTML('beforeend', `<div style="font-size:11px; color:#d0241b; background:#fde8e8; padding:6px 10px; border-radius:4px; margin-top:6px;">⚠ No FX rate for ${row.projectTotal?.split(' ')[0] || 'this currency'}. Sign in with Google or set a manual rate in Developer Settings below.</div>`);
+        // Open Developer Settings panel in print modal
+        const devPanel = document.querySelector('#print-overlay .dev-chevron')?.closest('button');
+        if (devPanel) { const panel = devPanel.nextElementSibling; if (panel) panel.style.display = 'block'; devPanel.querySelector('.dev-chevron').style.transform = 'rotate(180deg)'; }
+      } else {
+        alert(err.message);
+      }
     }
   };
 
@@ -4422,6 +4440,10 @@ function renderAllocationUI(container, row) {
     if (!selectedGoal || !pctInput.value) return;
     const pct = parseFloat(pctInput.value);
     if (isNaN(pct) || pct <= 0) return;
+    // Save this % back to the goal so it pre-fills next time
+    const goals = loadGoals();
+    const idx = goals.findIndex(g => g.name === selectedGoal.name);
+    if (idx !== -1) { goals[idx].allocationPct = pct; saveGoals(goals); }
     doAllocate(selectedGoal, pct, manualConfirmBtn);
   };
   inputWrap.append(pctInput, document.createTextNode('%  '), manualConfirmBtn);
