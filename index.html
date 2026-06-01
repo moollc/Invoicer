@@ -2795,7 +2795,7 @@ function startEdit() {
       let d = new Date(current);
       if (isNaN(d) && current.includes('/')) {
         const parts = current.split('/').map(s => s.trim());
-        if (parts.length === 3) d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
+        if (parts.length === 3) d = new Date(`${parts[2]}-${parts[0]}-${parts[1]}T12:00:00`);
       }
       
       if (!isNaN(d)) {
@@ -3068,7 +3068,7 @@ function extractEditData() {
       if (input && input.value) {
         const parts = input.value.split('-'); // YYYY-MM-DD
         if (parts.length === 3) {
-          const formatted = `${parts[2]} / ${parts[1]} / ${parts[0]}`;
+          const formatted = `${parts[1]} / ${parts[2]} / ${parts[0]}`;
           setNestedField(data, field, formatted);
         } else {
           setNestedField(data, field, escapeHTML(el.textContent.trim()));
@@ -5265,7 +5265,7 @@ function renderClientBook() {
   const parseDate = str => {
     if (!str) return null;
     const p = str.split('/').map(s => s.trim());
-    if (p.length === 3) { const d = new Date(+p[2], +p[1] - 1, +p[0]); if (!isNaN(d)) return d; }
+    if (p.length === 3) { const d = new Date(+p[2], +p[0] - 1, +p[1]); if (!isNaN(d)) return d; }
     const d = new Date(str); return isNaN(d) ? null : d;
   };
   loadLedgerRows().forEach(r => {
@@ -6212,10 +6212,10 @@ function renderDashboard() {
   }
   function parseRowDate(str) {
     if (!str) return null;
-    // DD/MM/YYYY — parse manually first to avoid M/D/Y misinterpretation
+    // MM/DD/YYYY — parse manually to avoid browser M/D/Y misinterpretation
     const parts = str.split('/').map(s => s.trim());
     if (parts.length === 3) {
-      const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+      const d = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
       if (!isNaN(d.valueOf())) return d;
     }
     const d = new Date(str);
