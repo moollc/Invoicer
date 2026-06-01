@@ -110,6 +110,16 @@
     --rule:  rgba(20,32,46,0.13);
   }
 
+  body.theme-modern {
+    --red: #2b5cca;
+    --rule: rgba(20,32,46,0.05);
+  }
+
+  body.theme-minimal {
+    --red: #222222;
+    --rule: transparent;
+  }
+
   html, body {
     background: #cecece;
     font-family: 'Roboto', sans-serif;
@@ -190,7 +200,7 @@
   body.editing #btn-cancel { display: flex !important; }
   #btn-chat   { color: #a89cf7; }
   #btn-clear-invoice { color: #ff6b6b; }
-  #font-selector {
+  #font-selector, #theme-selector {
     display: none;
     background: rgba(255,255,255,0.12);
     color: #fff;
@@ -203,11 +213,11 @@
     width: 110px;
     margin-top: 2px;
   }
-  #font-selector option {
-    background: #fff;
-    color: #14202e;
+  #font-selector option, #theme-selector option {
+    background: #14202e;
+    color: #fff;
   }
-  body.editing #font-selector { display: block; }
+  body.editing #font-selector, body.editing #theme-selector { display: block; }
 
   /* editable fields highlight in edit mode */
   body.editing [data-field] {
@@ -764,7 +774,7 @@
       height: 36px;
     }
     #toolbar button .tb-label { display: none; }
-    #font-selector {
+    #font-selector, #theme-selector {
       width: 90px;
       height: 36px;
       padding: 2px 4px;
@@ -1561,6 +1571,7 @@
     border-radius: 4px;
     color: white;
   }
+  .status-badge.overdue { background: #ffebee; color: #c62828; }
   .status-draft { background: #6c7682; }
   .status-sent { background: #2b5c8f; }
   .status-paid { background: #2a8c55; }
@@ -1603,6 +1614,11 @@
       <option value="Georgia">Georgia</option>
       <option value="Courier New">Courier New</option>
       <option value="Comic Sans MS">Comic Sans MS</option>
+    </select>
+    <select id="theme-selector" onchange="changeTheme(this.value)" title="Invoice theme" aria-label="Invoice theme">
+      <option value="classic">Classic</option>
+      <option value="modern">Modern</option>
+      <option value="minimal">Minimal</option>
     </select>
     <button id="btn-print" onclick="confirmPrint()" title="Publish / Print / PDF" aria-label="Publish invoice">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -2046,6 +2062,7 @@
         <span style="display:inline-flex; align-items:center; gap:8px;">
           <span class="v" data-field="receiptNumber"></span>
           <span id="status-badge" class="status-badge" style="display:none;"></span>
+          <span id="overdue-badge" class="status-badge overdue" style="display:none;">Overdue</span>
         </span>
         <span>Currency</span>  <span class="v" data-field="currency"></span>
       </div>
@@ -2091,6 +2108,11 @@
     <button onclick="addLineItem()" style="padding: 6px 12px; border-radius: 4px; border: 1.5px dashed var(--rule); background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.2s;" onmouseover="this.style.color='var(--ink)'; this.style.borderColor='var(--ink)';" onmouseout="this.style.color='var(--muted)'; this.style.borderColor='var(--rule)';">+ Add Line Item</button>
   </div>
 
+  <!-- INVOICE NOTES -->
+  <div id="invoice-notes-wrap" style="display:none; padding:0 20px 12px;">
+    <div id="invoice-notes-el" style="font-size:11.5px; color:#6c7682; line-height:1.6; white-space:pre-wrap; border-top:1px solid var(--rule); padding-top:10px;"></div>
+  </div>
+
   <!-- TOTAL -->
   <div class="total-wrap">
     <div class="total-block">
@@ -2105,7 +2127,7 @@
             <span data-field="totalLabelTop"></span>
             <span data-field="totalLabelBottom"></span>
           </span>
-          <span data-field="totalAmount"></span>
+          <span data-field="totalAmount" onblur="formatCurrencyField(this)"></span>
         </div>
       </div>
     </div>
@@ -2144,6 +2166,20 @@ function restoreTitleFont() {
   const saved = localStorage.getItem('invoice-title-font') || 'Bebas Neue';
   document.getElementById('font-selector').value = saved;
   changeTitleFont(saved);
+}
+
+function changeTheme(themeName) {
+  document.body.classList.remove('theme-modern', 'theme-minimal');
+  if (themeName !== 'classic') {
+    document.body.classList.add(`theme-${themeName}`);
+  }
+  localStorage.setItem('invoice-theme', themeName);
+}
+
+function restoreTheme() {
+  const saved = localStorage.getItem('invoice-theme') || 'classic';
+  document.getElementById('theme-selector').value = saved;
+  changeTheme(saved);
 }
 
 function applyTitleSize(px) {
@@ -2330,18 +2366,38 @@ function render(data) {
   const pn = document.getElementById('payment-note-el');
   if (pn) pn.textContent = data.paymentNote || '';
 
+  const notesEl   = document.getElementById('invoice-notes-el');
+  const notesWrap = document.getElementById('invoice-notes-wrap');
+  if (notesEl && notesWrap) {
+    const notes = data.invoiceNotes || '';
+    notesEl.textContent = notes;
+    notesWrap.style.display = notes ? 'block' : 'none';
+  }
+
   document.querySelectorAll('[data-field]').forEach(el => {
     const val = get(data, el.dataset.field);
     if (val !== undefined) el.textContent = val;
   });
 
   const badge = document.getElementById('status-badge');
-  if (badge) {
+  const overdueBadge = document.getElementById('overdue-badge');
+  if (badge && overdueBadge) {
     let statusStr = '';
+    let isOverdue = false;
     try {
       const rows = loadLedgerRows();
       const match = rows.find(h => h.receipt === data.receiptNumber);
-      if (match && match.status) statusStr = match.status;
+      if (match && match.status) {
+        statusStr = match.status;
+        if ((statusStr === '⬜ Unpaid' || statusStr === '📤 Sent') && match.date) {
+          const dateParts = match.date.split('/').map(s => s.trim());
+          if (dateParts.length === 3) {
+            const invDate = new Date(`${dateParts[2]}-${dateParts[1]}-${dateParts[0]}T00:00:00`);
+            const daysOld = (new Date() - invDate) / (1000 * 60 * 60 * 24);
+            if (daysOld > 30) isOverdue = true;
+          }
+        }
+      }
     } catch(e) {}
     
     if (statusStr) {
@@ -2352,6 +2408,7 @@ function render(data) {
     } else {
       badge.style.display = 'none';
     }
+    overdueBadge.style.display = isOverdue ? 'inline-block' : 'none';
   }
 
   const tbody = document.getElementById('line-items');
@@ -2378,6 +2435,26 @@ function render(data) {
 // ── Edit mode ────────────────────────────────────────────────
 
 let snapshot = '';
+
+function formatCurrencyField(el) {
+  if (!document.body.classList.contains('editing')) return;
+  let text = el.innerText.trim();
+  if (!text) return;
+  const match = text.match(/^([^\d\.\-]*)([\d\.\-]+)(.*)$/);
+  if (match) {
+    let symbol = match[1].trim() || '$';
+    let numStr = match[2];
+    let suffix = match[3].trim();
+    let num = parseFloat(numStr);
+    if (!isNaN(num)) {
+      let formattedNum = num.toLocaleString('en-US', {
+        minimumFractionDigits: numStr.includes('.') ? 2 : 0,
+        maximumFractionDigits: 2
+      });
+      el.innerText = `${symbol}${formattedNum}${suffix ? ' ' + suffix : ''}`;
+    }
+  }
+}
 
 function startEdit() {
   snapshot = document.getElementById('invoice-data').textContent;
@@ -2447,6 +2524,19 @@ function startEdit() {
   });
   const pn = document.getElementById('payment-note-el');
   if (pn) { pn.contentEditable = 'true'; pn.spellcheck = false; pn.dataset.field = 'paymentNote'; }
+
+  // Invoice notes — always show wrap in edit mode so user can type into it
+  const notesWrapEdit = document.getElementById('invoice-notes-wrap');
+  const notesElEdit   = document.getElementById('invoice-notes-el');
+  if (notesWrapEdit && notesElEdit) {
+    notesWrapEdit.style.display = 'block';
+    notesElEdit.contentEditable = 'true';
+    notesElEdit.spellcheck = false;
+    notesElEdit.placeholder = 'Invoice notes, payment terms, or bank details…';
+    notesElEdit.style.minHeight = '32px';
+    notesElEdit.style.outline = 'none';
+    notesElEdit.style.color = '#14202e';
+  }
   // visibility handled by body.editing CSS class
   // Sync slider to current rendered font size
   const titleEl = document.querySelector('.invoice-word');
@@ -2516,6 +2606,11 @@ function extractEditData() {
     }
     setNestedField(data, field, escapeHTML(el.textContent.trim()));
   });
+  // Invoice notes (contentEditable div, not a data-field element)
+  const notesEl = document.getElementById('invoice-notes-el');
+  if (notesEl && notesEl.isContentEditable) {
+    data.invoiceNotes = notesEl.innerText.trim();
+  }
   return data;
 }
 
@@ -2782,7 +2877,42 @@ async function renderLedgerHistory() {
     
     const overdueFlag = isOverdue ? '<span style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.5px; text-transform:uppercase;">Overdue</span>' : '';
 
-    info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br><span style="color:#6c7682;">${row.amountDue} — ${row.date}</span>${overdueFlag}`;
+    const amountSpan = document.createElement('span');
+    amountSpan.style.cssText = 'color:#6c7682; cursor:pointer; border-bottom:1px dashed transparent; transition:border-color 0.15s;';
+    amountSpan.title = 'Click to edit amount';
+    amountSpan.textContent = row.amountDue;
+    amountSpan.addEventListener('mouseenter', () => amountSpan.style.borderBottomColor = '#9aa2ac');
+    amountSpan.addEventListener('mouseleave', () => amountSpan.style.borderBottomColor = 'transparent');
+    amountSpan.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = row.amountDue;
+      input.style.cssText = 'font-family:Roboto,sans-serif; font-size:11.5px; color:#14202e; border:none; border-bottom:1.5px solid #1a73e8; outline:none; background:transparent; width:90px; padding:0;';
+      amountSpan.replaceWith(input);
+      input.focus();
+      input.select();
+      const commit = () => {
+        const val = input.value.trim() || row.amountDue;
+        rows[realIdx].amountDue = val;
+        saveLedgerRows(rows);
+        amountSpan.textContent = val;
+        row.amountDue = val;
+        input.replaceWith(amountSpan);
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } if (e.key === 'Escape') input.replaceWith(amountSpan); });
+    });
+
+    info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br>`;
+    const datePart = document.createTextNode(` — ${row.date}`);
+    info.appendChild(amountSpan);
+    info.appendChild(datePart);
+    if (overdueFlag) {
+      const flag = document.createElement('span');
+      flag.style.cssText = 'color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.5px; text-transform:uppercase;';
+      flag.textContent = 'Overdue';
+      info.appendChild(flag);
+    }
 
     const sel = document.createElement('select');
     sel.setAttribute('aria-label', 'Ledger status for invoice ' + row.receipt);
@@ -2823,7 +2953,13 @@ async function renderLedgerHistory() {
       allocWrap.style.display = 'flex';
     }
 
-    rowMain.append(info, sel);
+    const loadBtn = document.createElement('button');
+    loadBtn.textContent = '↩ Load';
+    loadBtn.title = 'Duplicate as new draft';
+    loadBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
+    loadBtn.addEventListener('click', () => loadInvoiceFromLedger(row));
+
+    rowMain.append(info, loadBtn, sel);
     wrap.append(rowMain, allocWrap);
     listEl.appendChild(wrap);
   });
@@ -2857,6 +2993,35 @@ async function updateLedger() {
   confirmEl.style.display = 'block';
   confirmEl.style.color   = '#2a8c55';
   confirmEl.textContent   = `✓ Saved — ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} in ledger${_sheetsSpreadsheetId ? ' & synced to Sheets' : ''}.`;
+}
+
+function loadInvoiceFromLedger(row) {
+  const existing = getData();
+  // Parse amountDue — strip currency prefix, keep numeric string
+  const rawAmt = (row.amountDue || '').replace(/^[a-zA-Z$]+\s*/i, '').trim();
+  const draft = {
+    ...existing,
+    dateOverride:    '',
+    receiptOverride: '',
+    to: {
+      name:    row.client  || existing.to.name,
+      address: existing.to.address || '',
+      email:   existing.to.email   || '',
+      phone:   existing.to.phone   || '',
+    },
+    lineItems: [{
+      service: row.service || 'Service',
+      details: '',
+      rates:   ['Rate'],
+      costs:   [rawAmt || '0'],
+    }],
+    projectTotal:     rawAmt || '0',
+    totalAmount:      row.amountDue || existing.totalAmount,
+  };
+  document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
+  render(getData());
+  closeDialog();
+  showToast(`Loaded ${row.client} — ready to edit`, 'success');
 }
 
 function exportLedger() {
@@ -3008,6 +3173,9 @@ async function proceedPrint() {
         const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
         const clone = document.getElementById('invoice').cloneNode(true);
         clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
+        const cs = getComputedStyle(document.body);
+        clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
+        clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
         document.body.appendChild(clone);
         const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
@@ -3549,7 +3717,7 @@ Address book: ${existingClients.map(c => c.name).join(', ') || 'empty'}`
 The user will describe what to change next. Return ONLY a single valid JSON object with the fields that need to change.
 Do not repeat fields that are already correct. Do not return markdown, explanation, or any text outside the JSON object.
 If nothing needs to change, return an empty object: {}
-Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, paid.
+Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, invoiceNotes (freeform notes shown below line items — payment terms, bank details, late fee policy, etc.), paid.
 When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
 To load a past invoice into the editor, include "_loadReceipt": "RECEIPT_NUMBER" — use the exact receipt number from the ledger. The invoice will be pre-filled from ledger data. Only use this if the user explicitly asks to open, load, or re-open a past invoice.
 To save a contact to the address book, include "_addContact": { "name": "...", "address": "...", "email": "...", "phone": "..." } in your response. Only include fields you know. This does not update the invoice — combine with "to" if you also want to set the client.
@@ -3725,7 +3893,7 @@ ${currentData}`;
       date: 'date', receiptNumber: 'receipt #', currency: 'currency', payPeriod: 'pay period',
       from: 'sender details', to: 'client details', lineItems: 'line items',
       projectTotal: 'project total', totalLabelTop: 'total label', totalLabelBottom: 'total label',
-      totalAmount: 'total amount', paymentNote: 'payment note', paid: 'paid status',
+      totalAmount: 'total amount', paymentNote: 'payment note', invoiceNotes: 'invoice notes', paid: 'paid status',
       invoiceExpenses: 'expenses'
     };
     const changedKeys = Object.keys(patch);
@@ -4332,6 +4500,11 @@ async function openEmail() {
   const restoreBtn = () => { if (btn) { btn.disabled = false; btn.textContent = '✉ Email Client'; } };
 
   const data    = getData();
+  // Pre-fill email from address book if blank but client name matches
+  if (!data.to.email && data.to.name) {
+    const match = loadClients().find(c => c.name && c.name.toLowerCase() === data.to.name.toLowerCase());
+    if (match && match.email) data.to.email = match.email;
+  }
   const service = data.lineItems.map(l => l.service).join(', ');
   const to      = encodeURIComponent(data.to.email || '');
   const subject = encodeURIComponent(`moo Invoice ${data.receiptNumber} - ${service}`);
@@ -4347,6 +4520,9 @@ async function openEmail() {
       // Clone so we never touch the live DOM
       const clone = invoiceEl.cloneNode(true);
       clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
+      const cs = getComputedStyle(document.body);
+      clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
+      clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
       document.body.appendChild(clone);
 
       const pdfBlob = await new Promise((resolve, reject) => {
@@ -5984,6 +6160,7 @@ render(getData());
 seedClientsFromLedger();
 renderClientChips();
 restoreTitleFont();
+restoreTheme();
 restoreTitleSize();
 initLogo();
 restoreFxRateOverride();
@@ -5994,6 +6171,13 @@ if (restoreTokenFromStorage()) {
   updateEmailBtn();
   setupDrive();
 }
+
+window.addEventListener('beforeunload', (e) => {
+  if (document.body.classList.contains('editing')) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 // Init Google auth silently on load — attempt silent token refresh if stored token is expired
 window.addEventListener('load', () => {
