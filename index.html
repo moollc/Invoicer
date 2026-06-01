@@ -1640,7 +1640,7 @@
 
   <!-- Profile group -->
   <div class="tb-group">
-    <button id="btn-load-profile" onclick="gmailTokenValid() ? openProfileModal() : googleSignIn()" title="Google Sign-in" aria-label="Google Sign-in">
+    <button id="btn-load-profile" onclick="openProfileModal()" title="Business Profile" aria-label="Business Profile">
       <svg id="profile-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
       <span class="tb-label">Profile</span>
     </button>
@@ -1992,6 +1992,15 @@
         <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">Outstanding</div>
         <div id="dash-outstanding" style="font-size:20px; font-weight:700; color:#d0241b;">—</div>
       </div>
+    </div>
+
+    <!-- Top client -->
+    <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">Top Client · All Time</div>
+        <div id="dash-top-client" style="font-size:16px; font-weight:700; color:#14202e;">—</div>
+      </div>
+      <div id="dash-top-client-amt" style="font-size:18px; font-weight:700; color:#2a8c55; text-align:right;">—</div>
     </div>
 
     <!-- Monthly bar chart -->
@@ -4866,6 +4875,26 @@ function renderDashboard() {
   document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
   document.getElementById('dash-outstanding').textContent = fmt(outstanding);
 
+  // Top client by total invoiced amount
+  const clientTotals = {};
+  rows.forEach(r => {
+    const name = (r.client || '').trim();
+    if (!name) return;
+    clientTotals[name] = (clientTotals[name] || 0) + parseAmt(r.amountDue);
+  });
+  const topClient = Object.entries(clientTotals).sort((a, b) => b[1] - a[1])[0];
+  const topClientEl    = document.getElementById('dash-top-client');
+  const topClientAmtEl = document.getElementById('dash-top-client-amt');
+  if (topClientEl && topClientAmtEl) {
+    if (topClient) {
+      topClientEl.textContent    = topClient[0];
+      topClientAmtEl.textContent = fmt(topClient[1]);
+    } else {
+      topClientEl.textContent    = '—';
+      topClientAmtEl.textContent = '—';
+    }
+  }
+
   // Last 6 months bar chart
   const months = [];
   for (let i = 5; i >= 0; i--) {
@@ -5625,7 +5654,14 @@ let _recognizing = false;
 // ── Business Profile ─────────────────────────────────────────
 
 function openProfileModal() {
-  const profile = loadBusinessProfile() || {};
+  const saved = loadBusinessProfile();
+  const invoiceFrom = getData().from || {};
+  const profile = saved || {
+    name:    invoiceFrom.name    || '',
+    address: invoiceFrom.address || '',
+    email:   invoiceFrom.email   || '',
+    phone:   invoiceFrom.phone   || '',
+  };
   document.getElementById('prof-name').value    = profile.name    || '';
   document.getElementById('prof-address').value = profile.address || '';
   document.getElementById('prof-email').value   = profile.email   || '';
@@ -5634,10 +5670,13 @@ function openProfileModal() {
   if (note) {
     const exp = parseInt(localStorage.getItem('gmail-token-exp') || '0');
     const expiresIn = Math.round((exp - Date.now()) / 60000);
-    note.textContent = gmailTokenValid()
-      ? `✓ Signed in · token expires in ${expiresIn} min`
-      : '⚠ Not signed in';
-    note.style.color = gmailTokenValid() ? '#2a8c55' : '#d0241b';
+    if (gmailTokenValid()) {
+      note.innerHTML = `✓ Signed in · token expires in ${expiresIn} min`;
+      note.style.color = '#2a8c55';
+    } else {
+      note.innerHTML = `⚠ Not signed in &nbsp;<button onclick="googleSignIn()" style="font-size:11px;padding:3px 8px;background:#1a73e8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-family:'Roboto',sans-serif;">Sign in with Google</button>`;
+      note.style.color = '#d0241b';
+    }
   }
   document.getElementById('profile-overlay').style.display = 'flex';
 }
