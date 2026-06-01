@@ -698,6 +698,7 @@
     #chat-panel,
     #offline-pill,
     .toast,
+    .watermark-draft,
     [id$="-overlay"] { display: none !important; }
     body { background: #fff; }
     .page {
@@ -1966,11 +1967,11 @@
         <div style="margin-top:12px; border-top:1px solid #f0f0f0; padding-top:10px;">
           <div style="font-size:11px; color:#9aa2ac; margin-bottom:6px;">Data Backup & Reset</div>
           <div style="display:flex; gap:8px;">
-            <button onclick="exportLocalData()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600;">Export Data</button>
-            <button onclick="document.getElementById('import-file').click()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600;">Import Data</button>
+            <button onclick="exportLocalData()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600; transition:background 0.15s;" onmouseover="this.style.background='#e0e0e0'" onmouseout="this.style.background='#f0f0f0'">Export Data</button>
+            <button onclick="document.getElementById('import-file').click()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600; transition:background 0.15s;" onmouseover="this.style.background='#e0e0e0'" onmouseout="this.style.background='#f0f0f0'">Import Data</button>
             <input type="file" id="import-file" style="display:none" accept=".json" onchange="importLocalData(event)">
           </div>
-          <button onclick="resetAllData()" style="width:100%; margin-top:8px; background:rgba(208,36,27,0.1); border:1px solid rgba(208,36,27,0.2); color:#d0241b; padding:6px 0; border-radius:5px; font-size:11px; cursor:pointer; font-weight:600;">⚠️ Factory Reset</button>
+          <button onclick="resetAllData()" style="width:100%; margin-top:8px; background:rgba(208,36,27,0.1); border:1px solid rgba(208,36,27,0.2); color:#d0241b; padding:6px 0; border-radius:5px; font-size:11px; cursor:pointer; font-weight:600; transition:background 0.15s;" onmouseover="this.style.background='rgba(208,36,27,0.2)'" onmouseout="this.style.background='rgba(208,36,27,0.1)'">⚠️ Factory Reset</button>
         </div>
       </div>
     </div>
@@ -2418,6 +2419,41 @@ function autoDate() {
   container.id = 'toast-container';
   document.body.appendChild(container);
 })();
+function triggerConfetti() {
+  const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#00bcd4', '#4CAF50', '#FFEB3B', '#FF9800'];
+  for (let i = 0; i < 150; i++) {
+    const confetti = document.createElement('div');
+    document.body.appendChild(confetti);
+    const size = Math.random() * 8 + 5;
+    const startLeft = 50;
+    const startBottom = -5;
+    const endLeft = 50 + (Math.random() - 0.5) * 100;
+    const endBottom = 20 + Math.random() * 80;
+    
+    confetti.style.cssText = `
+      position: fixed;
+      width: ${size}px; height: ${size/1.5}px;
+      background-color: ${colors[Math.floor(Math.random() * colors.length)]};
+      left: ${startLeft}vw;
+      bottom: ${startBottom}vh;
+      opacity: 1;
+      pointer-events: none;
+      z-index: 10000;
+      border-radius: ${Math.random() > 0.5 ? '50%' : '2px'};
+      transform: rotate(0deg);
+      transition: all ${2 + Math.random() * 1.5}s cubic-bezier(0.1, 0.8, 0.3, 1);
+    `;
+    
+    confetti.getBoundingClientRect(); // Force reflow
+    
+    confetti.style.left = `${endLeft}vw`;
+    confetti.style.bottom = `${endBottom}vh`;
+    confetti.style.transform = `rotate(${Math.random() * 1080 - 540}deg)`;
+    confetti.style.opacity = '0';
+    
+    setTimeout(() => confetti.remove(), 3500);
+  }
+}
 
 function showToast(message, type = 'info', duration = 4000) {
   const container = document.getElementById('toast-container');
@@ -2571,6 +2607,7 @@ function render(data) {
     
     const watermark = document.getElementById('invoice-watermark');
     if (watermark) {
+      watermark.classList.remove('watermark-draft');
       if (statusStr === '✅ Paid') {
         watermark.textContent = 'PAID';
         watermark.style.display = 'block';
@@ -2579,6 +2616,7 @@ function render(data) {
         watermark.textContent = 'DRAFT';
         watermark.style.display = 'block';
         watermark.style.color = 'var(--ink)';
+        watermark.classList.add('watermark-draft');
       } else {
         watermark.style.display = 'none';
       }
@@ -3283,14 +3321,19 @@ async function renderLedgerHistory() {
   summaryHtml += `<span style="font-size:11px; color:#9aa2ac; padding:3px 0; margin-left: auto;">${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}</span>`;
   summaryEl.innerHTML = summaryHtml;
 
-  // ── Search filter ──
+  // ── Search filter & Export ──
+  let searchContainer = document.getElementById('ledger-search-container');
   let searchEl = document.getElementById('ledger-search');
-  if (!searchEl) {
+  if (!searchContainer) {
+    searchContainer = document.createElement('div');
+    searchContainer.id = 'ledger-search-container';
+    searchContainer.style.cssText = 'display:flex; gap:8px; margin-bottom:8px;';
+
     searchEl = document.createElement('input');
     searchEl.id = 'ledger-search';
     searchEl.type = 'text';
     searchEl.placeholder = 'Filter by client or receipt…';
-    searchEl.style.cssText = 'font-family:Roboto,sans-serif; font-size:12px; padding:6px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; width:100%; box-sizing:border-box; outline:none; color:#14202e; margin-bottom:8px;';
+    searchEl.style.cssText = 'flex:1; font-family:Roboto,sans-serif; font-size:12px; padding:6px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; min-width:0; box-sizing:border-box; outline:none; color:#14202e;';
     searchEl.oninput = () => {
       const q = searchEl.value.toLowerCase();
       listEl.querySelectorAll('.ledger-row').forEach(el => {
@@ -3317,7 +3360,18 @@ async function renderLedgerHistory() {
         }
       });
     };
-    summaryEl.after(searchEl);
+    
+    const exportBtn = document.createElement('button');
+    exportBtn.title = 'Export Ledger to CSV';
+    exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
+    exportBtn.style.cssText = 'display:flex; align-items:center; justify-content:center; padding:0 12px; background:#fff; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; color:#14202e; cursor:pointer; flex-shrink:0;';
+    exportBtn.onclick = () => window.exportLedgerCsv && window.exportLedgerCsv();
+    exportBtn.onmouseover = () => exportBtn.style.background = '#f5f5f5';
+    exportBtn.onmouseout = () => exportBtn.style.background = '#fff';
+    
+    searchContainer.appendChild(searchEl);
+    searchContainer.appendChild(exportBtn);
+    summaryEl.after(searchContainer);
   } else {
     searchEl.value = '';
   }
@@ -3974,7 +4028,7 @@ function openPrintPreview() {
     clone.style.setProperty(v, cs.getPropertyValue(v).trim())
   );
   // Strip edit-mode controls from clone
-  clone.querySelectorAll('button, input, select, textarea').forEach(el => el.remove());
+  clone.querySelectorAll('button, input, select, textarea, .watermark-draft').forEach(el => el.remove());
   frame.innerHTML = '';
   frame.appendChild(clone);
   overlay.style.display = 'flex';
@@ -3991,7 +4045,7 @@ async function downloadPdfFromPreview() {
   clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
   
   // Strip edit-mode controls from clone so it renders cleanly
-  clone.querySelectorAll('button, input, select, textarea').forEach(el => el.remove());
+  clone.querySelectorAll('button, input, select, textarea, .watermark-draft').forEach(el => el.remove());
   
   document.body.appendChild(clone);
   
@@ -5124,6 +5178,7 @@ function renderClientBook() {
     ['name', 'address', 'email', 'phone'].forEach(key => {
       const row = document.createElement('div');
       row.className = 'field-row';
+      row.style.position = 'relative';
       row.innerHTML = `<label>${key.charAt(0).toUpperCase() + key.slice(1)}</label>`;
       const inp = document.createElement('input');
       inp.value       = c[key] || '';
@@ -5139,6 +5194,26 @@ function renderClientBook() {
         renderClientChips();
       };
       row.appendChild(inp);
+
+      if (key === 'address') {
+        const copyBtn = document.createElement('button');
+        copyBtn.innerHTML = '⧉';
+        copyBtn.title = 'Copy Address';
+        copyBtn.style.cssText = 'position:absolute; right:6px; top:20px; background:none; border:none; color:#9aa2ac; cursor:pointer; font-size:16px; padding:6px; display:flex; align-items:center; justify-content:center;';
+        copyBtn.onmouseover = () => copyBtn.style.color = '#14202e';
+        copyBtn.onmouseout  = () => copyBtn.style.color = '#9aa2ac';
+        copyBtn.onclick = () => {
+          if (!inp.value.trim()) return;
+          navigator.clipboard.writeText(inp.value.trim());
+          showToast('Address copied to clipboard');
+          const originalColor = copyBtn.style.color;
+          copyBtn.style.color = 'var(--red, #2b5cca)';
+          setTimeout(() => copyBtn.style.color = originalColor, 1000);
+        };
+        row.appendChild(copyBtn);
+        inp.style.paddingRight = '32px'; // make room for the button
+      }
+
       fields.appendChild(row);
     });
 
@@ -6796,6 +6871,7 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
     if (parseFloat(g.amountReached) >= target) {
       g.status = 'Funded';
       messages.push(`✅ "${g.name}" is fully funded!`);
+      if (typeof triggerConfetti === 'function') triggerConfetti();
     } else {
       messages.push(`+$${applied.toFixed(2)} → "${g.name}"`);
     }
@@ -7100,7 +7176,44 @@ try {
     }
   }
 } catch(e) {}
-
+window.exportLedgerCsv = function() {
+  const rows = loadLedgerRows();
+  if (!rows.length) {
+    showToast('Ledger is empty', 'warning');
+    return;
+  }
+  
+  let csvContent = "Receipt,Date,Client,Amount Due,Status\n";
+  rows.forEach(r => {
+    const escapeCsv = (str) => {
+      const s = String(str || '');
+      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+        return '"' + s.replace(/"/g, '""') + '"';
+      }
+      return s;
+    };
+    
+    const rowStr = [
+      escapeCsv(r.receipt),
+      escapeCsv(r.date),
+      escapeCsv(r.client),
+      escapeCsv(r.amountDue),
+      escapeCsv(r.status)
+    ].join(',');
+    
+    csvContent += rowStr + "\n";
+  });
+  
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", "ledger_export_" + new Date().toISOString().split('T')[0] + ".csv");
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showToast('Ledger exported to CSV', 'success');
+};
 window.restoreDraft = function() {
   try {
     const data = JSON.parse(localStorage.getItem('invoicer-autosave'));
