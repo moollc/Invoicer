@@ -111,13 +111,17 @@
   }
 
   body.theme-modern {
-    --red: #2b5cca;
-    --rule: rgba(20,32,46,0.05);
+    --red:  #2b5cca;
+    --row:  #1a2d4f;
+    --ink:  #0f1e33;
+    --rule: rgba(43,92,202,0.15);
   }
 
   body.theme-minimal {
-    --red: #222222;
-    --rule: transparent;
+    --red:  #2c2c2c;
+    --row:  #3a3a3a;
+    --ink:  #1a1a1a;
+    --rule: rgba(0,0,0,0.08);
   }
 
   html, body {
@@ -164,8 +168,8 @@
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.3px;
-    width: 40px;
-    height: 40px;
+    width: 64px;
+    height: 44px;
     padding: 0;
     border: none;
     border-radius: 9px;
@@ -229,9 +233,13 @@
     min-height: 1em;
     display: inline-block;
   }
+  body.editing [data-field]:hover {
+    background: rgba(208,36,27,0.04);
+    cursor: text;
+  }
   body.editing [data-field]:focus {
     outline: 2px solid var(--red);
-    background: rgba(208,36,27,0.04);
+    background: rgba(208,36,27,0.06);
   }
   /* table cells with data-field must stay as table cells and keep dark bg */
   body.editing td[data-field] {
@@ -1110,8 +1118,9 @@
     resize: none;
     outline: none;
     line-height: 1.4;
-    min-height: 38px;
-    max-height: 100px;
+    min-height: 56px;
+    max-height: 140px;
+    overflow-y: auto;
     transition: border-color 0.15s;
   }
   #chat-input:focus { border-color: rgba(91,79,207,0.5); }
@@ -1445,7 +1454,9 @@
     background: rgba(255,255,255,0.85);
     border: 1.5px solid rgba(20,32,46,0.09);
     overflow: hidden;
+    transition: filter 0.15s, transform 0.15s;
   }
+  .client-card:hover { filter: brightness(0.97); transform: translateY(-1px); }
   .client-card-top {
     display: flex;
     align-items: center;
@@ -1577,6 +1588,31 @@
   .status-paid { background: #2a8c55; }
   @media print { .status-badge { display: none !important; } }
   body.editing .status-badge { display: none !important; }
+  
+  @keyframes flashSuccess {
+    0% { background-color: rgba(42, 140, 85, 0.5); }
+    100% { background-color: transparent; }
+  }
+  .flash-success {
+    animation: flashSuccess 1s ease-out;
+    border-radius: 4px;
+  }
+  .ledger-row { transition: filter 0.15s, transform 0.15s; }
+  .ledger-row:hover { filter: brightness(0.96); transform: translateY(-1px); }
+  @keyframes rowFadeIn {
+    from { opacity: 0; transform: translateY(-4px); background-color: rgba(208, 36, 27, 0.05); }
+    to { opacity: 1; transform: translateY(0); background-color: transparent; }
+  }
+  .animate-row-in {
+    animation: rowFadeIn 0.3s ease-out forwards;
+  }
+  @keyframes rowFadeOut {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(4px); background-color: rgba(208, 36, 27, 0.05); }
+  }
+  .animate-row-out {
+    animation: rowFadeOut 0.3s ease-in forwards;
+  }
 </style>
 </head>
 <body>
@@ -1667,17 +1703,24 @@
 <!-- AI CHAT PANEL -->
 <div id="chat-panel">
   <div id="chat-header">
-    <div id="chat-title-group" onclick="toggleChatSettings()" title="Manage providers" style="display:flex;align-items:center;gap:7px;flex:1;min-width:0;cursor:pointer;">
+    <div id="chat-title-group" style="display:flex;align-items:center;gap:7px;flex:1;min-width:0;">
       <div id="chat-active-dot"></div>
       <span id="chat-title">Setup Assistant</span>
     </div>
     <button class="btn-manage-clients" onclick="toggleClientBook()" title="Address Book" aria-label="Address Book" style="font-size:11px;padding:3px 8px;border:1px solid rgba(20,32,46,0.13);border-radius:5px;color:var(--muted);flex-shrink:0;">Address Book</button>
-    <button id="btn-chat-clear" onclick="clearChatHistory()" title="Clear history" style="background:none;border:none;cursor:pointer;font-size:13px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background 0.15s;flex-shrink:0;">✕</button>
-    <button id="btn-chat-settings" onclick="toggleChatSettings()" title="Manage providers" aria-label="Manage providers">⚙</button>
+    <button id="btn-chat-close" onclick="toggleChat()" title="Close chat" aria-label="Close chat" style="background:none;border:none;cursor:pointer;font-size:13px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background 0.15s;flex-shrink:0;">✕</button>
+    <div style="position:relative;flex-shrink:0;">
+      <button id="btn-chat-settings" onclick="toggleChatMenu()" title="Chat options" aria-label="Chat options">⚙</button>
+      <div id="chat-menu" style="display:none;position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1.5px solid rgba(20,32,46,0.12);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.14);min-width:170px;z-index:9000;padding:6px 0;font-family:'Roboto',sans-serif;">
+        <button onclick="clearChatHistory();toggleChatMenu()" style="display:block;width:100%;padding:9px 16px;text-align:left;background:none;border:none;font-size:12.5px;color:#14202e;cursor:pointer;transition:background 0.12s;" onmouseover="this.style.background='#f6f6f4'" onmouseout="this.style.background='none'">🗑 Clear History</button>
+        <button onclick="exportChat();toggleChatMenu()" style="display:block;width:100%;padding:9px 16px;text-align:left;background:none;border:none;font-size:12.5px;color:#14202e;cursor:pointer;transition:background 0.12s;" onmouseover="this.style.background='#f6f6f4'" onmouseout="this.style.background='none'">↓ Export Chat</button>
+        <div style="height:1px;background:rgba(20,32,46,0.08);margin:4px 0;"></div>
+        <button onclick="toggleChatMenu();toggleChatSettings()" style="display:block;width:100%;padding:9px 16px;text-align:left;background:none;border:none;font-size:12.5px;color:#14202e;cursor:pointer;transition:background 0.12s;" onmouseover="this.style.background='#f6f6f4'" onmouseout="this.style.background='none'">⚙ Providers</button>
+      </div>
+    </div>
   </div>
 
   <div id="chat-messages">
-    <div class="chat-msg assistant">Hi! Tell me what to update — e.g. "Invoice for Sarah, logo design, $5000 USD, balance due."</div>
   </div>
 
   <!-- Settings overlay -->
@@ -1713,7 +1756,7 @@
   <div id="chat-input-row">
     <input type="file" id="chat-file-input" accept="image/*" multiple style="display:none;" onchange="handleImageFiles(this.files)">
     <button id="btn-chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach image">📎</button>
-    <textarea id="chat-input" rows="1" placeholder="Describe the invoice changes…" onkeydown="chatInputKey(event)" onpaste="handleImagePaste(event)"></textarea>
+    <textarea id="chat-input" rows="2" placeholder="Describe the invoice changes…" onkeydown="chatInputKey(event)" onpaste="handleImagePaste(event)"></textarea>
     <button id="btn-chat-voice" onclick="toggleVoice()" title="Voice input">🎙</button>
     <button id="btn-chat-send" onclick="sendChat()" aria-label="Send message">↑</button>
   </div>
@@ -1770,6 +1813,10 @@
       <button id="btn-email-client" onclick="openEmail()"
         style="flex:1; padding:10px; background:#5b4fcf; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
         ✉ Email Client
+      </button>
+      <button onclick="copyShareLink(this)"
+        style="flex:1; padding:10px; background:#e6900f; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        🔗 Copy Link
       </button>
       <button onclick="closeDialog()"
         style="padding:10px 20px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">
@@ -2061,7 +2108,15 @@
         <span>Receipt №</span> 
         <span style="display:inline-flex; align-items:center; gap:8px;">
           <span class="v" data-field="receiptNumber"></span>
-          <span id="status-badge" class="status-badge" style="display:none;"></span>
+          <span style="position:relative;">
+            <span id="status-badge" class="status-badge" style="display:none; cursor:pointer;" onclick="toggleStatusPicker(event)" title="Change Status"></span>
+            <div id="status-picker" style="display:none; position:absolute; top:calc(100% + 4px); left:0; background:#fff; box-shadow:0 4px 12px rgba(0,0,0,0.15); border-radius:6px; padding:4px; z-index:100; border:1px solid #eee; flex-direction:column; gap:2px; min-width:80px;">
+              <div onclick="quickSetStatus('⬜ Unpaid')" style="padding:6px 12px; font-size:11px; cursor:pointer; border-radius:4px; font-family:'Roboto',sans-serif; transition:background 0.1s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='none'">⬜ Unpaid</div>
+              <div onclick="quickSetStatus('💰 Deposit')" style="padding:6px 12px; font-size:11px; cursor:pointer; border-radius:4px; font-family:'Roboto',sans-serif; transition:background 0.1s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='none'">💰 Deposit</div>
+              <div onclick="quickSetStatus('📤 Sent')" style="padding:6px 12px; font-size:11px; cursor:pointer; border-radius:4px; font-family:'Roboto',sans-serif; transition:background 0.1s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='none'">📤 Sent</div>
+              <div onclick="quickSetStatus('✅ Paid')" style="padding:6px 12px; font-size:11px; cursor:pointer; border-radius:4px; font-family:'Roboto',sans-serif; transition:background 0.1s;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background='none'">✅ Paid</div>
+            </div>
+          </span>
           <span id="overdue-badge" class="status-badge overdue" style="display:none;">Overdue</span>
         </span>
         <span>Currency</span>  <span class="v" data-field="currency"></span>
@@ -2105,7 +2160,7 @@
     <tbody id="line-items"></tbody>
   </table>
   <div id="add-item-wrap" style="display:none; margin: 16px 0; text-align: center;">
-    <button onclick="addLineItem()" style="padding: 6px 12px; border-radius: 4px; border: 1.5px dashed var(--rule); background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.2s;" onmouseover="this.style.color='var(--ink)'; this.style.borderColor='var(--ink)';" onmouseout="this.style.color='var(--muted)'; this.style.borderColor='var(--rule)';">+ Add Line Item</button>
+    <button onclick="addLineItem()" style="padding: 6px 12px; border-radius: 4px; border: 1.5px dashed var(--rule); background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.2s; will-change: transform;" onmouseover="this.style.color='var(--ink)'; this.style.borderColor='var(--ink)'; this.style.transform='scale(1.02)';" onmouseout="this.style.color='var(--muted)'; this.style.borderColor='var(--rule)'; this.style.transform='none';">+ Add Line Item</button>
   </div>
 
   <!-- INVOICE NOTES -->
@@ -2430,6 +2485,26 @@ function render(data) {
         <td class="col-cost num"><div class="cost-rows" id="cost-rows-${i}">${costsHtml}</div></td>
       </tr>`;
   });
+
+  // Dynamic document title
+  const clientName = (data.to && data.to.name) ? data.to.name.split(' ')[0] : '';
+  document.title = data.receiptNumber
+    ? `${data.receiptNumber}${clientName ? ' · ' + clientName : ''} — moo Invoicer`
+    : 'moo Invoicer';
+
+  // Click-to-copy receipt number
+  const receiptEl = document.querySelector('[data-field="receiptNumber"]');
+  if (receiptEl && !receiptEl.dataset.copyWired) {
+    receiptEl.dataset.copyWired = '1';
+    receiptEl.style.cursor = 'pointer';
+    receiptEl.title = 'Click to copy receipt number';
+    receiptEl.addEventListener('click', () => {
+      if (document.body.classList.contains('editing')) return;
+      navigator.clipboard.writeText(receiptEl.textContent.trim())
+        .then(() => showToast('Receipt number copied', 'success', 2000))
+        .catch(() => showToast('Could not copy', 'error'));
+    });
+  }
 }
 
 // ── Edit mode ────────────────────────────────────────────────
@@ -2459,6 +2534,8 @@ function formatCurrencyField(el) {
 function startEdit() {
   snapshot = document.getElementById('invoice-data').textContent;
   document.body.classList.add('editing');
+  const bar = document.getElementById('edit-action-bar');
+  if (bar) bar.style.display = 'flex';
   document.querySelectorAll('[data-field]').forEach(el => {
     if (el.dataset.field === 'date') {
       const current = el.textContent.trim();
@@ -2483,8 +2560,29 @@ function startEdit() {
     } else {
       el.contentEditable = 'true';
       el.spellcheck = false;
+      // Task #84: Show prompt if client details are empty
+      if ((el.dataset.field === 'to._sub' || el.dataset.field === 'from._sub') && !el.textContent.trim()) {
+        el.textContent = 'Add address / email...';
+        el.style.color = 'rgba(20,32,46,0.4)';
+        el.onfocus = function() {
+          if (this.textContent === 'Add address / email...') {
+            this.textContent = '';
+            this.style.color = '';
+          }
+        };
+        el.onblur = function() {
+          if (!this.textContent.trim()) {
+            this.textContent = 'Add address / email...';
+            this.style.color = 'rgba(20,32,46,0.4)';
+          }
+        };
+      }
     }
   });
+
+  // Ensure prompt text isn't saved as actual data
+  const originalExtract = extractEditData;
+  window.extractEditData_patched = true;
 
   // Swap rate/cost span groups → textareas (Enter works natively in textarea)
   const editData = getData();
@@ -2545,6 +2643,42 @@ function startEdit() {
     const slider = document.getElementById('title-size-slider');
     if (slider) { slider.value = curPx; document.getElementById('title-size-label').textContent = curPx + 'px'; }
   }
+  // Pay Period quick-select
+  const ppSpan = document.querySelector('[data-field="payPeriod"]');
+  if (ppSpan && !ppSpan.querySelector('select')) {
+    const currentPP = ppSpan.textContent.trim();
+    const ppSel = document.createElement('select');
+    ppSel.className = 'pay-period-select';
+    ppSel.style.cssText = 'font-family:inherit; font-size:inherit; color:inherit; background:transparent; border:none; border-bottom:1.5px dashed var(--rule); outline:none; cursor:pointer; padding:0 2px;';
+    ['Due on Receipt','Net 7','Net 14','Net 30','Net 60'].forEach(opt => {
+      const o = document.createElement('option');
+      o.value = opt; o.textContent = opt;
+      if (opt === currentPP) o.selected = true;
+      ppSel.appendChild(o);
+    });
+    ppSpan.contentEditable = 'false';
+    ppSpan.textContent = '';
+    ppSpan.appendChild(ppSel);
+  }
+
+  // Currency quick-select: only in the meta row (not the ptv display span)
+  const metaCurrSpan = document.querySelector('.meta [data-field="currency"]');
+  if (metaCurrSpan && !metaCurrSpan.querySelector('select')) {
+    const current = metaCurrSpan.textContent.trim();
+    const sel = document.createElement('select');
+    sel.className = 'currency-select';
+    sel.style.cssText = 'font-family:inherit; font-size:inherit; font-weight:inherit; color:inherit; background:transparent; border:none; border-bottom:1.5px dashed var(--rule); outline:none; cursor:pointer; padding:0 2px;';
+    ['USD','JMD','EUR','GBP','CAD','AUD','TTD'].forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c; opt.textContent = c;
+      if (c === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    metaCurrSpan.contentEditable = 'false';
+    metaCurrSpan.textContent = '';
+    metaCurrSpan.appendChild(sel);
+  }
+
   updateAutoSumHint();
 }
 
@@ -2572,7 +2706,9 @@ function extractEditData() {
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
     if (field === 'from._sub') {
-      const lines = escapeHTML(el.textContent).split('\n').map(s => s.trim()).filter(Boolean);
+      let text = el.textContent;
+      if (text === 'Add address / email...') text = '';
+      const lines = escapeHTML(text).split('\n').map(s => s.trim()).filter(Boolean);
       // Last line is "email · phone", everything before is address
       const contactLine = lines[lines.length - 1] || '';
       const contactParts = contactLine.split(' · ').map(s => s.trim());
@@ -2583,7 +2719,9 @@ function extractEditData() {
       return;
     }
     if (field === 'to._sub') {
-      const parts = escapeHTML(el.textContent).split(' · ').map(s => s.trim());
+      let text = el.textContent;
+      if (text === 'Add address / email...') text = '';
+      const parts = escapeHTML(text).split(' · ').map(s => s.trim());
       data.to.address = parts[0] || '';
       data.to.email   = parts[1] || '';
       data.to.phone   = parts[2] || '';
@@ -2604,6 +2742,20 @@ function extractEditData() {
       }
       return;
     }
+    // Currency — only read from the meta span's select; skip all other currency spans
+    if (field === 'currency') {
+      const sel = el.querySelector('select.currency-select');
+      if (sel) setNestedField(data, field, sel.value);
+      return;
+    }
+    // Pay Period — read from select if present
+    if (field === 'payPeriod') {
+      const sel = el.querySelector('select.pay-period-select');
+      if (sel) { setNestedField(data, field, sel.value); return; }
+      const txt = escapeHTML(el.textContent.trim());
+      if (txt) setNestedField(data, field, txt);
+      return;
+    }
     setNestedField(data, field, escapeHTML(el.textContent.trim()));
   });
   // Invoice notes (contentEditable div, not a data-field element)
@@ -2616,13 +2768,36 @@ function extractEditData() {
 
 function saveEdit() {
   const data = extractEditData();
+  // Strip line items where both service and details are blank
+  if (Array.isArray(data.lineItems)) {
+    data.lineItems = data.lineItems.filter(item => {
+      const svc = (item.service || '').trim();
+      const det = (item.details || '').trim();
+      return svc !== '' || det !== '';
+    });
+  }
   // Persist overrides so edits stick
   data.dateOverride    = data.date;
   data.receiptOverride = data.receiptNumber;
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
-  localStorage.removeItem('invoicer-autosave'); // clear autosave on manual save
-  stopEdit();
-  render(data);
+  localStorage.removeItem('invoicer-autosave');
+  // "Saved!" feedback on sticky bar before closing
+  const saveBtn = document.getElementById('btn-save-changes');
+  if (saveBtn) {
+    saveBtn.textContent = '✓ Saved!';
+    saveBtn.style.background = '#2a8c55';
+    saveBtn.disabled = true;
+    setTimeout(() => {
+      stopEdit();
+      render(data);
+      saveBtn.textContent = 'Save Changes';
+      saveBtn.style.background = '#d0241b';
+      saveBtn.disabled = false;
+    }, 800);
+  } else {
+    stopEdit();
+    render(data);
+  }
 }
 
 function addLineItem() {
@@ -2632,9 +2807,27 @@ function addLineItem() {
   stopEdit();
   render(data);
   startEdit();
+  
+  const tbody = document.getElementById('line-items');
+  if (tbody && tbody.lastElementChild) {
+    tbody.lastElementChild.classList.add('animate-row-in');
+  }
 }
 
 function removeLineItem(index) {
+  const tbody = document.getElementById('line-items');
+  const trs = tbody ? tbody.querySelectorAll('tr') : [];
+  if (trs[index]) {
+    trs[index].classList.add('animate-row-out');
+    setTimeout(() => {
+      _executeRemoveLineItem(index);
+    }, 250);
+  } else {
+    _executeRemoveLineItem(index);
+  }
+}
+
+function _executeRemoveLineItem(index) {
   const data = extractEditData();
   data.lineItems.splice(index, 1);
   if (data.lineItems.length === 0) {
@@ -2667,6 +2860,8 @@ function stopEdit() {
   });
   const hint = document.getElementById('autosum-hint');
   if (hint) hint.style.display = 'none';
+  const bar = document.getElementById('edit-action-bar');
+  if (bar) bar.style.display = 'none';
 }
 
 function updateAutoSumHint() {
@@ -2682,8 +2877,17 @@ function updateAutoSumHint() {
   });
   const currencyEl = document.querySelector('[data-field="currency"]');
   const sym = currencyEl ? currencyEl.textContent.trim() : '';
-  hint.textContent = `Line items sum to ${sym}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formattedTotal = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  hint.textContent = `Line items sum to ${sym}${formattedTotal}`;
   hint.style.display = 'block';
+
+  const ptEl = document.querySelector('[data-field="projectTotal"]');
+  if (ptEl && ptEl.textContent !== formattedTotal && document.body.classList.contains('editing')) {
+    ptEl.textContent = formattedTotal;
+    ptEl.classList.remove('flash-success');
+    void ptEl.offsetWidth; // trigger reflow
+    ptEl.classList.add('flash-success');
+  }
 }
 
 function setNestedField(obj, path, value) {
@@ -2765,10 +2969,10 @@ async function confirmPrint() {
   refreshGmailIdStatus();
   refreshSheetsIdStatus();
 
-  // Focus the OAuth input so it's visible
+  // Focus the search input so it's ready for filtering
   setTimeout(() => {
-    const oauthInput = document.getElementById('oauth-client-id-input');
-    if (oauthInput) oauthInput.focus();
+    const searchInput = document.getElementById('ledger-search');
+    if (searchInput) searchInput.focus();
   }, 50);
 
   document.getElementById('print-overlay').style.display = 'flex';
@@ -2844,6 +3048,42 @@ async function renderLedgerHistory() {
     searchEl.value = '';
   }
 
+  // ── Sort Control ──
+  let sortCtrl = document.getElementById('ledger-sort-ctrl');
+  if (!sortCtrl) {
+    sortCtrl = document.createElement('div');
+    sortCtrl.id = 'ledger-sort-ctrl';
+    sortCtrl.style.cssText = 'display:flex; gap:12px; font-size:11px; color:#6c7682; margin-bottom:10px; padding:0 4px;';
+    searchEl.after(sortCtrl);
+  }
+  
+  window.ledgerSortConfig = window.ledgerSortConfig || { key: 'status', dir: 1 };
+  const sortKeys = [
+    { key: 'date', label: 'Date' },
+    { key: 'client', label: 'Client' },
+    { key: 'amount', label: 'Amount' },
+    { key: 'status', label: 'Status' }
+  ];
+  
+  sortCtrl.innerHTML = '';
+  sortKeys.forEach(sk => {
+    const btn = document.createElement('div');
+    const isActive = window.ledgerSortConfig.key === sk.key;
+    const arrow = isActive ? (window.ledgerSortConfig.dir === 1 ? '↓' : '↑') : '';
+    btn.textContent = `${sk.label} ${arrow}`;
+    btn.style.cssText = `cursor:pointer; font-weight:${isActive ? 700 : 500}; color:${isActive ? '#14202e' : '#6c7682'}; transition:color 0.15s;`;
+    btn.onclick = () => {
+      if (window.ledgerSortConfig.key === sk.key) {
+        window.ledgerSortConfig.dir *= -1;
+      } else {
+        window.ledgerSortConfig.key = sk.key;
+        window.ledgerSortConfig.dir = 1;
+      }
+      renderLedgerHistory();
+    };
+    sortCtrl.appendChild(btn);
+  });
+
   // ── Row colour helper ──
   const rowBg = (row, isOverdue) => {
     if (row.status === '✅ Paid') return '#edf7f0';
@@ -2856,7 +3096,22 @@ async function renderLedgerHistory() {
   const statusWeight = s => s === '✅ Paid' ? 1 : 0;
   const sorted = rows
     .map((row, idx) => ({ row, idx }))
-    .sort((a, b) => statusWeight(a.row.status) - statusWeight(b.row.status) || b.idx - a.idx);
+    .sort((a, b) => {
+      let cmp = 0;
+      if (window.ledgerSortConfig.key === 'date') {
+        const da = typeof parseRowDate === 'function' ? parseRowDate(a.row.date) : new Date(a.row.date);
+        const db = typeof parseRowDate === 'function' ? parseRowDate(b.row.date) : new Date(b.row.date);
+        cmp = (da - db) || 0;
+      } else if (window.ledgerSortConfig.key === 'client') {
+        cmp = (a.row.client || '').localeCompare(b.row.client || '');
+      } else if (window.ledgerSortConfig.key === 'amount') {
+        cmp = parseAmount(a.row.amountDue) - parseAmount(b.row.amountDue);
+      } else { // status
+        cmp = statusWeight(a.row.status) - statusWeight(b.row.status);
+      }
+      if (cmp === 0) cmp = b.idx - a.idx;
+      return cmp * window.ledgerSortConfig.dir;
+    });
 
   sorted.forEach(({ row, idx: realIdx }) => {
 
@@ -2932,9 +3187,15 @@ async function renderLedgerHistory() {
       sel.disabled = true;
       try {
         rows[realIdx].status = sel.value;
+        // When marking Paid, amountDue should reflect the full project total
+        if (sel.value === '✅ Paid' && rows[realIdx].projectTotal) {
+          rows[realIdx].amountDue = rows[realIdx].projectTotal;
+          amountSpan.textContent = rows[realIdx].amountDue;
+        }
         wrap.style.background = rowBg(rows[realIdx], false);
-        saveLedgerRows(rows); // Also save to localStorage as backup
-        await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value);
+        saveLedgerRows(rows);
+        const paidAmountDue = sel.value === '✅ Paid' ? rows[realIdx].amountDue : null;
+        await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
         if (sel.value === '✅ Paid') {
           renderAllocationUI(allocWrap, rows[realIdx]);
           allocWrap.style.display = 'flex';
@@ -3051,6 +3312,21 @@ function exportLedgerCsv() {
   a.click();
   URL.revokeObjectURL(a.href);
   showToast('Ledger exported as CSV', 'success');
+}
+
+function copyShareLink(btn) {
+  const data = getData();
+  const json = JSON.stringify(data);
+  const base64 = btoa(encodeURIComponent(json));
+  const url = window.location.origin + window.location.pathname + '#data=' + base64;
+  navigator.clipboard.writeText(url).then(() => {
+    const orig = btn.innerHTML;
+    btn.innerHTML = '✓ Copied!';
+    setTimeout(() => { btn.innerHTML = orig; }, 2000);
+  }).catch(e => {
+    console.error('Failed to copy', e);
+    showToast('Failed to copy to clipboard', 'error');
+  });
 }
 
 // ── Filename ─────────────────────────────────────────────────
@@ -3276,11 +3552,17 @@ function updateActiveProviderPill() {
     dot.style.display       = 'block';
     title.textContent       = prov.label || cfg.name;
     title.style.color       = 'var(--ink)';
+    title.style.cursor      = '';
+    title.onclick           = null;
+    title.title             = '';
   } else {
     dot.style.background    = '#aaa';
     dot.style.display       = 'none';
     title.textContent       = 'Setup Assistant';
     title.style.color       = 'var(--muted)';
+    title.style.cursor      = 'pointer';
+    title.title             = 'Click to connect an AI provider';
+    title.onclick           = () => toggleChatSettings();
   }
 }
 
@@ -3494,6 +3776,34 @@ function toggleChatSettings() {
   if (isOpen) renderProviderList();
 }
 
+function toggleChatMenu() {
+  const menu = document.getElementById('chat-menu');
+  if (!menu) return;
+  const isOpen = menu.style.display === 'block';
+  menu.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    const close = (e) => {
+      if (!menu.contains(e.target) && e.target.id !== 'btn-chat-settings') {
+        menu.style.display = 'none';
+        document.removeEventListener('click', close, true);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', close, true), 0);
+  }
+}
+
+function exportChat() {
+  const history = loadChatHistory();
+  if (!history.length) { showToast('No chat history to export', 'info'); return; }
+  const lines = history.map(m => `[${m.role.toUpperCase()}]\n${m.content}`).join('\n\n---\n\n');
+  const blob = new Blob([lines], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `chat-export-${new Date().toISOString().split('T')[0]}.txt`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function chatInputKey(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
 }
@@ -3592,17 +3902,21 @@ function appendMsg(role, text, persist = true) {
 function renderChatHistory() {
   const msgs    = document.getElementById('chat-messages');
   const history = loadChatHistory();
-  if (!history.length) return;
-  // Clear the default greeting and replace with saved history
   msgs.innerHTML = '';
+  if (!history.length) {
+    const hasProvider = loadChatProviders().length > 0;
+    const greeting = hasProvider
+      ? 'Hi! Tell me what to update — e.g. "Invoice for Sarah, logo design, $5000 USD, balance due."'
+      : 'No AI provider connected yet. Tap <strong>Setup Assistant</strong> above to add one — supports Claude, Gemini, OpenAI, and more.';
+    appendMsg('assistant', greeting, false);
+    return;
+  }
   history.forEach(m => appendMsg(m.role, m.text, false));
 }
 
 function clearChatHistory() {
   localStorage.removeItem('invoice-chat-history');
-  const msgs = document.getElementById('chat-messages');
-  msgs.innerHTML = '';
-  appendMsg('assistant', 'Hi! Tell me what to update — e.g. "Invoice for Sarah, logo design, $5000 USD, balance due."', false);
+  renderChatHistory();
 }
 
 // Detect if the user is asking a question rather than giving an update command
@@ -4120,6 +4434,15 @@ function renderClientBook() {
   let list = masterList.map((c, i) => ({ ...c, _origIdx: i }));
   list.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Build unpaid totals map keyed by client name (case-insensitive)
+  const unpaidMap = {};
+  loadLedgerRows().forEach(r => {
+    if ((r.status || '').toLowerCase() === 'paid') return;
+    const key = (r.client || '').toLowerCase();
+    const amt = parseFloat((r.amountDue || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+    unpaidMap[key] = (unpaidMap[key] || 0) + amt;
+  });
+
   const query = (document.getElementById('client-search')?.value || '').toLowerCase();
   if (query) {
     list = list.filter(c => c.name.toLowerCase().includes(query) || (c.email || '').toLowerCase().includes(query));
@@ -4151,7 +4474,11 @@ function renderClientBook() {
 
     const info = document.createElement('div');
     info.className = 'client-card-info';
-    info.innerHTML = `<div class="client-card-name">${c.name}</div><div class="client-card-sub">${c.email || c.phone || c.address || '—'}</div>`;
+    const unpaidAmt = unpaidMap[(c.name || '').toLowerCase()] || 0;
+    const unpaidBadge = unpaidAmt > 0
+      ? `<span style="display:inline-block;margin-left:6px;padding:1px 6px;background:#ffebee;color:#c62828;border-radius:10px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;">OWES</span>`
+      : '';
+    info.innerHTML = `<div class="client-card-name">${c.name}${unpaidBadge}</div><div class="client-card-sub">${c.email || c.phone || c.address || '—'}</div>`;
 
     const useBtn = document.createElement('button');
     useBtn.className   = 'btn-use-client';
@@ -4169,6 +4496,13 @@ function renderClientBook() {
     const fields = document.createElement('div');
     fields.className = 'client-card-fields';
     fields.id        = `client-fields-${i}`;
+
+    // Task #84: Auto-expand if it's the selected client and missing details
+    const currentInvoiceData = getData();
+    const isSelected = currentInvoiceData && currentInvoiceData.to && currentInvoiceData.to.name === c.name;
+    if (isSelected && (!c.address || !c.email)) {
+      fields.classList.add('open');
+    }
 
     ['name', 'address', 'email', 'phone'].forEach(key => {
       const row = document.createElement('div');
@@ -4232,7 +4566,10 @@ function toggleClientBook() {
   // Close settings if open
   if (isOpen && sets.classList.contains('open')) toggleChatSettings();
   msgs.style.display = isOpen ? 'none' : 'flex';
-  if (isOpen) renderClientBook();
+  if (isOpen) {
+    renderClientBook();
+    setTimeout(() => document.getElementById('client-search')?.focus(), 50);
+  }
 }
 
 // ── Gmail OAuth ───────────────────────────────────────────────
@@ -5242,6 +5579,22 @@ function deleteGoal(idx) {
 
 function renderAllocationUI(container, row) {
   container.innerHTML = '';
+
+  // 3-day retroactive window — only invoices created within the last 3 days can contribute to goals
+  if (row.date) {
+    try {
+      const parts = row.date.split('/').map(s => s.trim());
+      if (parts.length === 3) {
+        const invoiceDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
+        const daysDiff = (new Date() - invoiceDate) / (1000 * 60 * 60 * 24);
+        if (daysDiff > 3) {
+          container.innerHTML = '<div style="font-size:11px; color:#6c7682; background:#f6f6f4; padding:8px 10px; border-radius:6px;">Goal contributions are only available for invoices created within the last 3 days.</div>';
+          return;
+        }
+      }
+    } catch(e) {}
+  }
+
   const goals = loadGoals().filter(g => g.status !== 'Claimed' && !(g.status === 'Funded' && g.receiptNumber));
   if (!goals.length) {
     container.innerHTML = '<div style="font-size:11px; color:#6c7682;">No active goals. Create one in the dashboard to allocate funds.</div>';
@@ -5611,7 +5964,7 @@ async function loadLedgerFromSheet() {
   }
 }
 
-async function updateLedgerStatusOnSheet(receiptNumber, status) {
+async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null) {
   if (!_sheetsSpreadsheetId || !_gmailToken) return;
 
   try {
@@ -5624,23 +5977,30 @@ async function updateLedgerStatusOnSheet(receiptNumber, status) {
     const colA = readJson.values || [];
     const sheetRowIdx = colA.findIndex(function(r, i) { return i > 0 && r[0] === receiptNumber; });
     if (sheetRowIdx === -1) { console.warn('Receipt not found in sheet:', receiptNumber); return; }
-    const cell = `Ledger!G${sheetRowIdx + 1}`;
 
-    const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${_gmailToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ values: [[status]] })
-      }
-    );
-
-    if (res.ok) {
-      console.log('✓ Status updated on sheet row', sheetRowIdx + 1);
+    if (amountDue !== null) {
+      // Update both F (amountDue) and G (status) in one batchUpdate
+      const range = `Ledger!F${sheetRowIdx + 1}:G${sheetRowIdx + 1}`;
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [[amountDue, status]] })
+        }
+      );
+    } else {
+      const cell = `Ledger!G${sheetRowIdx + 1}`;
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ values: [[status]] })
+        }
+      );
     }
+    console.log('✓ Status updated on sheet row', sheetRowIdx + 1);
   } catch (e) {
     console.error('Status update error:', e.message);
   }
@@ -6156,6 +6516,19 @@ if (autosave) {
   document.body.appendChild(banner);
 }
 
+// Check for URL hash share link
+if (window.location.hash.startsWith('#data=')) {
+  try {
+    const base64 = window.location.hash.substring(6);
+    const json = decodeURIComponent(atob(base64));
+    document.getElementById('invoice-data').textContent = json;
+    // Clear hash after loading so refresh doesn't reload old data automatically
+    window.history.replaceState(null, '', window.location.pathname);
+  } catch(e) {
+    console.error('Failed to parse share link:', e);
+  }
+}
+
 render(getData());
 seedClientsFromLedger();
 renderClientChips();
@@ -6238,13 +6611,28 @@ if ('serviceWorker' in navigator) {
       if (!document.body.classList.contains('editing')) startEdit();
     }
 
-    if ((e.ctrlKey || e.metaKey) && e.key === 's' && !isInField) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
       e.preventDefault();
-      const hasOpenModal = Array.from(document.querySelectorAll('div[id$="-overlay"]')).some(el => {
-        const s = window.getComputedStyle(el);
-        return s.display === 'flex' || s.display === 'block';
+      if (document.body.classList.contains('editing')) {
+        saveEdit();
+      } else {
+        const hasOpenModal = Array.from(document.querySelectorAll('div[id$="-overlay"]')).some(el => {
+          const s = window.getComputedStyle(el);
+          return s.display === 'flex' || s.display === 'block';
+        });
+        if (!hasOpenModal) confirmPrint();
+      }
+    }
+
+    if (e.key === 'Escape' && document.body.classList.contains('editing')) {
+      const activeOverlays = Array.from(document.querySelectorAll('div[id$="-overlay"], #chat-settings-panel')).filter(el => {
+        const style = window.getComputedStyle(el);
+        return style.display === 'flex' || style.display === 'block';
       });
-      if (!hasOpenModal) confirmPrint();
+      if (activeOverlays.length === 0) {
+        e.preventDefault();
+        cancelEdit();
+      }
     }
   });
 function exportLocalData() {
@@ -6371,6 +6759,44 @@ document.getElementById('line-items').addEventListener('keydown', function(e) {
   }
 });
 
+function toggleStatusPicker(e) {
+  if (document.body.classList.contains('editing')) return;
+  e.stopPropagation();
+  const picker = document.getElementById('status-picker');
+  picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
+}
+
+function quickSetStatus(status) {
+  const data = getData();
+  const rows = loadLedgerRows();
+  const idx = rows.findIndex(r => r.receipt === data.receiptNumber);
+  if (idx === -1) {
+    showToast('Save to ledger first before changing status', 'info');
+    document.getElementById('status-picker').style.display = 'none';
+    return;
+  }
+  if (status === '✅ Paid' && rows[idx].projectTotal) {
+    rows[idx].amountDue = rows[idx].projectTotal;
+  }
+  rows[idx].status = status;
+  saveLedgerRows(rows);
+  updateLedgerStatusOnSheet(rows[idx].receipt, status, status === '✅ Paid' ? rows[idx].amountDue : null);
+  document.getElementById('status-picker').style.display = 'none';
+  render(data);
+}
+
+document.addEventListener('click', function(e) {
+  const picker = document.getElementById('status-picker');
+  if (picker && picker.style.display === 'flex' && !picker.contains(e.target) && e.target.id !== 'status-badge') {
+    picker.style.display = 'none';
+  }
+});
 </script>
+
+<div id="edit-action-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; z-index:8888; background:rgba(20,32,46,0.97); padding:12px 20px; gap:10px; align-items:center; justify-content:flex-end; box-shadow:0 -2px 16px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
+  <span style="font-size:11px; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,0.5); flex:1;">Editing invoice</span>
+  <button onclick="cancelEdit()" style="padding:8px 20px; background:rgba(255,255,255,0.1); color:#fff; border:1.5px solid rgba(255,255,255,0.2); border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer;">Cancel</button>
+  <button id="btn-save-changes" onclick="saveEdit()" style="padding:8px 24px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">Save Changes</button>
+</div>
 </body>
 </html>
