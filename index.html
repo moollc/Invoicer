@@ -3266,18 +3266,9 @@ function toggleChat() {
     renderClientChips();
     renderChatHistory();
     document.getElementById('chat-input').focus();
-    // Seed clients from ledger rows if address book is empty
-    if (!loadClients().length) {
-      const seen = new Set();
-      loadLedgerRows().forEach(r => {
-        if (r.client && r.client.trim() && !seen.has(r.client.trim().toLowerCase())) {
-          seen.add(r.client.trim().toLowerCase());
-          upsertClient({ name: r.client.trim(), address: '', email: '', phone: '' });
-        }
-      });
-      renderClientChips();
-    }
-    // Then pull richer data from sheet if signed in
+    // Seed from ledger if empty, then enrich from sheet
+    seedClientsFromLedger();
+    renderClientChips();
     if (gmailTokenValid()) {
       loadClientsFromSheet().then(() => renderClientChips());
     }
@@ -3684,7 +3675,8 @@ ${currentData}`;
     data.dateOverride    = data.dateOverride || data.date;
     data.receiptOverride = data.receiptOverride || data.receiptNumber;
     document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
-    render(data);
+    // Re-derive date/receiptNumber from overrides so render shows correct values
+    render(getData());
 
     const fieldLabels = {
       date: 'date', receiptNumber: 'receipt #', currency: 'currency', payPeriod: 'pay period',
@@ -3878,6 +3870,17 @@ function applyClient(client) {
   data.receiptOverride = data.receiptNumber;
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
   render(data);
+}
+
+function seedClientsFromLedger() {
+  if (loadClients().length) return; // already populated, skip
+  const seen = new Set();
+  loadLedgerRows().forEach(r => {
+    const name = r.client && r.client.trim();
+    if (!name || seen.has(name.toLowerCase())) return;
+    seen.add(name.toLowerCase());
+    upsertClient({ name, address: '', email: '', phone: '' });
+  });
 }
 
 function renderClientChips() {
@@ -4625,6 +4628,9 @@ async function setupDrive() {
 
     await loadClientsFromSheet();
     await loadGoalsFromSheet();
+    // If Clients sheet is empty, seed address book from ledger rows
+    seedClientsFromLedger();
+    renderClientChips();
     if (statusEl) {
       statusEl.innerHTML = '✓ <strong style="color:#2a8c55;">mooInvoicer/</strong> folder ready : Ledger connected';
       statusEl.style.color = '#2a8c55';
@@ -5832,6 +5838,7 @@ if (autosave) {
 }
 
 render(getData());
+seedClientsFromLedger();
 renderClientChips();
 restoreTitleFont();
 restoreTitleSize();
