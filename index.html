@@ -913,7 +913,7 @@
   #chat-panel {
     position: fixed;
     bottom: 64px;
-    right: 20px;
+    right: 80px;
     width: 370px;
     max-height: 580px;
     background: rgba(250,250,249,0.82);
@@ -2318,10 +2318,12 @@ function render(data) {
   const tbody = document.getElementById('line-items');
   tbody.innerHTML = '';
   data.lineItems.forEach((item, i) => {
-    const ratesHtml = item.rates.map((r, ri) =>
+    const rates = Array.isArray(item.rates) ? item.rates : [];
+    const costs = Array.isArray(item.costs) ? item.costs : [];
+    const ratesHtml = rates.map((r, ri) =>
       `<span class="rate-tag" data-field="lineItems.${i}.rates.${ri}">${r}</span>`
     ).join('');
-    const costsHtml = item.costs.map((c, ci) =>
+    const costsHtml = costs.map((c, ci) =>
       `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${c}</span>`
     ).join('');
     tbody.innerHTML += `
@@ -3264,6 +3266,21 @@ function toggleChat() {
     renderClientChips();
     renderChatHistory();
     document.getElementById('chat-input').focus();
+    // Seed clients from ledger rows if address book is empty
+    if (!loadClients().length) {
+      const seen = new Set();
+      loadLedgerRows().forEach(r => {
+        if (r.client && r.client.trim() && !seen.has(r.client.trim().toLowerCase())) {
+          seen.add(r.client.trim().toLowerCase());
+          upsertClient({ name: r.client.trim(), address: '', email: '', phone: '' });
+        }
+      });
+      renderClientChips();
+    }
+    // Then pull richer data from sheet if signed in
+    if (gmailTokenValid()) {
+      loadClientsFromSheet().then(() => renderClientChips());
+    }
   }
 }
 
@@ -3386,6 +3403,63 @@ function clearChatHistory() {
   appendMsg('assistant', 'Hi! Tell me what to update — e.g. "Invoice for Sarah, logo design, $5000 USD, balance due."', false);
 }
 
+// Detect if the user is asking a question rather than giving an update command
+function isQueryMessage(text) {
+  const t = text.trim().toLowerCase();
+  return /^(what|who|how much|how many|when|show|list|tell me|summarize|summary|total|did|does|has|have|is there|any invoice|find|look up|search|which|can you tell)/.test(t)
+    || t.endsWith('?');
+}
+
+async function streamOpenAI(url, headers, body, onChunk) {
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || res.statusText);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ') || line === 'data: [DONE]') continue;
+      try {
+        const delta = JSON.parse(line.slice(6))?.choices?.[0]?.delta?.content;
+        if (delta) onChunk(delta);
+      } catch {}
+    }
+  }
+}
+
+async function streamAnthropic(url, headers, body, onChunk) {
+  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ ...body, stream: true }) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || err.type || res.statusText);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      try {
+        const evt = JSON.parse(line.slice(6));
+        if (evt.type === 'content_block_delta') onChunk(evt.delta?.text || '');
+      } catch {}
+    }
+  }
+}
+
 async function sendChat() {
   const input   = document.getElementById('chat-input');
   const sendBtn = document.getElementById('btn-chat-send');
@@ -3420,19 +3494,37 @@ async function sendChat() {
   const clientsLine = existingClients.length
     ? `Address book contacts (use these to autofill "to"): ${JSON.stringify(existingClients)}`
     : '';
-  const systemPrompt = `You are an invoice data assistant. The current invoice data is shown below — it already reflects all previous changes.
+
+  // Build ledger summary for query mode
+  const ledgerRows = loadLedgerRows();
+  const ledgerSummary = ledgerRows.length
+    ? `Invoice ledger (${ledgerRows.length} records):\n` + ledgerRows.map(r =>
+        `  Receipt ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | ${r.amountDue} | ${r.status || '⬜ Unpaid'}`
+      ).join('\n')
+    : '';
+
+  const queryMode = isQueryMessage(text) && !images.length;
+
+  const systemPrompt = queryMode
+    ? `You are an invoice assistant with access to the user's ledger and current invoice. Answer questions conversationally and concisely. Do not return JSON.
+Current invoice data: ${currentData}
+${ledgerSummary}
+Goals: ${existingGoals.map(g => `${g.name} $${g.amount} deadline:${g.deadline || 'none'}`).join(', ') || 'none'}
+Address book: ${existingClients.map(c => c.name).join(', ') || 'empty'}`
+    : `You are an invoice data assistant. The current invoice data is shown below — it already reflects all previous changes.
 The user will describe what to change next. Return ONLY a single valid JSON object with the fields that need to change.
 Do not repeat fields that are already correct. Do not return markdown, explanation, or any text outside the JSON object.
 If nothing needs to change, return an empty object: {}
 Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, paid.
 When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
+To load a past invoice into the editor, include "_loadReceipt": "RECEIPT_NUMBER" — use the exact receipt number from the ledger. The invoice will be pre-filled from ledger data. Only use this if the user explicitly asks to open, load, or re-open a past invoice.
 To save a contact to the address book, include "_addContact": { "name": "...", "address": "...", "email": "...", "phone": "..." } in your response. Only include fields you know. This does not update the invoice — combine with "to" if you also want to set the client.
 To add a new savings or revenue goal, include "_addGoal": { "name": "...", "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 15, "notes": "..." } — amount is a number, deadline is ISO 8601, allocationPct is 0–100 (default 0 if not mentioned), notes is optional; this does not change the invoice.
 To update an existing goal, include "_updateGoal": { "name": "...", "changes": { "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 20, "notes": "..." } } — name must match an existing goal (case-insensitive), include only the fields that are changing.
 To delete a goal, include "_deleteGoal": { "name": "..." } — name must match an existing goal (case-insensitive); only use this if the user explicitly asks to remove or delete a goal.
 To add expense line items to the current invoice, include "_addExpense": [{ "desc": "...", "amount": 120 }] — array, amount is a number, these belong to the current invoice only.
-To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "✅ Paid".
-Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}
+To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "📤 Sent", "✅ Paid".
+Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}
 Current invoice data:
 ${currentData}`;
 
@@ -3444,7 +3536,6 @@ ${currentData}`;
     let responseText = '';
 
     if (cfg.type === 'anthropic') {
-      // Build content array — text + images
       const content = [];
       images.forEach(img => {
         const b64 = img.dataUrl.split(',')[1];
@@ -3457,16 +3548,15 @@ ${currentData}`;
       });
       messages.push({ role: 'user', content });
 
-      const res = await fetch(prov.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
-        body: JSON.stringify({ model: cfg.model, max_tokens: 1024, system: systemPrompt, messages })
+      const body = { model: cfg.model, max_tokens: 1024, system: systemPrompt, messages };
+      thinking.textContent = '';
+      await streamAnthropic(prov.url, { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) }, body, chunk => {
+        responseText += chunk;
+        if (queryMode) thinking.textContent = responseText;
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error?.message || json.type || res.statusText);
-      responseText = json.content?.[0]?.text || '';
 
     } else if (cfg.type === 'gemini') {
+      // Gemini doesn't support SSE streaming easily in browser — keep non-streaming
       const parts = [];
       images.forEach(img => {
         const b64 = img.dataUrl.split(',')[1];
@@ -3484,18 +3574,18 @@ ${currentData}`;
       contents.push({ role: 'user', parts });
 
       const url = typeof prov.url === 'function' ? prov.url(cfg.model) : prov.url;
-      const geminiAuth = prov.authHeader(cfg.key);
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...geminiAuth },
+        headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
         body: JSON.stringify({ contents })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error?.message || res.statusText);
       responseText = json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (queryMode) thinking.textContent = responseText;
 
     } else {
-      // OpenAI-compatible: supports image_url with base64
+      // OpenAI-compatible (OpenAI, DeepSeek, OpenRouter) — stream
       const userContent = [];
       images.forEach(img => {
         userContent.push({ type: 'image_url', image_url: { url: img.dataUrl } });
@@ -3508,14 +3598,22 @@ ${currentData}`;
       });
       messages.push({ role: 'user', content: userContent });
 
-      const res = await fetch(prov.url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
-        body: JSON.stringify({ model: cfg.model, messages })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error?.message || res.statusText);
-      responseText = json.choices?.[0]?.message?.content || '';
+      const url = typeof prov.url === 'function' ? prov.url(cfg.model) : prov.url;
+      thinking.textContent = '';
+      await streamOpenAI(url, { 'Content-Type': 'application/json', ...prov.authHeader(cfg.key) },
+        { model: cfg.model, messages },
+        chunk => {
+          responseText += chunk;
+          if (queryMode) thinking.textContent = responseText;
+        }
+      );
+    }
+
+    // ── Query mode: just show the answer, no JSON parsing ──
+    if (queryMode) {
+      if (!responseText.trim()) thinking.textContent = '(No response)';
+      const h = loadChatHistory(); h.push({ role: 'assistant', text: thinking.textContent }); saveChatHistory(h);
+      return;
     }
 
     responseText = responseText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
@@ -3527,6 +3625,10 @@ ${currentData}`;
     // Extract _addContact before merge so it never touches invoice data
     const contactToAdd = patch._addContact || null;
     delete patch._addContact;
+
+    // ── _loadReceipt: pre-fill invoice from ledger row ──
+    const loadReceiptId = patch._loadReceipt || null;
+    delete patch._loadReceipt;
 
     // ── Part A: goal actions (before getData — don't need invoice data) ──
     const actionNotes = [];
@@ -3540,11 +3642,33 @@ ${currentData}`;
     if (patch._addExpense)   { applyAddExpense(patch._addExpense, data, actionNotes);     delete patch._addExpense; }
     if (patch._updateStatus) { applyUpdateStatus(patch._updateStatus, data, actionNotes); delete patch._updateStatus; }
 
+    // ── _loadReceipt: merge ledger row fields into invoice ──
+    if (loadReceiptId) {
+      const row = loadLedgerRows().find(r => r.receipt === loadReceiptId);
+      if (row) {
+        if (row.client)  data.to = { ...data.to, name: row.client };
+        if (row.date)    data.dateOverride = row.date;
+        if (row.service) data.lineItems = [{ service: row.service, details: '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
+        data.receiptOverride = row.receipt;
+        actionNotes.push(`Loaded receipt ${row.receipt}`);
+      } else {
+        actionNotes.push(`Receipt ${loadReceiptId} not found in ledger`);
+      }
+    }
+
     function deepMerge(target, source) {
       Object.entries(source).forEach(([k, v]) => {
         if (v && typeof v === 'object' && !Array.isArray(v) && typeof target[k] === 'object') deepMerge(target[k], v);
         else target[k] = v;
       });
+    }
+    // Normalise lineItems from AI — ensure rates/costs are always arrays
+    if (Array.isArray(patch.lineItems)) {
+      patch.lineItems = patch.lineItems.map(item => ({
+        ...item,
+        rates: Array.isArray(item.rates) ? item.rates : (item.rates ? [item.rates] : ['Rate']),
+        costs: Array.isArray(item.costs) ? item.costs : (item.costs ? [String(item.costs)] : ['0']),
+      }));
     }
     deepMerge(data, patch);
 
@@ -3557,8 +3681,8 @@ ${currentData}`;
       });
       renderClientChips();
     }
-    data.dateOverride    = data.date;
-    data.receiptOverride = data.receiptNumber;
+    data.dateOverride    = data.dateOverride || data.date;
+    data.receiptOverride = data.receiptOverride || data.receiptNumber;
     document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
     render(data);
 
