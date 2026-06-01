@@ -1546,6 +1546,29 @@
   
   .confirm-overlay .modal { max-width: 400px; text-align: center; }
   .confirm-actions { display: flex; justify-content: center; gap: 12px; margin-top: 24px; }
+  .delete-row-btn {
+    position: absolute; left: -25px; top: 12px;
+    background: #d0241b; color: white; border: none;
+    border-radius: 50%; width: 18px; height: 18px;
+    font-size: 10px; cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+  }
+  body.editing .delete-row-btn { display: flex; }
+  body.editing #add-item-wrap { display: block !important; }
+  .status-badge {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: white;
+  }
+  .status-draft { background: #6c7682; }
+  .status-sent { background: #2b5c8f; }
+  .status-paid { background: #2a8c55; }
+  @media print { .status-badge { display: none !important; } }
+  body.editing .status-badge { display: none !important; }
 </style>
 </head>
 <body>
@@ -1555,19 +1578,19 @@
 
   <!-- Document group -->
   <div class="tb-group">
-    <button id="btn-edit" onclick="startEdit()" title="Edit invoice">
+    <button id="btn-edit" onclick="startEdit()" title="Edit invoice" aria-label="Edit invoice">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
       <span class="tb-label">Edit</span>
     </button>
-    <button id="btn-save" onclick="saveEdit()" title="Save changes">
+    <button id="btn-save" onclick="saveEdit()" title="Save changes" aria-label="Save changes">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
       <span class="tb-label">Save</span>
     </button>
-    <button id="btn-cancel" onclick="cancelEdit()" title="Cancel editing">
+    <button id="btn-cancel" onclick="cancelEdit()" title="Cancel editing" aria-label="Cancel editing">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       <span class="tb-label">Cancel</span>
     </button>
-    <select id="font-selector" onchange="changeTitleFont(this.value)" title="Title font">
+    <select id="font-selector" onchange="changeTitleFont(this.value)" title="Title font" aria-label="Title font">
       <option value="Bebas Neue">Bebas Neue</option>
       <option value="Outfit">Outfit</option>
       <option value="Space Grotesk">Space Grotesk</option>
@@ -1584,11 +1607,11 @@
       <option value="Courier New">Courier New</option>
       <option value="Comic Sans MS">Comic Sans MS</option>
     </select>
-    <button id="btn-print" onclick="confirmPrint()" title="Publish / Print / PDF">
+    <button id="btn-print" onclick="confirmPrint()" title="Publish / Print / PDF" aria-label="Publish invoice">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
       <span class="tb-label">Publish</span>
     </button>
-    <button id="btn-clear-invoice" onclick="clearInvoice()" title="Clear invoice">
+    <button id="btn-clear-invoice" onclick="clearInvoice()" title="Clear invoice" aria-label="Clear invoice">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
       <span class="tb-label">Clear</span>
     </button>
@@ -1598,15 +1621,15 @@
 
   <!-- App group -->
   <div class="tb-group">
-    <button id="btn-chat" onclick="toggleChat()" title="AI Assistant">
+    <button id="btn-chat" onclick="toggleChat()" title="AI Assistant" aria-label="Toggle AI Assistant">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
       <span class="tb-label">AI</span>
     </button>
-    <button id="btn-templates" onclick="openTemplatesModal()" title="Templates">
+    <button id="btn-templates" onclick="openTemplatesModal()" title="Templates" aria-label="Invoice templates">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
       <span class="tb-label">Templates</span>
     </button>
-    <button id="btn-dashboard" onclick="openDashboard()" title="Dashboard">
+    <button id="btn-dashboard" onclick="openDashboard()" title="Dashboard" aria-label="Open dashboard">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
       <span class="tb-label">Dashboard</span>
     </button>
@@ -1620,7 +1643,7 @@
 
   <!-- Profile group -->
   <div class="tb-group">
-    <button id="btn-load-profile" onclick="applyBusinessProfile()" title="My Business Profile">
+    <button id="btn-load-profile" onclick="applyBusinessProfile()" title="My Business Profile" aria-label="My Business Profile">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
       <span class="tb-label">Profile</span>
     </button>
@@ -1670,7 +1693,7 @@
   <div id="client-picker-row">
     <span class="cp-label">Clients</span>
     <div id="client-chips"></div>
-    <button class="btn-manage-clients" onclick="toggleClientBook()" title="Manage address book">✎</button>
+    <button class="btn-manage-clients" onclick="toggleClientBook()" title="Manage address book" aria-label="Manage address book">✎</button>
   </div>
 
   <div id="chat-image-preview"></div>
@@ -1680,14 +1703,14 @@
     <button id="btn-chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach image">📎</button>
     <textarea id="chat-input" rows="1" placeholder="Describe the invoice changes…" onkeydown="chatInputKey(event)" onpaste="handleImagePaste(event)"></textarea>
     <button id="btn-chat-voice" onclick="toggleVoice()" title="Voice input">🎙</button>
-    <button id="btn-chat-send" onclick="sendChat()">↑</button>
+    <button id="btn-chat-send" onclick="sendChat()" aria-label="Send message">↑</button>
   </div>
 </div>
 
 <!-- PRINT CONFIRM DIALOG -->
-<div id="print-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id === 'print-overlay') closeDialog()">
+<div id="print-overlay" role="dialog" aria-modal="true" aria-label="Publish invoice" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id === 'print-overlay') closeDialog()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:500px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
-    <button onclick="closeDialog()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center; transition:all 0.15s;">✕</button>
+    <button onclick="closeDialog()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center; transition:all 0.15s;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Publish Invoice</div>
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Save, print &amp; sync the ledger</div>
 
@@ -1708,6 +1731,10 @@
       <button onclick="exportLedger()"
         style="flex:1; padding:10px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
         ↓ Export .md
+      </button>
+      <button onclick="exportLedgerCsv()"
+        style="flex:1; padding:10px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        ↓ Export .csv
       </button>
     </div>
 
@@ -1786,6 +1813,14 @@
           <div style="margin-top:4px; font-size:11px; color:#9aa2ac;">Live rate: <span id="fx-rate-display">not fetched</span></div>
         </div>
         <div style="margin-top:12px; border-top:1px solid #f0f0f0; padding-top:10px;">
+          <div style="font-size:11px; color:#9aa2ac; margin-bottom:6px;">Receipt number prefix — prepended before the date+letter (e.g. "INV-" → INV-260601A). Leave blank for default.</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="receipt-prefix-input" type="text" maxlength="20" placeholder='e.g. INV- or MOO-'
+              style="flex:1; font-family:'Roboto',sans-serif; font-size:12px; padding:7px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e; min-width:0;"
+              oninput="saveReceiptPrefix()">
+          </div>
+        </div>
+        <div style="margin-top:12px; border-top:1px solid #f0f0f0; padding-top:10px;">
           <div style="font-size:11px; color:#9aa2ac; margin-bottom:6px;">Data Backup & Reset</div>
           <div style="display:flex; gap:8px;">
             <button onclick="exportLocalData()" style="flex:1; background:#f0f0f0; border:none; padding:6px 0; border-radius:5px; font-size:11px; color:#14202e; cursor:pointer; font-weight:600;">Export Data</button>
@@ -1800,9 +1835,9 @@
 </div>
 
 <!-- GOAL MODAL -->
-<div id="goal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='goal-overlay') closeGoalModal()">
+<div id="goal-overlay" role="dialog" aria-modal="true" aria-label="Add goal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='goal-overlay') closeGoalModal()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:420px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
-    <button onclick="closeGoalModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <button onclick="closeGoalModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">New Goal</div>
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Add a financial goal</div>
     <div style="display:flex; flex-direction:column; gap:12px;">
@@ -1840,9 +1875,9 @@
   </div>
 </div>
 
-<div id="claim-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='claim-overlay') closeClaimModal()">
+<div id="claim-overlay" role="dialog" aria-modal="true" aria-label="Claim reward" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='claim-overlay') closeClaimModal()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:400px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
-    <button onclick="closeClaimModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <button onclick="closeClaimModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Claim Goal</div>
     <div id="claim-modal-title" style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Claim: Goal Name</div>
     
@@ -1865,9 +1900,9 @@
   </div>
 </div>
 
-<div id="templates-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='templates-overlay') closeTemplatesModal()">
+<div id="templates-overlay" role="dialog" aria-modal="true" aria-label="Invoice templates" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='templates-overlay') closeTemplatesModal()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:540px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
-    <button onclick="closeTemplatesModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <button onclick="closeTemplatesModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Start from a</div>
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Template</div>
     <div id="templates-list" style="display:flex; flex-direction:column; gap:8px;"></div>
@@ -1875,9 +1910,9 @@
   </div>
 </div>
 
-<div id="calendar-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='calendar-overlay') closeCalendarModal()">
+<div id="calendar-overlay" role="dialog" aria-modal="true" aria-label="Import from Calendar" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='calendar-overlay') closeCalendarModal()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:500px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
-    <button onclick="closeCalendarModal()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <button onclick="closeCalendarModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Import from Calendar</div>
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Find an event</div>
 
@@ -1900,9 +1935,9 @@
 </div>
 
 <!-- DASHBOARD OVERLAY -->
-<div id="dashboard-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='dashboard-overlay') closeDashboard()">
+<div id="dashboard-overlay" role="dialog" aria-modal="true" aria-label="Dashboard" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='dashboard-overlay') closeDashboard()">
   <div style="background:#fff; border-radius:10px; padding:28px 30px; max-width:600px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
-    <button onclick="closeDashboard()" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <button onclick="closeDashboard()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:6px;">Business</div>
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Dashboard</div>
 
@@ -1965,7 +2000,11 @@
       </div>
       <div class="meta">
         <span>Date</span>      <span class="v" data-field="date"></span>
-        <span>Receipt №</span> <span class="v" data-field="receiptNumber"></span>
+        <span>Receipt №</span> 
+        <span style="display:inline-flex; align-items:center; gap:8px;">
+          <span class="v" data-field="receiptNumber"></span>
+          <span id="status-badge" class="status-badge" style="display:none;"></span>
+        </span>
         <span>Currency</span>  <span class="v" data-field="currency"></span>
       </div>
     </div>
@@ -2006,6 +2045,9 @@
     </thead>
     <tbody id="line-items"></tbody>
   </table>
+  <div id="add-item-wrap" style="display:none; margin: 16px 0; text-align: center;">
+    <button onclick="addLineItem()" style="padding: 6px 12px; border-radius: 4px; border: 1.5px dashed var(--rule); background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; transition: all 0.2s;" onmouseover="this.style.color='var(--ink)'; this.style.borderColor='var(--ink)';" onmouseout="this.style.color='var(--muted)'; this.style.borderColor='var(--rule)';">+ Add Line Item</button>
+  </div>
 
   <!-- TOTAL -->
   <div class="total-wrap">
@@ -2014,6 +2056,7 @@
         <span class="ptl">Project Total</span>
         <span class="ptv"><span data-field="currency"></span> <span data-field="projectTotal"></span></span>
       </div>
+      <div id="autosum-hint" style="display:none; font-size:11px; color:#9aa2ac; text-align:right; margin-top:4px; padding-right:2px;"></div>
       <div class="total-card">
         <div class="total-amount">
           <span class="qualifier">
@@ -2092,16 +2135,18 @@ function todayFormatted() {
 // To get B on the same day, change receiptOverride in the JSON.
 function autoReceiptNumber() {
   const { dd, mm, yy } = todayFormatted();
-  const prefix = `${yy}${mm}${dd}`;
+  const dateSegment = `${yy}${mm}${dd}`;
+  const customPrefix = (localStorage.getItem('invoice-receipt-prefix') || '').trim();
+  const fullPrefix = customPrefix + dateSegment;
   const rows = loadLedgerRows();
   const used = rows
     .map(r => (r.receipt || '').toUpperCase())
-    .filter(r => r.startsWith(prefix))
-    .map(r => r.slice(prefix.length))
+    .filter(r => r.startsWith(fullPrefix.toUpperCase()))
+    .map(r => r.slice(fullPrefix.length))
     .filter(s => /^[A-Z]$/.test(s))
     .map(s => s.charCodeAt(0));
   const next = used.length ? Math.max(...used) + 1 : 65; // 65 = 'A'
-  return prefix + String.fromCharCode(Math.min(next, 90)); // cap at Z
+  return fullPrefix + String.fromCharCode(Math.min(next, 90)); // cap at Z
 }
 
 function autoDate() {
@@ -2166,6 +2211,28 @@ function showConfirm(message, onConfirm, { confirmLabel = 'Confirm', cancelLabel
   return p;
 }
 
+function showPrompt(message, { placeholder = '', defaultValue = '', confirmLabel = 'Save', cancelLabel = 'Cancel' } = {}) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast-confirm';
+  toast.innerHTML = `
+    <div class="toast-msg">${message}</div>
+    <input type="text" style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.08);color:#fff;font-size:12.5px;font-family:'Roboto',sans-serif;outline:none;" placeholder="${placeholder}" value="${defaultValue}">
+    <div class="toast-actions">
+      <button class="btn-cancel">${cancelLabel}</button>
+      <button class="btn-confirm safe">${confirmLabel}</button>
+    </div>`;
+  let resolve;
+  const p = new Promise(res => { resolve = res; });
+  const input = toast.querySelector('input');
+  toast.querySelector('.btn-cancel').onclick = () => { toast.remove(); resolve(null); };
+  toast.querySelector('.btn-confirm').onclick = () => { const v = input.value.trim(); toast.remove(); resolve(v || null); };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { const v = input.value.trim(); toast.remove(); resolve(v || null); } if (e.key === 'Escape') { toast.remove(); resolve(null); } });
+  container.appendChild(toast);
+  setTimeout(() => input.focus(), 50);
+  return p;
+}
+
 // ── Data ─────────────────────────────────────────────────────
 
 function getData() {
@@ -2226,6 +2293,23 @@ function render(data) {
     if (val !== undefined) el.textContent = val;
   });
 
+  const badge = document.getElementById('status-badge');
+  if (badge) {
+    let statusStr = '';
+    try {
+      const history = JSON.parse(localStorage.getItem('invoice-history') || '[]');
+      const match = history.find(h => h.receipt === data.receiptNumber);
+      if (match && match.status) statusStr = match.status;
+    } catch(e) {}
+    
+    if (statusStr) {
+      badge.textContent = statusStr;
+      badge.style.display = 'inline-block';
+      badge.className = 'status-badge status-' + statusStr.toLowerCase();
+    } else {
+      badge.style.display = 'none';
+    }
+  }
 
   const tbody = document.getElementById('line-items');
   tbody.innerHTML = '';
@@ -2254,8 +2338,30 @@ function startEdit() {
   snapshot = document.getElementById('invoice-data').textContent;
   document.body.classList.add('editing');
   document.querySelectorAll('[data-field]').forEach(el => {
-    el.contentEditable = 'true';
-    el.spellcheck = false;
+    if (el.dataset.field === 'date') {
+      const current = el.textContent.trim();
+      const ta = document.createElement('input');
+      ta.type = 'date';
+      ta.className = 'date-edit-input';
+      ta.style.cssText = 'font-family: inherit; font-size: inherit; font-weight: inherit; color: inherit; border: 1.5px dashed var(--rule); border-radius: 4px; padding: 2px 4px; background: transparent; outline: none; width: 130px;';
+      
+      let d = new Date(current);
+      if (isNaN(d) && current.includes('/')) {
+        const parts = current.split('/').map(s => s.trim());
+        if (parts.length === 3) d = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
+      }
+      
+      if (!isNaN(d)) {
+        const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
+        ta.value = iso;
+      }
+      el.innerHTML = '';
+      el.appendChild(ta);
+      el.contentEditable = 'false';
+    } else {
+      el.contentEditable = 'true';
+      el.spellcheck = false;
+    }
   });
 
   // Swap rate/cost span groups → textareas (Enter works natively in textarea)
@@ -2278,8 +2384,20 @@ function startEdit() {
       ta.value = item.costs.join('\n');
       ta.dataset.lineIndex = i;
       ta.rows = Math.max(item.costs.length, 1);
+      ta.addEventListener('input', updateAutoSumHint);
       costWrap.innerHTML = '';
       costWrap.appendChild(ta);
+    }
+    
+    const tr = rateWrap ? rateWrap.closest('tr') : costWrap.closest('tr');
+    if (tr) {
+      tr.style.position = 'relative';
+      const delBtn = document.createElement('button');
+      delBtn.innerHTML = '✕';
+      delBtn.className = 'delete-row-btn';
+      delBtn.title = 'Remove line item';
+      delBtn.onclick = () => removeLineItem(i);
+      tr.querySelector('.col-service').appendChild(delBtn);
     }
   });
   const pn = document.getElementById('payment-note-el');
@@ -2292,6 +2410,7 @@ function startEdit() {
     const slider = document.getElementById('title-size-slider');
     if (slider) { slider.value = curPx; document.getElementById('title-size-label').textContent = curPx + 'px'; }
   }
+  updateAutoSumHint();
 }
 
 const escapeHTML = (str) => {
@@ -2335,6 +2454,21 @@ function extractEditData() {
       data.to.phone   = parts[2] || '';
       return;
     }
+    if (field === 'date') {
+      const input = el.querySelector('input[type="date"]');
+      if (input && input.value) {
+        const parts = input.value.split('-'); // YYYY-MM-DD
+        if (parts.length === 3) {
+          const formatted = `${parts[2]} / ${parts[1]} / ${parts[0]}`;
+          setNestedField(data, field, formatted);
+        } else {
+          setNestedField(data, field, escapeHTML(el.textContent.trim()));
+        }
+      } else {
+        setNestedField(data, field, escapeHTML(el.textContent.trim()));
+      }
+      return;
+    }
     setNestedField(data, field, escapeHTML(el.textContent.trim()));
   });
   return data;
@@ -2349,6 +2483,27 @@ function saveEdit() {
   localStorage.removeItem('invoicer-autosave'); // clear autosave on manual save
   stopEdit();
   render(data);
+}
+
+function addLineItem() {
+  const data = extractEditData();
+  data.lineItems.push({ service: 'New Service', details: 'Details...', rates: ['Rate'], costs: ['0'] });
+  document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  stopEdit();
+  render(data);
+  startEdit();
+}
+
+function removeLineItem(index) {
+  const data = extractEditData();
+  data.lineItems.splice(index, 1);
+  if (data.lineItems.length === 0) {
+    data.lineItems.push({ service: 'Service', details: '', rates: ['Rate'], costs: ['0'] });
+  }
+  document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  stopEdit();
+  render(data);
+  startEdit();
 }
 
 // Background auto-save for drafts
@@ -2370,7 +2525,25 @@ function stopEdit() {
   document.querySelectorAll('[data-field]').forEach(el => {
     el.contentEditable = 'false';
   });
-  // visibility handled by body.editing CSS class
+  const hint = document.getElementById('autosum-hint');
+  if (hint) hint.style.display = 'none';
+}
+
+function updateAutoSumHint() {
+  const hint = document.getElementById('autosum-hint');
+  if (!hint) return;
+  const tas = document.querySelectorAll('.cost-edit-ta');
+  if (!tas.length) { hint.style.display = 'none'; return; }
+  let total = 0;
+  tas.forEach(ta => {
+    ta.value.split('\n').forEach(line => {
+      total += parseFloat(line.replace(/[^0-9.]/g, '')) || 0;
+    });
+  });
+  const currencyEl = document.querySelector('[data-field="currency"]');
+  const sym = currencyEl ? currencyEl.textContent.trim() : '';
+  hint.textContent = `Line items sum to ${sym}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  hint.style.display = 'block';
 }
 
 function setNestedField(obj, path, value) {
@@ -2454,25 +2627,37 @@ async function renderLedgerHistory() {
   histEl.style.display = 'block';
 
   // ── Summary bar (always rebuild) ──
-  const currencySymbols = { USD: '$', JMD: 'J$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$' };
   const parseAmount = str => parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
-  const getCurrency = str => { const m = (str || '').match(/^([A-Z]{2,4})/); return m ? m[1] : ''; };
-  const totalPaid = rows.filter(r => r.status === '✅ Paid').reduce((s, r) => s + parseAmount(r.amountDue), 0);
-  const totalOutstanding = rows.filter(r => r.status !== '✅ Paid').reduce((s, r) => s + parseAmount(r.amountDue), 0);
-  const sampleCur = getCurrency(rows[0]?.amountDue || '');
-  const sym = currencySymbols[sampleCur] || sampleCur || '$';
-  const fmt = n => sym + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const getCurrency = str => { const m = (str || '').match(/^([a-zA-Z]{2,4})/); return m ? m[1].toUpperCase() : 'USD'; };
+  const currencySymbols = { USD: '$', JMD: 'J$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$' };
+  const fmt = (n, cur) => (currencySymbols[cur] || cur || '$') + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const totalsByCurrency = {};
+  rows.forEach(r => {
+    const cur = getCurrency(r.amountDue || '');
+    if (!totalsByCurrency[cur]) totalsByCurrency[cur] = { paid: 0, outstanding: 0 };
+    if (r.status === '✅ Paid') totalsByCurrency[cur].paid += parseAmount(r.amountDue);
+    else totalsByCurrency[cur].outstanding += parseAmount(r.amountDue);
+  });
+
   let summaryEl = document.getElementById('ledger-summary');
   if (!summaryEl) {
     summaryEl = document.createElement('div');
     summaryEl.id = 'ledger-summary';
-    summaryEl.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;';
+    summaryEl.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px; align-items:center;';
     listEl.before(summaryEl);
   }
-  summaryEl.innerHTML = `
-    <span style="font-size:11px; background:#d4edda; color:#155724; border-radius:4px; padding:3px 8px; font-weight:600;">Paid ${fmt(totalPaid)}</span>
-    <span style="font-size:11px; background:#fff3cd; color:#856404; border-radius:4px; padding:3px 8px; font-weight:600;">Outstanding ${fmt(totalOutstanding)}</span>
-    <span style="font-size:11px; color:#9aa2ac; padding:3px 0;">${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}</span>`;
+  
+  let summaryHtml = '';
+  for (const [cur, totals] of Object.entries(totalsByCurrency)) {
+    if (totals.paid > 0) summaryHtml += `<span style="font-size:11px; background:#d4edda; color:#155724; border-radius:4px; padding:3px 8px; font-weight:600;">Paid ${fmt(totals.paid, cur)}</span>\n`;
+    if (totals.outstanding > 0) summaryHtml += `<span style="font-size:11px; background:#fff3cd; color:#856404; border-radius:4px; padding:3px 8px; font-weight:600;">Outstanding ${fmt(totals.outstanding, cur)}</span>\n`;
+  }
+  if (!summaryHtml) {
+    summaryHtml = `<span style="font-size:11px; background:#f6f6f4; color:#6c7682; border-radius:4px; padding:3px 8px; font-weight:600;">$0.00</span>\n`;
+  }
+  summaryHtml += `<span style="font-size:11px; color:#9aa2ac; padding:3px 0; margin-left: auto;">${rows.length} entr${rows.length === 1 ? 'y' : 'ies'}</span>`;
+  summaryEl.innerHTML = summaryHtml;
 
   // ── Search filter ──
   let searchEl = document.getElementById('ledger-search');
@@ -2610,6 +2795,23 @@ function exportLedger() {
   URL.revokeObjectURL(a.href);
 }
 
+function exportLedgerCsv() {
+  const rows = loadLedgerRows();
+  const escape = v => `"${String(v || '').replace(/"/g, '""')}"`;
+  const headers = ['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status'];
+  const lines = [
+    headers.map(escape).join(','),
+    ...rows.map(r => [r.receipt, r.date, r.client, r.service, r.projectTotal, r.amountDue, r.status].map(escape).join(','))
+  ];
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `invoicer-ledger-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Ledger exported as CSV', 'success');
+}
+
 // ── Filename ─────────────────────────────────────────────────
 
 const FILENAME_PRESETS = [
@@ -2643,6 +2845,11 @@ function saveCompanyPrefix() {
   localStorage.setItem('invoice-company-prefix', val);
 }
 
+function saveReceiptPrefix() {
+  const val = document.getElementById('receipt-prefix-input').value;
+  localStorage.setItem('invoice-receipt-prefix', val);
+}
+
 function buildFilename(presetId, data) {
   const preset = FILENAME_PRESETS.find(p => p.id === presetId) || FILENAME_PRESETS[0];
   const pfx = getCompanyPrefix();
@@ -2664,6 +2871,10 @@ function renderFilenamePresets() {
   // Restore saved company prefix into field
   const prefixEl = document.getElementById('company-prefix');
   if (prefixEl) prefixEl.value = localStorage.getItem('invoice-company-prefix') || '';
+
+  // Restore receipt number prefix
+  const receiptPrefixEl = document.getElementById('receipt-prefix-input');
+  if (receiptPrefixEl) receiptPrefixEl.value = localStorage.getItem('invoice-receipt-prefix') || '';
 
   FILENAME_PRESETS.forEach(p => {
     const row = document.createElement('label');
@@ -2722,7 +2933,7 @@ async function proceedPrint() {
         const clone = document.getElementById('invoice').cloneNode(true);
         clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
         document.body.appendChild(clone);
-        const opt = { margin: 0, filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
         document.body.removeChild(clone);
         savePdfToDrive(pdfBlob, filename);
@@ -3790,6 +4001,7 @@ function applyTemplate(id) {
   try { existing = JSON.parse(document.getElementById('invoice-data').textContent); }
   catch(e) { showToast('Could not read invoice data. Try reloading the page.', 'error'); return; }
   const merged = Object.assign({}, existing, template, { from: existing.from, to: existing.to });
+  localStorage.setItem('invoicer-preferred-template', id);
   document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
   render(merged);
   closeTemplatesModal();
@@ -3935,7 +4147,8 @@ async function openEmail() {
 
       const pdfBlob = await new Promise((resolve, reject) => {
         const opt = {
-          margin: 0, filename,
+          margin: [10, 0], filename,
+          pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] },
           image: { type: 'jpeg', quality: 0.98 },
           html2canvas: { scale: 2 },
           jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
@@ -4090,15 +4303,13 @@ async function syncToGoogleSheets(invoiceData) {
   }
 }
 
-function promptForSheetsId() {
-  const msg = `Enter your Google Sheet ID for the InvoiceLedger.
-
-You can find it in the URL: https://docs.google.com/spreadsheets/d/{ID}/edit
-
-The sheet must have columns: Receipt #, Date, Client, Service, Project Total, Amount Due, Status`;
-  const id = prompt(msg);
+async function promptForSheetsId() {
+  const id = await showPrompt(
+    'Enter your Google Sheet ID for the InvoiceLedger.<br><span style="opacity:0.65;font-size:11px;">Found in the URL: spreadsheets/d/<strong>{ID}</strong>/edit<br>Sheet must have columns: Receipt #, Date, Client, Service, Project Total, Amount Due, Status</span>',
+    { placeholder: 'Paste Sheet ID here', defaultValue: _sheetsSpreadsheetId || '', confirmLabel: 'Save' }
+  );
   if (id) {
-    _sheetsSpreadsheetId = id.trim();
+    _sheetsSpreadsheetId = id;
     localStorage.setItem('sheets-spreadsheet-id', id);
     showToast('✓ Spreadsheet ID saved. Invoices will now sync to Google Sheets.', 'success');
   }
@@ -5398,6 +5609,15 @@ try {
     if (parsed.receiptOverride) {
       document.getElementById('invoice-data').textContent = JSON.stringify(parsed, null, 2);
     }
+  } else {
+    // No saved state. Load preferred template if any.
+    const prefId = localStorage.getItem('invoicer-preferred-template');
+    if (prefId && prefId !== 'default') {
+      let existing = JSON.parse(document.getElementById('invoice-data').textContent);
+      const tmpl = getTemplateData(prefId);
+      const merged = Object.assign({}, existing, tmpl, { from: existing.from, to: existing.to });
+      document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+    }
   }
 } catch(e) {}
 
@@ -5422,8 +5642,18 @@ window.clearInvoice = async function() {
     localStorage.removeItem('invoicer-autosave');
     localStorage.removeItem('invoice-logo');
     removeLogo();
-    document.getElementById('invoice-data').textContent = JSON.stringify(TMPL_DEFAULT, null, 2);
-    render(TMPL_DEFAULT);
+
+    let existing = TMPL_DEFAULT;
+    try { existing = JSON.parse(document.getElementById('invoice-data').textContent); } catch(e) {}
+    
+    const prefId = localStorage.getItem('invoicer-preferred-template') || 'default';
+    const tmpl = getTemplateData(prefId);
+    
+    // Preserve 'from' to avoid crashing render and losing business info
+    const merged = Object.assign({}, tmpl, { from: existing.from || { name: 'Your Business Name', address: '', email: '', phone: '' } });
+    
+    document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+    render(merged);
     if (document.body.classList.contains('editing')) stopEdit();
   }
 };
@@ -5469,6 +5699,16 @@ window.addEventListener('load', () => {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./service-worker.js').then(reg => {
     console.log('✓ Service worker registered');
+    reg.addEventListener('updatefound', () => {
+      const newWorker = reg.installing;
+      newWorker.addEventListener('statechange', () => {
+        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+          showConfirm('A new version of the app is available. Refresh now to update?', () => {
+            window.location.reload();
+          }, { confirmLabel: 'Refresh', cancelLabel: 'Later', danger: false });
+        }
+      });
+    });
   }).catch(err => {
     console.log('Service worker registration failed:', err);
   });
@@ -5489,6 +5729,24 @@ if ('serviceWorker' in navigator) {
           }
         });
       }
+    }
+
+    const tag = (document.activeElement || {}).tagName || '';
+    const isInField = tag === 'INPUT' || tag === 'TEXTAREA' ||
+      (document.activeElement || {}).isContentEditable;
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 'e' && !isInField) {
+      e.preventDefault();
+      if (!document.body.classList.contains('editing')) startEdit();
+    }
+
+    if ((e.ctrlKey || e.metaKey) && e.key === 's' && !isInField) {
+      e.preventDefault();
+      const hasOpenModal = Array.from(document.querySelectorAll('div[id$="-overlay"]')).some(el => {
+        const s = window.getComputedStyle(el);
+        return s.display === 'flex' || s.display === 'block';
+      });
+      if (!hasOpenModal) confirmPrint();
     }
   });
 function exportLocalData() {
@@ -5554,6 +5812,67 @@ function resetAllData() {
     });
   });
 }
+// ── Modal Focus Trapping ──────────────────────────────────────
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Tab') {
+    const modals = Array.from(document.querySelectorAll('[role="dialog"], .toast-confirm')).filter(el => {
+      return !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) && getComputedStyle(el).display !== 'none';
+    });
+    if (modals.length > 0) {
+      const topModal = modals[modals.length - 1];
+      const focusableSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+      const focusableElements = Array.from(topModal.querySelectorAll(focusableSelectors)).filter(el => !el.disabled && el.style.display !== 'none');
+      
+      if (focusableElements.length > 0) {
+        const first = focusableElements[0];
+        const last = focusableElements[focusableElements.length - 1];
+        
+        if (!topModal.contains(document.activeElement)) {
+          e.preventDefault();
+          first.focus();
+        } else if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      } else {
+        e.preventDefault();
+      }
+    }
+  }
+});
+
+// ── Table Tab Navigation ──────────────────────────────────────
+document.getElementById('line-items').addEventListener('keydown', function(e) {
+  if (e.key === 'Tab' && document.body.classList.contains('editing')) {
+    const fields = Array.from(this.querySelectorAll('.service-name, .col-details, .rate-edit-ta, .cost-edit-ta'));
+    const idx = fields.indexOf(e.target);
+    if (idx >= 0) {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (idx > 0) fields[idx - 1].focus();
+      } else {
+        if (idx < fields.length - 1) {
+          fields[idx + 1].focus();
+        } else {
+          // Last field in table, add a new row and focus its first field
+          addLineItem();
+          setTimeout(() => {
+            const newFields = Array.from(document.getElementById('line-items').querySelectorAll('.service-name'));
+            if (newFields.length > 0) newFields[newFields.length - 1].focus();
+          }, 50);
+        }
+      }
+    }
+  }
+});
+
 </script>
 </body>
 </html>
