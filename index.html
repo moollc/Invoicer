@@ -4539,16 +4539,16 @@ async function savePdfToDrive(pdfBlob, filename) {
 // ── Calendar import ──────────────────────────────────────────────
 
 async function fetchCalendarEvents(keyword) {
-  const now    = new Date();
-  const future = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+  const past   = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000);
+  const future = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
 
   const url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
     + '?q='             + encodeURIComponent(keyword)
-    + '&timeMin='       + encodeURIComponent(now.toISOString())
+    + '&timeMin='       + encodeURIComponent(past.toISOString())
     + '&timeMax='       + encodeURIComponent(future.toISOString())
     + '&singleEvents=true'
     + '&orderBy=startTime'
-    + '&maxResults=20';
+    + '&maxResults=50';
 
   const res = await fetch(url, {
     headers: { Authorization: 'Bearer ' + _gmailToken }
@@ -4561,7 +4561,13 @@ async function fetchCalendarEvents(keyword) {
   }
 
   const data = await res.json();
-  return (data.items || []).filter(function(e) { return e.status !== 'cancelled'; });
+  const items = (data.items || []).filter(function(e) { return e.status !== 'cancelled'; });
+  // Most recent first so top results are the newest past events
+  return items.slice().sort(function(a, b) {
+    const ta = new Date((a.start && (a.start.dateTime || a.start.date)) || 0).getTime();
+    const tb = new Date((b.start && (b.start.dateTime || b.start.date)) || 0).getTime();
+    return tb - ta;
+  }).slice(0, 20);
 }
 
 function buildDraftFromEvent(event) {
@@ -5151,7 +5157,7 @@ async function searchCalendarEvents() {
   }
 
   if (!events.length) {
-    statusEl.textContent = 'No upcoming events found matching "' + keyword + '".';
+    statusEl.textContent = 'No events found matching "' + keyword + '".';
     return;
   }
 
