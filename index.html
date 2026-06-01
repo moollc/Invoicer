@@ -694,8 +694,11 @@
   /* ── PRINT ── */
   @page { size: Letter; margin: 0; }
   @media print {
-    #toolbar    { display: none !important; }
-    #chat-panel { display: none !important; }
+    #toolbar,
+    #chat-panel,
+    #offline-pill,
+    .toast,
+    [id$="-overlay"] { display: none !important; }
     body { background: #fff; }
     .page {
       margin: 0;
@@ -1664,6 +1667,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
       <span class="tb-label">Clear</span>
     </button>
+    <button id="btn-shortcuts" onclick="toggleShortcutsModal()" title="Keyboard shortcuts (Shift+?)" aria-label="Keyboard shortcuts" style="font-size:13px; font-weight:700; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; padding:0;">?</button>
   </div>
 
   <div class="tb-divider"></div>
@@ -1725,6 +1729,36 @@
 
   <!-- Settings overlay -->
   <div id="chat-settings-panel">
+    
+    <div class="settings-header" style="display:flex; align-items:center; justify-content:space-between; padding:4px 14px 12px; flex-shrink:0;">
+      <span style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:var(--muted); font-weight:500;">Default Invoice Settings</span>
+    </div>
+    <div style="padding:0 14px 10px; display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:12px; color:#14202e; font-weight:500;">Payment Terms</span>
+      <select id="default-pay-period-select" onchange="saveDefaultSettings()" style="font-family:'Roboto',sans-serif; font-size:11px; padding:4px 8px; border-radius:4px; border:1px solid rgba(20,32,46,0.18); outline:none; background:#fff; cursor:pointer;">
+        <option value="0">Due on Receipt</option>
+        <option value="7">Net 7</option>
+        <option value="15">Net 15</option>
+        <option value="30">Net 30</option>
+        <option value="60">Net 60</option>
+      </select>
+    </div>
+    <div style="padding:0 14px 16px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(20,32,46,0.06); margin-bottom:12px;">
+      <span style="font-size:12px; color:#14202e; font-weight:500;">Currency</span>
+      <select id="default-currency-select" onchange="saveDefaultSettings()" style="font-family:'Roboto',sans-serif; font-size:11px; padding:4px 8px; border-radius:4px; border:1px solid rgba(20,32,46,0.18); outline:none; background:#fff; cursor:pointer;">
+        <option value="USD">USD ($)</option>
+        <option value="EUR">EUR (€)</option>
+        <option value="GBP">GBP (£)</option>
+        <option value="CAD">CAD ($)</option>
+        <option value="AUD">AUD ($)</option>
+        <option value="JPY">JPY (¥)</option>
+      </select>
+    </div>
+
+    <div style="padding:0 14px 14px;">
+      <button onclick="resetAppSettings()" style="width:100%; padding:7px; background:none; border:1.5px solid rgba(208,36,27,0.35); border-radius:6px; font-family:'Roboto',sans-serif; font-size:11px; color:#d0241b; cursor:pointer; transition:background 0.15s;" onmouseover="this.style.background='rgba(208,36,27,0.06)'" onmouseout="this.style.background='none'">Reset UI to Defaults</button>
+    </div>
+
     <div id="settings-header">
       <span>Providers</span>
       <button id="btn-add-provider" onclick="addProvider()">+ Add</button>
@@ -1735,7 +1769,7 @@
   <!-- Address book panel (swaps with messages like settings) -->
   <div id="client-book-panel">
     <div id="client-book-header">
-      <span>Address Book</span>
+      <span>Address Book <a href="#" onclick="exportAddressBookCsv(); return false;" style="font-size:11px; font-weight:normal; color:#1a73e8; margin-left:8px; text-decoration:none;">Export CSV</a></span>
       <button id="btn-add-client" onclick="addClient()">+ Add Client</button>
     </div>
     <div class="client-book-search-row">
@@ -1762,12 +1796,48 @@
   </div>
 </div>
 
+<!-- KEYBOARD SHORTCUTS MODAL -->
+<div id="shortcuts-modal" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center; padding:20px;" onclick="if(event.target.id==='shortcuts-modal')toggleShortcutsModal()">
+  <div style="background:#fff; border-radius:10px; padding:28px 32px; max-width:400px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); position:relative;">
+    <button onclick="toggleShortcutsModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:28px; height:28px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:16px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:6px;">Help</div>
+    <div style="font-size:17px; font-weight:700; color:#14202e; margin-bottom:18px;">Keyboard Shortcuts</div>
+    <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <tbody id="shortcuts-table">
+        <tr><td style="padding:6px 0; color:#14202e; font-weight:500;">Ctrl / ⌘ + S</td><td style="padding:6px 0; color:#6c7682;">Save invoice (or publish if not editing)</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Escape</td><td style="padding:6px 0; color:#6c7682;">Cancel edit mode / close modal</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Shift + ?</td><td style="padding:6px 0; color:#6c7682;">Show this shortcuts panel</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Click receipt №</td><td style="padding:6px 0; color:#6c7682;">Copy receipt number to clipboard</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Click status badge</td><td style="padding:6px 0; color:#6c7682;">Quick-change invoice status</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Click amount (ledger)</td><td style="padding:6px 0; color:#6c7682;">Inline-edit amount due</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">✎ (ledger row)</td><td style="padding:6px 0; color:#6c7682;">Add / edit row note</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
 <!-- PRINT CONFIRM DIALOG -->
 <div id="print-overlay" role="dialog" aria-modal="true" aria-label="Publish invoice" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id === 'print-overlay') closeDialog()">
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:500px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
     <button onclick="closeDialog()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center; transition:all 0.15s;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Publish Invoice</div>
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Save, print &amp; sync the ledger</div>
+
+    <!-- Invoice Templates -->
+    <div id="template-section" style="margin-bottom:16px; padding-bottom:14px; border-bottom:1.5px solid #f0f0f0;">
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Invoice Templates</div>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+        <select id="template-select" style="font-family:'Roboto',sans-serif; font-size:12px; padding:5px 8px; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; color:#14202e; background:#fff; flex:1; outline:none;">
+          <option value="">— select a template —</option>
+        </select>
+        <button onclick="loadInvoiceTemplate()" style="padding:5px 12px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;" title="Load selected template">Load</button>
+        <button onclick="deleteInvoiceTemplate()" style="padding:5px 10px; background:none; color:#d0241b; border:1.5px solid #d0241b; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;" title="Delete selected template">✕</button>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="template-name-input" type="text" placeholder="Template name…" maxlength="60" style="font-family:'Roboto',sans-serif; font-size:12px; padding:5px 8px; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; color:#14202e; flex:1; outline:none;">
+        <button onclick="saveInvoiceTemplate()" style="padding:5px 12px; background:#2a8c55; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;" title="Save current invoice as template">Save as Template</button>
+      </div>
+    </div>
 
     <!-- New row preview -->
     <div id="ledger-preview" style="background:#f6f6f4; border-radius:6px; padding:10px 14px; font-size:10.5px; line-height:1.7; color:#14202e; font-family:monospace; margin-bottom:12px; white-space:pre-wrap; word-break:break-word; overflow-x:auto;"></div>
@@ -1778,6 +1848,16 @@
       <div id="ledger-rows-list" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto;"></div>
     </div>
 
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+      <span style="font-size:11px; color:#6c7682; flex-shrink:0;">Export filter:</span>
+      <select id="ledger-export-filter" style="font-family:'Roboto',sans-serif; font-size:12px; padding:5px 8px; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; color:#14202e; background:#fff; flex:1; outline:none;">
+        <option value="">All entries</option>
+        <option value="✅ Paid">✅ Paid only</option>
+        <option value="⬜ Unpaid">⬜ Unpaid only</option>
+        <option value="💰 Deposit">💰 Deposit only</option>
+        <option value="📤 Sent">📤 Sent only</option>
+      </select>
+    </div>
     <div style="display:flex; gap:10px; flex-wrap:wrap;">
       <button onclick="updateLedger()" id="btn-update-ledger"
         style="flex:1; padding:10px; background:#2a8c55; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
@@ -1806,6 +1886,10 @@
     </div>
 
     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;">
+      <button onclick="openPrintPreview()"
+        style="flex:1; padding:10px; background:#14202e; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
+        👁 Preview
+      </button>
       <button onclick="proceedPrint()"
         style="flex:1; padding:10px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; letter-spacing:0.5px; cursor:pointer;">
         ⎙ Print / Save PDF
@@ -2092,7 +2176,9 @@
   </div>
 </div>
 
-<div class="page" id="invoice">
+<div class="page" id="invoice" style="position:relative; z-index:1;">
+  <!-- WATERMARK -->
+  <div id="invoice-watermark" style="display:none; position:absolute; top:45%; left:50%; transform:translate(-50%, -50%) rotate(-35deg); font-size:160px; font-weight:900; color:var(--ink); opacity:0.04; letter-spacing:20px; z-index:-1; text-transform:uppercase; pointer-events:none; white-space:nowrap; user-select:none;"></div>
 
   <!-- HEADER -->
   <div class="header">
@@ -2105,7 +2191,8 @@
       </div>
       <div class="meta">
         <span>Date</span>      <span class="v" data-field="date"></span>
-        <span>Receipt №</span> 
+        <span id="due-date-label" style="display:none;">Due Date</span> <span id="due-date-value" class="v" style="display:none;"></span><span id="aging-chip" style="display:none; font-size:9.5px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; padding:2px 7px; border-radius:10px; margin-left:6px; vertical-align:middle;"></span>
+        <span>Receipt №</span>
         <span style="display:inline-flex; align-items:center; gap:8px;">
           <span class="v" data-field="receiptNumber"></span>
           <span style="position:relative;">
@@ -2266,6 +2353,23 @@ function todayFormatted() {
 // Receipt format: YYMMDD + suffix letter (A, B, C…)
 // Suffix is stored in sessionStorage so refreshing the same day keeps it stable.
 // To get B on the same day, change receiptOverride in the JSON.
+function nextReceiptNumber(current) {
+  if (!current) return autoReceiptNumber();
+  // Match trailing uppercase letter(s), e.g. "260601A" → base "260601", suffix "A"
+  const m = current.match(/^(.*?)([A-Z]+)$/);
+  if (!m) return autoReceiptNumber();
+  const base = m[1], suffix = m[2];
+  // Increment letter sequence: A→B, Z→AA, AZ→BA
+  let carry = true;
+  const chars = suffix.split('').reverse();
+  for (let i = 0; i < chars.length && carry; i++) {
+    if (chars[i] < 'Z') { chars[i] = String.fromCharCode(chars[i].charCodeAt(0) + 1); carry = false; }
+    else { chars[i] = 'A'; }
+  }
+  if (carry) chars.push('A');
+  return base + chars.reverse().join('');
+}
+
 function autoReceiptNumber() {
   const { dd, mm, yy } = todayFormatted();
   const dateSegment = `${yy}${mm}${dd}`;
@@ -2464,6 +2568,21 @@ function render(data) {
       badge.style.display = 'none';
     }
     overdueBadge.style.display = isOverdue ? 'inline-block' : 'none';
+    
+    const watermark = document.getElementById('invoice-watermark');
+    if (watermark) {
+      if (statusStr === '✅ Paid') {
+        watermark.textContent = 'PAID';
+        watermark.style.display = 'block';
+        watermark.style.color = '#2a8c55'; // Using explicit color to ensure visibility on print
+      } else if (!statusStr) {
+        watermark.textContent = 'DRAFT';
+        watermark.style.display = 'block';
+        watermark.style.color = 'var(--ink)';
+      } else {
+        watermark.style.display = 'none';
+      }
+    }
   }
 
   const tbody = document.getElementById('line-items');
@@ -2491,6 +2610,69 @@ function render(data) {
   document.title = data.receiptNumber
     ? `${data.receiptNumber}${clientName ? ' · ' + clientName : ''} — moo Invoicer`
     : 'moo Invoicer';
+
+  // Due date — auto-calculate from invoice date + payPeriod
+  const dueDateLabel = document.getElementById('due-date-label');
+  const dueDateValue = document.getElementById('due-date-value');
+  const agingChip    = document.getElementById('aging-chip');
+  if (dueDateLabel && dueDateValue) {
+    const pp = (data.payPeriod || '').trim();
+    const netDays = parseInt(pp.replace(/[^0-9]/g, ''));
+    if (!isNaN(netDays) && netDays > 0 && data.date) {
+      const parts = data.date.split('/').map(s => s.trim());
+      let invoiceDate;
+      if (parts.length === 3) invoiceDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
+      if (invoiceDate && !isNaN(invoiceDate)) {
+        const due = new Date(invoiceDate);
+        due.setDate(due.getDate() + netDays);
+        const dd = String(due.getDate()).padStart(2, '0');
+        const mm = String(due.getMonth() + 1).padStart(2, '0');
+        const yyyy = due.getFullYear();
+        dueDateValue.textContent = `${dd} / ${mm} / ${yyyy}`;
+        dueDateLabel.style.display = '';
+        dueDateValue.style.display = '';
+        // Aging chip — hide if Paid, otherwise colour by urgency
+        if (agingChip) {
+          let isPaid = false;
+          try {
+            const ledgerRows = loadLedgerRows();
+            const match = ledgerRows.find(r => r.receipt === data.receiptNumber);
+            if (match && match.status === '✅ Paid') isPaid = true;
+          } catch(e) {}
+          if (isPaid) {
+            agingChip.style.display = 'none';
+          } else {
+            const today = new Date(); today.setHours(0,0,0,0);
+            const dueDay = new Date(due); dueDay.setHours(0,0,0,0);
+            const diff = Math.round((dueDay - today) / (1000 * 60 * 60 * 24));
+            let chipText, chipBg, chipColor;
+            if (diff > 0) {
+              chipText = `Due in ${diff}d`;
+              chipBg = '#e8f5e9'; chipColor = '#2e7d32';
+            } else if (diff === 0) {
+              chipText = 'Due today';
+              chipBg = '#fff8e1'; chipColor = '#f57f17';
+            } else {
+              chipText = `${Math.abs(diff)}d overdue`;
+              chipBg = '#ffebee'; chipColor = '#c62828';
+            }
+            agingChip.textContent = chipText;
+            agingChip.style.background = chipBg;
+            agingChip.style.color = chipColor;
+            agingChip.style.display = 'inline';
+          }
+        }
+      } else {
+        dueDateLabel.style.display = 'none';
+        dueDateValue.style.display = 'none';
+        if (agingChip) agingChip.style.display = 'none';
+      }
+    } else {
+      dueDateLabel.style.display = 'none';
+      dueDateValue.style.display = 'none';
+      if (agingChip) agingChip.style.display = 'none';
+    }
+  }
 
   // Click-to-copy receipt number
   const receiptEl = document.querySelector('[data-field="receiptNumber"]');
@@ -2618,6 +2800,36 @@ function startEdit() {
       delBtn.title = 'Remove line item';
       delBtn.onclick = () => removeLineItem(i);
       tr.querySelector('.col-service').appendChild(delBtn);
+
+      const moveLineItem = (fromIdx, dir) => {
+        const d = extractEditData();
+        const items = d.lineItems;
+        const toIdx = fromIdx + dir;
+        if (toIdx < 0 || toIdx >= items.length) return;
+        [items[fromIdx], items[toIdx]] = [items[toIdx], items[fromIdx]];
+        d.dateOverride = d.date;
+        d.receiptOverride = d.receiptNumber;
+        document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2);
+        render(d);
+        startEdit();
+      };
+
+      const upBtn = document.createElement('button');
+      upBtn.textContent = '↑';
+      upBtn.className = 'delete-row-btn';
+      upBtn.title = 'Move up';
+      upBtn.style.cssText = 'right:auto; left:calc(100% + 2px); top:8px; font-size:10px;';
+      upBtn.onclick = () => moveLineItem(i, -1);
+
+      const downBtn = document.createElement('button');
+      downBtn.textContent = '↓';
+      downBtn.className = 'delete-row-btn';
+      downBtn.title = 'Move down';
+      downBtn.style.cssText = 'right:auto; left:calc(100% + 22px); top:8px; font-size:10px;';
+      downBtn.onclick = () => moveLineItem(i, 1);
+
+      tr.querySelector('.col-service').appendChild(upBtn);
+      tr.querySelector('.col-service').appendChild(downBtn);
     }
   });
   const pn = document.getElementById('payment-note-el');
@@ -2634,6 +2846,22 @@ function startEdit() {
     notesElEdit.style.minHeight = '32px';
     notesElEdit.style.outline = 'none';
     notesElEdit.style.color = '#14202e';
+    // Char counter
+    let notesCounter = document.getElementById('notes-char-counter');
+    if (!notesCounter) {
+      notesCounter = document.createElement('div');
+      notesCounter.id = 'notes-char-counter';
+      notesCounter.style.cssText = 'font-size:10px; color:#9aa2ac; text-align:right; margin-top:3px; font-family:Roboto,sans-serif;';
+      notesWrapEdit.appendChild(notesCounter);
+    }
+    const updateCounter = () => {
+      const text = notesElEdit.innerText || '';
+      const chars = text.length;
+      const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+      notesCounter.textContent = `${chars} chars · ${words} words`;
+    };
+    notesElEdit.addEventListener('input', updateCounter);
+    updateCounter();
   }
   // visibility handled by body.editing CSS class
   // Sync slider to current rendered font size
@@ -2862,6 +3090,21 @@ function stopEdit() {
   if (hint) hint.style.display = 'none';
   const bar = document.getElementById('edit-action-bar');
   if (bar) bar.style.display = 'none';
+  const counter = document.getElementById('notes-char-counter');
+  if (counter) counter.remove();
+}
+
+function formatCurrencyNative(amount, currencyCode = 'USD', decimals = 2) {
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currencyCode,
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    }).format(amount);
+  } catch (e) {
+    return `${currencyCode} ${Number(amount).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  }
 }
 
 function updateAutoSumHint() {
@@ -2876,9 +3119,9 @@ function updateAutoSumHint() {
     });
   });
   const currencyEl = document.querySelector('[data-field="currency"]');
-  const sym = currencyEl ? currencyEl.textContent.trim() : '';
-  const formattedTotal = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  hint.textContent = `Line items sum to ${sym}${formattedTotal}`;
+  const currencyCode = currencyEl ? currencyEl.textContent.trim() : 'USD';
+  const formattedTotal = formatCurrencyNative(total, currencyCode);
+  hint.textContent = `Line items sum to ${formattedTotal}`;
   hint.style.display = 'block';
 
   const ptEl = document.querySelector('[data-field="projectTotal"]');
@@ -2966,6 +3209,7 @@ async function confirmPrint() {
 
   await renderLedgerHistory();
   renderFilenamePresets();
+  renderTemplateSelect();
   refreshGmailIdStatus();
   refreshSheetsIdStatus();
 
@@ -2999,15 +3243,24 @@ async function renderLedgerHistory() {
   // ── Summary bar (always rebuild) ──
   const parseAmount = str => parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
   const getCurrency = str => { const m = (str || '').match(/^([a-zA-Z]{2,4})/); return m ? m[1].toUpperCase() : 'USD'; };
-  const currencySymbols = { USD: '$', JMD: 'J$', EUR: '€', GBP: '£', CAD: 'CA$', AUD: 'A$' };
-  const fmt = (n, cur) => (currencySymbols[cur] || cur || '$') + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const fmt = (n, cur) => formatCurrencyNative(n, cur);
 
   const totalsByCurrency = {};
   rows.forEach(r => {
     const cur = getCurrency(r.amountDue || '');
-    if (!totalsByCurrency[cur]) totalsByCurrency[cur] = { paid: 0, outstanding: 0 };
-    if (r.status === '✅ Paid') totalsByCurrency[cur].paid += parseAmount(r.amountDue);
-    else totalsByCurrency[cur].outstanding += parseAmount(r.amountDue);
+    if (!totalsByCurrency[cur]) totalsByCurrency[cur] = { paid: 0, outstanding: 0, overdue: 0 };
+    
+    if (r.status === '✅ Paid') {
+      totalsByCurrency[cur].paid += parseAmount(r.amountDue);
+    } else {
+      totalsByCurrency[cur].outstanding += parseAmount(r.amountDue);
+      
+      const rowDate = typeof parseRowDate === 'function' ? parseRowDate(r.date) : new Date(r.date);
+      const isOverdue = rowDate && !isNaN(rowDate.valueOf()) &&
+        (new Date() - rowDate) / (1000 * 60 * 60 * 24) > (parseInt(r.payPeriod) || 30);
+        
+      if (isOverdue) totalsByCurrency[cur].overdue += parseAmount(r.amountDue);
+    }
   });
 
   let summaryEl = document.getElementById('ledger-summary');
@@ -3020,8 +3273,9 @@ async function renderLedgerHistory() {
   
   let summaryHtml = '';
   for (const [cur, totals] of Object.entries(totalsByCurrency)) {
-    if (totals.paid > 0) summaryHtml += `<span style="font-size:11px; background:#d4edda; color:#155724; border-radius:4px; padding:3px 8px; font-weight:600;">Paid ${fmt(totals.paid, cur)}</span>\n`;
-    if (totals.outstanding > 0) summaryHtml += `<span style="font-size:11px; background:#fff3cd; color:#856404; border-radius:4px; padding:3px 8px; font-weight:600;">Outstanding ${fmt(totals.outstanding, cur)}</span>\n`;
+    if (totals.outstanding > 0) summaryHtml += `<span style="font-size:11px; background:#f6f6f4; color:#14202e; border-radius:4px; padding:3px 8px; font-weight:600;">Outstanding ${fmt(totals.outstanding, cur)}</span>\n`;
+    if (totals.overdue > 0) summaryHtml += `<span style="font-size:11px; background:#ffebee; color:#c62828; border-radius:4px; padding:3px 8px; font-weight:600;">Overdue ${fmt(totals.overdue, cur)}</span>\n`;
+    if (totals.paid > 0) summaryHtml += `<span style="font-size:11px; background:#e8f5e9; color:#2e7d32; border-radius:4px; padding:3px 8px; font-weight:600;">Paid ${fmt(totals.paid, cur)}</span>\n`;
   }
   if (!summaryHtml) {
     summaryHtml = `<span style="font-size:11px; background:#f6f6f4; color:#6c7682; border-radius:4px; padding:3px 8px; font-weight:600;">$0.00</span>\n`;
@@ -3040,7 +3294,27 @@ async function renderLedgerHistory() {
     searchEl.oninput = () => {
       const q = searchEl.value.toLowerCase();
       listEl.querySelectorAll('.ledger-row').forEach(el => {
-        el.style.display = el.dataset.search.includes(q) ? '' : 'none';
+        const match = el.dataset.search.includes(q);
+        el.style.display = match ? '' : 'none';
+        const textSpan = el.querySelector('.ledger-row-text');
+        if (textSpan) {
+          if (!q) {
+            textSpan.innerHTML = textSpan.dataset.originalHtml;
+          } else {
+            const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escapeRegExp(q)})`, 'gi');
+            const receipt = textSpan.dataset.receipt;
+            const client = textSpan.dataset.client;
+            const service = textSpan.dataset.service;
+            const hlReceipt = receipt.replace(regex, '<mark style="background:#ffeb3b; padding:0 2px; border-radius:2px;">$1</mark>');
+            const hlClient = client.replace(regex, '<mark style="background:#ffeb3b; padding:0 2px; border-radius:2px;">$1</mark>');
+            const serviceText = (service || '').trim();
+            const serviceTrunc = serviceText.length > 30 ? serviceText.substring(0, 30) + '…' : serviceText;
+            const hlService = serviceTrunc.replace(regex, '<mark style="background:#ffeb3b; padding:0 2px; border-radius:2px;">$1</mark>');
+            const serviceHtml = hlService ? `<br><span style="color:#9aa2ac; font-size:10px;">${hlService}</span>` : '';
+            textSpan.innerHTML = `<strong>${hlReceipt}</strong> · ${hlClient}${serviceHtml ? serviceHtml : '<br>'}`;
+          }
+        }
       });
     };
     summaryEl.after(searchEl);
@@ -3065,6 +3339,7 @@ async function renderLedgerHistory() {
     { key: 'status', label: 'Status' }
   ];
   
+  window.ledgerGroupByClient = window.ledgerGroupByClient || false;
   sortCtrl.innerHTML = '';
   sortKeys.forEach(sk => {
     const btn = document.createElement('div');
@@ -3073,6 +3348,7 @@ async function renderLedgerHistory() {
     btn.textContent = `${sk.label} ${arrow}`;
     btn.style.cssText = `cursor:pointer; font-weight:${isActive ? 700 : 500}; color:${isActive ? '#14202e' : '#6c7682'}; transition:color 0.15s;`;
     btn.onclick = () => {
+      window.ledgerGroupByClient = false;
       if (window.ledgerSortConfig.key === sk.key) {
         window.ledgerSortConfig.dir *= -1;
       } else {
@@ -3083,6 +3359,66 @@ async function renderLedgerHistory() {
     };
     sortCtrl.appendChild(btn);
   });
+  // By Client toggle
+  const groupBtn = document.createElement('div');
+  groupBtn.textContent = 'By Client';
+  groupBtn.style.cssText = `cursor:pointer; font-weight:${window.ledgerGroupByClient ? 700 : 500}; color:${window.ledgerGroupByClient ? '#14202e' : '#6c7682'}; margin-left:auto; transition:color 0.15s;`;
+  groupBtn.onclick = () => { window.ledgerGroupByClient = !window.ledgerGroupByClient; renderLedgerHistory(); };
+  sortCtrl.appendChild(groupBtn);
+
+  // ── By Client grouped view ──
+  if (window.ledgerGroupByClient) {
+    const parseAmount = str => parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
+    const grouped = {};
+    rows.forEach((row, idx) => {
+      const key = (row.client || 'Unknown').trim();
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push({ row, idx });
+    });
+    Object.keys(grouped).sort((a, b) => a.localeCompare(b)).forEach(client => {
+      const entries = grouped[client];
+      const paid = entries.filter(e => e.row.status === '✅ Paid').reduce((s, e) => s + parseAmount(e.row.amountDue), 0);
+      const outstanding = entries.filter(e => e.row.status !== '✅ Paid').reduce((s, e) => s + parseAmount(e.row.amountDue), 0);
+      // Client header
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 4px 4px; margin-top:6px; border-bottom:1.5px solid rgba(20,32,46,0.08); cursor:pointer;';
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = client;
+      nameSpan.style.cssText = 'font-size:11.5px; font-weight:700; color:#14202e; flex:1;';
+      const totalsSpan = document.createElement('span');
+      totalsSpan.style.cssText = 'font-size:10.5px; color:#6c7682;';
+      const cur = getCurrency(entries[0].row.amountDue || '');
+      const parts = [];
+      if (paid > 0) parts.push(`Paid ${formatCurrencyNative(paid, cur)}`);
+      if (outstanding > 0) parts.push(`Due ${formatCurrencyNative(outstanding, cur)}`);
+      totalsSpan.textContent = parts.join(' · ') || '—';
+      const toggle = document.createElement('span');
+      toggle.textContent = '▾';
+      toggle.style.cssText = 'font-size:10px; color:#9aa2ac; transition:transform 0.15s;';
+      header.append(nameSpan, totalsSpan, toggle);
+      listEl.appendChild(header);
+      // Rows container (collapsible)
+      const rowsWrap = document.createElement('div');
+      rowsWrap.style.cssText = 'display:flex; flex-direction:column; gap:4px; padding-top:4px;';
+      listEl.appendChild(rowsWrap);
+      header.addEventListener('click', () => {
+        const collapsed = rowsWrap.style.display === 'none';
+        rowsWrap.style.display = collapsed ? 'flex' : 'none';
+        toggle.style.transform = collapsed ? '' : 'rotate(-90deg)';
+      });
+      entries.forEach(({ row, idx: realIdx }) => {
+        const rowDiv = document.createElement('div');
+        rowDiv.style.cssText = `font-size:11px; color:#6c7682; padding:3px 8px; background:#f6f6f4; border-radius:4px; display:flex; justify-content:space-between;`;
+        rowDiv.textContent = `${row.receipt} — ${row.date}`;
+        const amt = document.createElement('span');
+        amt.style.cssText = `font-weight:600; color:${row.status === '✅ Paid' ? '#2a8c55' : '#14202e'};`;
+        amt.textContent = `${row.amountDue} ${row.status.replace(/[^\w\s]/g, '').trim()}`;
+        rowDiv.appendChild(amt);
+        rowsWrap.appendChild(rowDiv);
+      });
+    });
+    return;
+  }
 
   // ── Row colour helper ──
   const rowBg = (row, isOverdue) => {
@@ -3121,7 +3457,7 @@ async function renderLedgerHistory() {
 
     const wrap = document.createElement('div');
     wrap.className = 'ledger-row';
-    wrap.dataset.search = `${(row.receipt || '').toLowerCase()} ${(row.client || '').toLowerCase()}`;
+    wrap.dataset.search = `${(row.receipt || '').toLowerCase()} ${(row.client || '').toLowerCase()} ${(row.service || '').toLowerCase()}`;
     wrap.style.cssText = `display:flex; flex-direction:column; background:${rowBg(row, isOverdue)}; border-radius:6px; padding:8px 12px; gap:0;`;
 
     const rowMain = document.createElement('div');
@@ -3158,7 +3494,17 @@ async function renderLedgerHistory() {
       input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } if (e.key === 'Escape') input.replaceWith(amountSpan); });
     });
 
-    info.innerHTML = `<strong>${row.receipt}</strong> · ${row.client}<br>`;
+    const textSpan = document.createElement('span');
+    textSpan.className = 'ledger-row-text';
+    textSpan.dataset.receipt = row.receipt || '';
+    textSpan.dataset.client = row.client || '';
+    textSpan.dataset.service = row.service || '';
+    const serviceText = (row.service || '').trim();
+    const serviceTrunc = serviceText.length > 30 ? serviceText.substring(0, 30) + '…' : serviceText;
+    const serviceHtml = serviceTrunc ? `<br><span style="color:#9aa2ac; font-size:10px;">${serviceTrunc}</span>` : '';
+    textSpan.dataset.originalHtml = `<strong>${row.receipt}</strong> · ${row.client}${serviceHtml ? serviceHtml : '<br>'}`;
+    textSpan.innerHTML = textSpan.dataset.originalHtml;
+    info.appendChild(textSpan);
     const datePart = document.createTextNode(` — ${row.date}`);
     info.appendChild(amountSpan);
     info.appendChild(datePart);
@@ -3214,13 +3560,76 @@ async function renderLedgerHistory() {
       allocWrap.style.display = 'flex';
     }
 
+    // ── Row note ──
+    const noteDisplay = document.createElement('div');
+    noteDisplay.style.cssText = 'font-size:10.5px; color:#9aa2ac; margin-top:2px; font-style:italic; display:' + (row.note ? 'block' : 'none') + ';';
+    noteDisplay.textContent = row.note || '';
+    info.appendChild(noteDisplay);
+
+    const noteInput = document.createElement('input');
+    noteInput.type = 'text';
+    noteInput.placeholder = 'Add a note…';
+    noteInput.maxLength = 200;
+    noteInput.value = row.note || '';
+    noteInput.style.cssText = 'display:none; font-family:Roboto,sans-serif; font-size:11px; color:#14202e; border:none; border-bottom:1.5px solid #1a73e8; outline:none; background:transparent; width:100%; padding:2px 0; margin-top:4px;';
+    info.appendChild(noteInput);
+
+    const noteBtn = document.createElement('button');
+    noteBtn.textContent = '✎';
+    noteBtn.title = row.note ? 'Edit note' : 'Add note';
+    noteBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:11px; color:#9aa2ac; padding:2px 4px; border-radius:4px; flex-shrink:0; transition:color 0.15s;';
+    noteBtn.addEventListener('mouseenter', () => noteBtn.style.color = '#14202e');
+    noteBtn.addEventListener('mouseleave', () => noteBtn.style.color = row.note ? '#14202e' : '#9aa2ac');
+    if (row.note) noteBtn.style.color = '#14202e';
+
+    let noteOpen = false;
+    const toggleNote = () => {
+      noteOpen = !noteOpen;
+      noteInput.style.display = noteOpen ? 'block' : 'none';
+      noteDisplay.style.display = (!noteOpen && row.note) ? 'block' : 'none';
+      if (noteOpen) { noteInput.focus(); noteInput.select(); }
+    };
+    noteBtn.addEventListener('click', toggleNote);
+
+    const commitNote = () => {
+      const val = noteInput.value.trim();
+      rows[realIdx].note = val || '';
+      row.note = val || '';
+      saveLedgerRows(rows);
+      noteDisplay.textContent = val;
+      noteDisplay.style.display = val ? 'block' : 'none';
+      noteBtn.title = val ? 'Edit note' : 'Add note';
+      noteBtn.style.color = val ? '#14202e' : '#9aa2ac';
+      noteOpen = false;
+      noteInput.style.display = 'none';
+    };
+    noteInput.addEventListener('blur', commitNote);
+    noteInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commitNote(); }
+      if (e.key === 'Escape') { noteInput.value = row.note || ''; noteOpen = false; noteInput.style.display = 'none'; noteDisplay.style.display = row.note ? 'block' : 'none'; }
+    });
+
     const loadBtn = document.createElement('button');
-    loadBtn.textContent = '↩ Load';
+    loadBtn.textContent = '📋 Duplicate';
     loadBtn.title = 'Duplicate as new draft';
     loadBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
     loadBtn.addEventListener('click', () => loadInvoiceFromLedger(row));
 
-    rowMain.append(info, loadBtn, sel);
+    const delBtn = document.createElement('button');
+    delBtn.textContent = '🗑';
+    delBtn.title = 'Delete ledger entry';
+    delBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:12px; color:#9aa2ac; padding:4px; border-radius:4px; flex-shrink:0; transition:color 0.15s; margin-left:4px;';
+    delBtn.addEventListener('mouseenter', () => delBtn.style.color = '#d0241b');
+    delBtn.addEventListener('mouseleave', () => delBtn.style.color = '#9aa2ac');
+    delBtn.addEventListener('click', () => {
+      if (confirm(`Delete ledger entry for ${row.receipt}?`)) {
+        rows.splice(realIdx, 1);
+        saveLedgerRows(rows);
+        renderLedgerHistory();
+      }
+    });
+
+    rowMain.append(info, noteBtn, loadBtn, sel, delBtn);
     wrap.append(rowMain, allocWrap);
     listEl.appendChild(wrap);
   });
@@ -3260,10 +3669,13 @@ function loadInvoiceFromLedger(row) {
   const existing = getData();
   // Parse amountDue — strip currency prefix, keep numeric string
   const rawAmt = (row.amountDue || '').replace(/^[a-zA-Z$]+\s*/i, '').trim();
+  const prevReceipt = existing.receiptOverride || existing.receiptNumber || '';
+  const newReceipt = nextReceiptNumber(prevReceipt ? prevReceipt.trim() : '');
+
   const draft = {
     ...existing,
     dateOverride:    '',
-    receiptOverride: '',
+    receiptOverride: newReceipt,
     to: {
       name:    row.client  || existing.to.name,
       address: existing.to.address || '',
@@ -3285,10 +3697,85 @@ function loadInvoiceFromLedger(row) {
   showToast(`Loaded ${row.client} — ready to edit`, 'success');
 }
 
+// ── Invoice Templates ──────────────────────────────────────────────────────────
+const TEMPLATE_KEY = 'invoice-templates';
+const TEMPLATE_FIELDS = ['lineItems','paymentNote','payPeriod','currency','projectTotal','totalAmount','totalLabelTop','totalLabelBottom'];
+
+function loadTemplates() {
+  try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY) || '[]'); } catch { return []; }
+}
+function saveTemplates(list) { localStorage.setItem(TEMPLATE_KEY, JSON.stringify(list)); }
+
+function renderTemplateSelect() {
+  const sel = document.getElementById('template-select');
+  if (!sel) return;
+  const list = loadTemplates();
+  sel.innerHTML = '<option value="">— select a template —</option>';
+  list.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.id;
+    opt.textContent = t.name;
+    sel.appendChild(opt);
+  });
+}
+
+function saveInvoiceTemplate() {
+  const nameInput = document.getElementById('template-name-input');
+  const name = (nameInput?.value || '').trim();
+  if (!name) { showToast('Enter a template name first', 'info'); nameInput?.focus(); return; }
+  const data = getData();
+  const snapshot = {};
+  TEMPLATE_FIELDS.forEach(k => { if (data[k] !== undefined) snapshot[k] = data[k]; });
+  const list = loadTemplates();
+  const existing = list.findIndex(t => t.name.toLowerCase() === name.toLowerCase());
+  const entry = { id: Date.now().toString(36), name, data: snapshot };
+  if (existing >= 0) { list[existing] = entry; } else { list.push(entry); }
+  saveTemplates(list);
+  renderTemplateSelect();
+  document.getElementById('template-select').value = entry.id;
+  if (nameInput) nameInput.value = '';
+  showToast(`Template "${name}" saved`, 'success');
+}
+
+function loadInvoiceTemplate() {
+  const sel = document.getElementById('template-select');
+  const id = sel?.value;
+  if (!id) { showToast('Select a template first', 'info'); return; }
+  const list = loadTemplates();
+  const tpl = list.find(t => t.id === id);
+  if (!tpl) { showToast('Template not found', 'info'); return; }
+  const current = getData();
+  TEMPLATE_FIELDS.forEach(k => { if (tpl.data[k] !== undefined) current[k] = tpl.data[k]; });
+  document.getElementById('invoice-data').textContent = JSON.stringify(current, null, 2);
+  closeDialog();
+  render(current);
+  showToast(`Template "${tpl.name}" loaded`, 'success');
+  startEdit();
+}
+
+function deleteInvoiceTemplate() {
+  const sel = document.getElementById('template-select');
+  const id = sel?.value;
+  if (!id) { showToast('Select a template to delete', 'info'); return; }
+  const list = loadTemplates();
+  const tpl = list.find(t => t.id === id);
+  if (!tpl) return;
+  if (!confirm(`Delete template "${tpl.name}"?`)) return;
+  saveTemplates(list.filter(t => t.id !== id));
+  renderTemplateSelect();
+  showToast(`Template "${tpl.name}" deleted`, 'info');
+}
+
+function getExportRows() {
+  const filter = (document.getElementById('ledger-export-filter')?.value || '').trim();
+  const all = loadLedgerRows();
+  return filter ? all.filter(r => r.status === filter) : all;
+}
+
 function exportLedger() {
-  const rows = loadLedgerRows();
-  const header = `# Invoice Ledger\n\n> Auto-updated when invoices are printed/saved to PDF.\n> Set status to \`✅ Paid\` once payment is confirmed.\n\n| Receipt # | Date | Client | Service | Project Total | Amount Due | Status |\n|-----------|------|--------|---------|---------------|------------|--------|\n`;
-  const body   = rows.map(r => `| ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | ${r.projectTotal} | ${r.amountDue} | ${r.status} |`).join('\n');
+  const rows = getExportRows();
+  const header = `# Invoice Ledger\n\n> Auto-updated when invoices are printed/saved to PDF.\n> Set status to \`✅ Paid\` once payment is confirmed.\n\n| Receipt # | Date | Client | Service | Project Total | Amount Due | Status | Note |\n|-----------|------|--------|---------|---------------|------------|--------|------|\n`;
+  const body   = rows.map(r => `| ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | ${r.projectTotal} | ${r.amountDue} | ${r.status} | ${(r.note || '').replace(/\|/g, '\\|')} |`).join('\n');
   const blob   = new Blob([header + body + '\n'], { type: 'text/markdown' });
   const a      = document.createElement('a');
   a.href       = URL.createObjectURL(blob);
@@ -3298,20 +3785,21 @@ function exportLedger() {
 }
 
 function exportLedgerCsv() {
-  const rows = loadLedgerRows();
+  const rows = getExportRows();
   const escape = v => `"${String(v || '').replace(/"/g, '""')}"`;
-  const headers = ['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status'];
+  const headers = ['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status', 'Note'];
   const lines = [
     headers.map(escape).join(','),
-    ...rows.map(r => [r.receipt, r.date, r.client, r.service, r.projectTotal, r.amountDue, r.status].map(escape).join(','))
+    ...rows.map(r => [r.receipt, r.date, r.client, r.service, r.projectTotal, r.amountDue, r.status, r.note || ''].map(escape).join(','))
   ];
   const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `invoicer-ledger-${new Date().toISOString().split('T')[0]}.csv`;
+  const filter = (document.getElementById('ledger-export-filter')?.value || '').replace(/[^a-zA-Z]/g, '').toLowerCase();
+  a.download = `invoicer-ledger${filter ? '-' + filter : ''}-${new Date().toISOString().split('T')[0]}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
-  showToast('Ledger exported as CSV', 'success');
+  showToast(`Ledger exported as CSV${rows.length < loadLedgerRows().length ? ' (' + rows.length + ' rows)' : ''}`, 'success');
 }
 
 function copyShareLink(btn) {
@@ -3467,6 +3955,57 @@ async function proceedPrint() {
 
 function closeDialog() {
   document.getElementById('print-overlay').style.display = 'none';
+}
+
+function toggleShortcutsModal() {
+  const modal = document.getElementById('shortcuts-modal');
+  if (!modal) return;
+  const isOpen = modal.style.display === 'flex';
+  modal.style.display = isOpen ? 'none' : 'flex';
+}
+
+function openPrintPreview() {
+  const frame = document.getElementById('preview-frame');
+  const overlay = document.getElementById('preview-overlay');
+  const clone = document.getElementById('invoice').cloneNode(true);
+  clone.style.cssText = 'margin:0; box-shadow:none; border-radius:0; width:100%;';
+  const cs = getComputedStyle(document.body);
+  ['--red','--row','--ink','--rule'].forEach(v =>
+    clone.style.setProperty(v, cs.getPropertyValue(v).trim())
+  );
+  // Strip edit-mode controls from clone
+  clone.querySelectorAll('button, input, select, textarea').forEach(el => el.remove());
+  frame.innerHTML = '';
+  frame.appendChild(clone);
+  overlay.style.display = 'flex';
+  overlay.scrollTop = 0;
+}
+
+async function downloadPdfFromPreview() {
+  const data = getData();
+  const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
+  const clone = document.getElementById('invoice').cloneNode(true);
+  clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
+  const cs = getComputedStyle(document.body);
+  clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
+  clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
+  
+  // Strip edit-mode controls from clone so it renders cleanly
+  clone.querySelectorAll('button, input, select, textarea').forEach(el => el.remove());
+  
+  document.body.appendChild(clone);
+  
+  showToast('Generating PDF...', 'info');
+  const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+  
+  try {
+    await html2pdf().set(opt).from(clone).save();
+    showToast('PDF downloaded successfully', 'success');
+  } catch(e) {
+    showToast('PDF generation failed: ' + e.message, 'error');
+  } finally {
+    document.body.removeChild(clone);
+  }
 }
 
 // ── AI Chat ──────────────────────────────────────────────────
@@ -3773,8 +4312,50 @@ function toggleChatSettings() {
   const msgs = document.getElementById('chat-messages');
   const isOpen = s.classList.toggle('open');
   msgs.style.display = isOpen ? 'none' : 'flex';
-  if (isOpen) renderProviderList();
+  if (isOpen) {
+    renderProviderList();
+    const selPay = document.getElementById('default-pay-period-select');
+    if (selPay) {
+      selPay.value = localStorage.getItem('invoicer-default-pay-period') || '0';
+    }
+    const selCur = document.getElementById('default-currency-select');
+    if (selCur) {
+      selCur.value = localStorage.getItem('invoicer-default-currency') || 'USD';
+    }
+  }
 }
+
+window.resetAppSettings = async function() {
+  if (!await showConfirm('Reset UI preferences to defaults? This will not affect your ledger, templates, clients, or AI providers.', 'Reset UI')) return;
+  const UI_KEYS = [
+    'invoice-title-font', 'invoice-theme', 'invoice-title-size',
+    'invoicer-default-pay-period', 'invoicer-default-currency',
+    'invoice-company-prefix', 'invoice-receipt-prefix', 'invoice-filename-preset',
+    'invoicer-preferred-template', 'invoice-last-state', 'invoicer-autosave',
+    'invoice-chat-history'
+  ];
+  UI_KEYS.forEach(k => localStorage.removeItem(k));
+  // Reset select dropdowns
+  const payEl = document.getElementById('default-pay-period-select');
+  const curEl = document.getElementById('default-currency-select');
+  if (payEl) payEl.value = '0';
+  if (curEl) curEl.value = 'USD';
+  // Restore visual defaults
+  restoreTitleFont();
+  restoreTheme();
+  restoreTitleSize();
+  showToast('UI preferences reset to defaults', 'success');
+};
+
+window.saveDefaultSettings = function() {
+  const selPay = document.getElementById('default-pay-period-select');
+  if (selPay) localStorage.setItem('invoicer-default-pay-period', selPay.value);
+
+  const selCur = document.getElementById('default-currency-select');
+  if (selCur) localStorage.setItem('invoicer-default-currency', selCur.value);
+
+  showToast('Default settings saved', 'success');
+};
 
 function toggleChatMenu() {
   const menu = document.getElementById('chat-menu');
@@ -3883,17 +4464,27 @@ function clearPendingImages() {
   strip.classList.remove('has-images');
 }
 
-function appendMsg(role, text, persist = true) {
+function appendMsg(role, text, persist = true, ts = null) {
   const el = document.createElement('div');
   el.className = `chat-msg ${role}`;
   el.textContent = text;
+  // Timestamp chip
+  const timeStr = ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+  if (timeStr) {
+    const stamp = document.createElement('span');
+    stamp.textContent = timeStr;
+    const stampColor = role === 'user' ? 'rgba(255,255,255,0.35)' : 'rgba(20,32,46,0.3)';
+    stamp.style.cssText = `display:block; font-size:9px; color:${stampColor}; margin-top:3px; text-align:right; letter-spacing:0.3px;`;
+    el.appendChild(stamp);
+  }
   const msgs = document.getElementById('chat-messages');
   msgs.appendChild(el);
   msgs.scrollTop = msgs.scrollHeight;
   // Don't persist the temporary "…" thinking placeholder
   if (persist && text !== '…') {
+    const now = ts || new Date().toISOString();
     const history = loadChatHistory();
-    history.push({ role, text });
+    history.push({ role, text, ts: now });
     saveChatHistory(history);
   }
   return el;
@@ -3911,7 +4502,7 @@ function renderChatHistory() {
     appendMsg('assistant', greeting, false);
     return;
   }
-  history.forEach(m => appendMsg(m.role, m.text, false));
+  history.forEach(m => appendMsg(m.role, m.text, false, m.ts || null));
 }
 
 function clearChatHistory() {
@@ -4239,6 +4830,27 @@ function saveClients(list) {
   localStorage.setItem('invoice-clients', JSON.stringify(list));
 }
 
+function exportAddressBookCsv() {
+  const clients = loadClients();
+  if (!clients.length) {
+    showToast('Address book is empty.', 'info');
+    return;
+  }
+  const escape = v => `"${String(v || '').replace(/"/g, '""')}"`;
+  const headers = ['Name', 'Email', 'Phone', 'Address'];
+  const lines = [
+    headers.map(escape).join(','),
+    ...clients.map(c => [c.name, c.email, c.phone, c.address].map(escape).join(','))
+  ];
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `invoicer-clients-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Address book exported', 'success');
+}
+
 function upsertClient(client) {
   const list = loadClients();
   const idx  = list.findIndex(c => c.name.toLowerCase() === client.name.toLowerCase());
@@ -4409,7 +5021,7 @@ function seedClientsFromLedger() {
 }
 
 function renderClientChips() {
-  const list = loadClients();
+  const list = loadClients().slice().sort((a, b) => a.name.localeCompare(b.name));
   const el   = document.getElementById('client-chips');
   const data = getData();
   const currentClient = data.to?.name;
@@ -4487,8 +5099,13 @@ function renderClientBook() {
 
     const expandBtn = document.createElement('button');
     expandBtn.className   = 'btn-expand-client';
-    expandBtn.textContent = '···';
-    expandBtn.onclick     = () => document.getElementById(`client-fields-${i}`)?.classList.toggle('open');
+    expandBtn.textContent = '✎';
+    expandBtn.title       = 'Edit client details';
+    expandBtn.onclick     = () => {
+      const fieldsEl = document.getElementById(`client-fields-${i}`);
+      fieldsEl?.classList.toggle('open');
+      expandBtn.style.color = fieldsEl?.classList.contains('open') ? 'var(--red)' : '';
+    };
 
     top.append(avatar, info, useBtn, expandBtn);
 
@@ -4715,6 +5332,7 @@ function applyTemplate(id) {
   document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
   render(merged);
   closeTemplatesModal();
+  startEdit();
 }
 
 function saveOAuthClientIdInput() {
@@ -5370,7 +5988,15 @@ function renderDashboard() {
   const paid = rows.filter(r => r.status === '✅ Paid');
   const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit');
 
-  const monthPaid   = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  // "This Month" paid — if current month has no paid invoices yet, fall back to last month
+  let monthPaidYM = thisYM;
+  let monthPaid = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  if (monthPaid === 0) {
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastYM = lastMonth.getFullYear() + '-' + String(lastMonth.getMonth() + 1).padStart(2, '0');
+    const lastMonthPaid = paid.filter(r => rowYM(r) === lastYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+    if (lastMonthPaid > 0) { monthPaid = lastMonthPaid; monthPaidYM = lastYM; }
+  }
   const quarterAll  = rows.filter(r => rowQ(r) === thisQ).reduce((s, r) => s + parseAmt(r.amountDue), 0);
   const avgInvoice  = rows.length ? rows.reduce((s, r) => s + parseAmt(r.amountDue), 0) / rows.length : 0;
   const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
@@ -5378,11 +6004,20 @@ function renderDashboard() {
   // Derive currency symbol from ledger rows (projectTotal stores e.g. "JMD 60,000")
   const currencyCode = (() => {
     const pt = rows[0] && rows[0].projectTotal;
-    if (!pt) return '$';
+    if (!pt) return 'USD';
     const parts = String(pt).trim().split(/\s+/);
-    return parts.length > 1 ? parts[0] : '$';
+    return parts.length > 1 ? parts[0] : 'USD';
   })();
-  const fmt = n => currencyCode + ' ' + Math.round(n).toLocaleString();
+  window.currentDashCurrency = currencyCode;
+  const fmt = n => formatCurrencyNative(Math.round(n), currencyCode, 0);
+  const monthLabelEl = document.querySelector('#dash-month').previousElementSibling;
+  if (monthLabelEl && monthPaidYM !== thisYM) {
+    const [ly, lm] = monthPaidYM.split('-').map(Number);
+    const lastMonthName = new Date(ly, lm - 1, 1).toLocaleString('default', { month: 'long' });
+    monthLabelEl.textContent = `${lastMonthName} · Paid`;
+  } else if (monthLabelEl) {
+    monthLabelEl.textContent = 'This Month · Paid';
+  }
   document.getElementById('dash-month').textContent       = fmt(monthPaid);
   document.getElementById('dash-quarter').textContent     = fmt(quarterAll);
   document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
@@ -5435,7 +6070,7 @@ function renderDashboard() {
       <div style="flex:1; background:#eeeeec; border-radius:3px; height:14px;">
         <div style="width:${pct}%; background:#14202e; height:100%; border-radius:3px; transition:width 0.3s;"></div>
       </div>
-      <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">${t.total > 0 ? currencyCode + ' ' + Math.round(t.total).toLocaleString() : '—'}</span>`;
+      <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">${t.total > 0 ? fmt(t.total) : '—'}</span>`;
     chart.appendChild(bar);
   });
 
@@ -5487,7 +6122,7 @@ function renderGoalsList() {
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:2;">
         ${claimBtn}
         ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
-        <span style="font-size:12px; color:#6c7682;">USD $${reached.toLocaleString()} / $${target.toLocaleString()}</span>
+        <span style="font-size:12px; color:#6c7682;">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
       </div>
       <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" style="color:#5b4fcf; word-break:break-all;">${url}</a>`) : 'No notes provided'}</div>
       <!-- Progress Bar -->
@@ -6494,9 +7129,24 @@ window.clearInvoice = async function() {
     const prefId = localStorage.getItem('invoicer-preferred-template') || 'default';
     const tmpl = getTemplateData(prefId);
     
-    // Preserve 'from' to avoid crashing render and losing business info
-    const merged = Object.assign({}, tmpl, { from: existing.from || { name: 'Your Business Name', address: '', email: '', phone: '' } });
+    // Preserve 'from', auto-increment receipt number
+    const prevReceipt = existing.receiptOverride || existing.receiptNumber || '';
+    const newReceipt = nextReceiptNumber(prevReceipt ? prevReceipt.trim() : '');
     
+    const defaultPayPeriodSetting = localStorage.getItem('invoicer-default-pay-period');
+    const payPeriodOverride = defaultPayPeriodSetting !== null 
+      ? (defaultPayPeriodSetting === '0' ? 'Due on Receipt' : `Net ${defaultPayPeriodSetting}`)
+      : tmpl.payPeriod;
+
+    const defaultCurrency = localStorage.getItem('invoicer-default-currency') || tmpl.currency || 'USD';
+
+    const merged = Object.assign({}, tmpl, {
+      from: existing.from || { name: 'Your Business Name', address: '', email: '', phone: '' },
+      receiptOverride: newReceipt,
+      payPeriod: payPeriodOverride,
+      currency: defaultCurrency,
+    });
+
     document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
     render(merged);
     if (document.body.classList.contains('editing')) stopEdit();
@@ -6534,6 +7184,16 @@ seedClientsFromLedger();
 renderClientChips();
 restoreTitleFont();
 restoreTheme();
+
+// ── Offline indicator ─────────────────────────────────────────
+(function() {
+  const pill = document.getElementById('offline-pill');
+  const show = () => { if (pill) pill.style.display = 'flex'; };
+  const hide = () => { if (pill) pill.style.display = 'none'; };
+  window.addEventListener('online', hide);
+  window.addEventListener('offline', show);
+  if (pill) pill.style.display = navigator.onLine ? 'none' : 'flex';
+})();
 restoreTitleSize();
 initLogo();
 restoreFxRateOverride();
@@ -6633,6 +7293,11 @@ if ('serviceWorker' in navigator) {
         e.preventDefault();
         cancelEdit();
       }
+    }
+
+    if (e.key === '?' && e.shiftKey && !isInField) {
+      e.preventDefault();
+      toggleShortcutsModal();
     }
   });
 function exportLocalData() {
@@ -6792,6 +7457,23 @@ document.addEventListener('click', function(e) {
   }
 });
 </script>
+
+<div id="preview-overlay" style="display:none; position:fixed; inset:0; z-index:9990; background:rgba(10,16,24,0.92); flex-direction:column; align-items:center; overflow-y:auto; padding:24px 16px 40px;">
+  <div style="width:100%; max-width:860px; display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-shrink:0;">
+    <span style="font-size:11px; letter-spacing:3px; text-transform:uppercase; color:rgba(255,255,255,0.5);">Preview</span>
+    <div style="display:flex; gap:10px;">
+      <button onclick="downloadPdfFromPreview()" style="padding:8px 20px; background:#1a73e8; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">📄 Download PDF</button>
+      <button onclick="closeDialog();proceedPrint()" style="padding:8px 20px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">⎙ Print</button>
+      <button onclick="document.getElementById('preview-overlay').style.display='none'" style="padding:8px 16px; background:rgba(255,255,255,0.1); color:#fff; border:1.5px solid rgba(255,255,255,0.2); border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">✕ Close</button>
+    </div>
+  </div>
+  <div id="preview-frame" style="width:100%; max-width:816px; background:#fff; border-radius:4px; box-shadow:0 8px 40px rgba(0,0,0,0.5); overflow:hidden;"></div>
+</div>
+
+<!-- OFFLINE INDICATOR -->
+<div id="offline-pill" style="display:none; position:fixed; bottom:16px; left:16px; z-index:8800; background:#d0241b; color:#fff; font-family:'Roboto',sans-serif; font-size:11px; font-weight:600; letter-spacing:0.5px; padding:5px 10px; border-radius:20px; box-shadow:0 2px 8px rgba(0,0,0,0.3); pointer-events:none; align-items:center; gap:5px;">
+  <span style="width:6px;height:6px;border-radius:50%;background:#fff;display:inline-block;"></span> Offline — syncing paused
+</div>
 
 <div id="edit-action-bar" style="display:none; position:fixed; bottom:0; left:0; right:0; z-index:8888; background:rgba(20,32,46,0.97); padding:12px 20px; gap:10px; align-items:center; justify-content:flex-end; box-shadow:0 -2px 16px rgba(0,0,0,0.25); backdrop-filter:blur(4px);">
   <span style="font-size:11px; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,0.5); flex:1;">Editing invoice</span>
