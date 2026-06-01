@@ -548,6 +548,17 @@
   }
   .rate-rows { align-items: flex-start; }
   .cost-rows { align-items: flex-end; }
+  .cost-rows[data-tip] { cursor: help; }
+  .cost-rows[data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 6px); right: 0;
+    background: #14202e; color: #fff; font-size: 11px; line-height: 1.5;
+    padding: 6px 10px; border-radius: 6px; white-space: pre; z-index: 9999;
+    pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    font-family: 'Roboto', sans-serif; font-weight: 400; letter-spacing: 0;
+    text-transform: none;
+  }
+  .col-cost { position: relative; }
 
   .rate-tag {
     font-size: 11px;
@@ -751,6 +762,7 @@
     .footer-divider { display: block !important; }
     .thank-you      { font-size: 38px; }
     .payment-note   { font-size: 12px; width: auto; }
+    .total-wrap     { position: static !important; box-shadow: none !important; border-top: none !important; padding: 0 !important; }
   }
 
   /* ── MOBILE RESPONSIVE ── */
@@ -870,6 +882,13 @@
 
     .total-wrap {
       margin-top: 12px;
+      position: sticky;
+      bottom: 0;
+      z-index: 20;
+      background: var(--page);
+      padding: 10px 0 6px;
+      box-shadow: 0 -4px 16px rgba(20,32,46,0.10);
+      border-top: 1.5px solid var(--rule);
     }
 
     .total-block {
@@ -1577,6 +1596,9 @@
   }
   body.editing .delete-row-btn { display: flex; }
   body.editing #add-item-wrap { display: block !important; }
+  .drag-handle { display: none; cursor: grab; color: #9aa2ac; font-size: 14px; padding: 0 4px; user-select: none; vertical-align: middle; }
+  body.editing .drag-handle { display: inline; }
+  tr.drag-over { outline: 2px dashed var(--ink); outline-offset: -2px; }
   .status-badge {
     font-size: 10px;
     font-weight: 700;
@@ -1805,9 +1827,11 @@
     <div style="font-size:17px; font-weight:700; color:#14202e; margin-bottom:18px;">Keyboard Shortcuts</div>
     <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
       <tbody id="shortcuts-table">
-        <tr><td style="padding:6px 0; color:#14202e; font-weight:500;">Ctrl / ⌘ + S</td><td style="padding:6px 0; color:#6c7682;">Save invoice (or publish if not editing)</td></tr>
+        <tr><td style="padding:6px 0; color:#14202e; font-weight:500;">E</td><td style="padding:6px 0; color:#6c7682;">Edit invoice</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">S</td><td style="padding:6px 0; color:#6c7682;">Save invoice (or publish if not editing)</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">P</td><td style="padding:6px 0; color:#6c7682;">Open print preview</td></tr>
         <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Escape</td><td style="padding:6px 0; color:#6c7682;">Cancel edit mode / close modal</td></tr>
-        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Shift + ?</td><td style="padding:6px 0; color:#6c7682;">Show this shortcuts panel</td></tr>
+        <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">?</td><td style="padding:6px 0; color:#6c7682;">Show this shortcuts panel</td></tr>
         <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Click receipt №</td><td style="padding:6px 0; color:#6c7682;">Copy receipt number to clipboard</td></tr>
         <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Click status badge</td><td style="padding:6px 0; color:#6c7682;">Quick-change invoice status</td></tr>
         <tr style="border-top:1px solid #f0f0f0;"><td style="padding:6px 0; color:#14202e; font-weight:500;">Click amount (ledger)</td><td style="padding:6px 0; color:#6c7682;">Inline-edit amount due</td></tr>
@@ -1845,7 +1869,7 @@
 
     <!-- Existing rows status editor -->
     <div id="ledger-history" style="display:none; margin-bottom:14px;">
-      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Update existing entries</div>
+      <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Update existing entries <span id="ledger-count-badge" style="display:none; background:rgba(0,0,0,0.06); color:#14202e; padding:2px 6px; border-radius:10px; font-weight:700; margin-left:8px; text-transform:none; letter-spacing:normal;"></span></div>
       <div id="ledger-rows-list" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto;"></div>
     </div>
 
@@ -2634,12 +2658,16 @@ function render(data) {
     const costsHtml = costs.map((c, ci) =>
       `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${c}</span>`
     ).join('');
+    const tipLines = rates.length > 1
+      ? rates.map((r, ri) => `${r}  ×  ${costs[ri] || '—'}`).join('\n')
+      : '';
+    const costRowsTip = tipLines ? ` data-tip="${tipLines.replace(/"/g, '&quot;')}"` : '';
     tbody.innerHTML += `
       <tr>
         <td class="col-service"><div class="service-name" data-field="lineItems.${i}.service">${item.service}</div></td>
         <td class="col-details" data-field="lineItems.${i}.details">${item.details}</td>
         <td class="col-rate"><div class="rate-rows" id="rate-rows-${i}">${ratesHtml}</div></td>
-        <td class="col-cost num"><div class="cost-rows" id="cost-rows-${i}">${costsHtml}</div></td>
+        <td class="col-cost num"><div class="cost-rows" id="cost-rows-${i}"${costRowsTip}>${costsHtml}</div></td>
       </tr>`;
   });
 
@@ -2868,6 +2896,48 @@ function startEdit() {
 
       tr.querySelector('.col-service').appendChild(upBtn);
       tr.querySelector('.col-service').appendChild(downBtn);
+
+      const dupBtn = document.createElement('button');
+      dupBtn.innerHTML = '⎘';
+      dupBtn.className = 'delete-row-btn';
+      dupBtn.title = 'Duplicate line item';
+      dupBtn.style.cssText = 'right:auto; left:calc(100% + 42px); top:8px; font-size:11px;';
+      dupBtn.onclick = () => duplicateLineItem(i);
+      tr.querySelector('.col-service').appendChild(dupBtn);
+
+      // Drag handle for HTML5 drag-and-drop reordering
+      const handle = document.createElement('span');
+      handle.className = 'drag-handle';
+      handle.textContent = '≡';
+      handle.title = 'Drag to reorder';
+      tr.querySelector('.col-service').insertBefore(handle, tr.querySelector('.col-service').firstChild);
+
+      tr.draggable = true;
+      tr.dataset.lineIdx = String(i);
+      tr.addEventListener('dragstart', e => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(i));
+        tr.style.opacity = '0.5';
+      });
+      tr.addEventListener('dragend', () => { tr.style.opacity = ''; tr.classList.remove('drag-over'); });
+      tr.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; tr.classList.add('drag-over'); });
+      tr.addEventListener('dragleave', () => tr.classList.remove('drag-over'));
+      tr.addEventListener('drop', e => {
+        e.preventDefault();
+        tr.classList.remove('drag-over');
+        const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+        const toIdx = i;
+        if (fromIdx === toIdx) return;
+        const d = extractEditData();
+        const items = d.lineItems;
+        const [moved] = items.splice(fromIdx, 1);
+        items.splice(toIdx, 0, moved);
+        d.dateOverride = d.date;
+        d.receiptOverride = d.receiptNumber;
+        document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2);
+        render(d);
+        startEdit();
+      });
     }
   });
   const pn = document.getElementById('payment-note-el');
@@ -3103,6 +3173,17 @@ function _executeRemoveLineItem(index) {
   stopEdit();
   render(data);
   startEdit();
+}
+
+function duplicateLineItem(index) {
+  const data = extractEditData();
+  if (data.lineItems[index]) {
+    data.lineItems.splice(index + 1, 0, JSON.parse(JSON.stringify(data.lineItems[index])));
+    document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+    stopEdit();
+    render(data);
+    startEdit();
+  }
 }
 
 // Background auto-save for drafts
@@ -3359,13 +3440,22 @@ async function renderLedgerHistory() {
           }
         }
       });
+      const badge = document.getElementById('ledger-count-badge');
+      if (badge) {
+        let count = 0;
+        listEl.querySelectorAll('.ledger-row').forEach(el => {
+          if (el.style.display !== 'none') count++;
+        });
+        badge.textContent = count + (count === 1 ? ' entry' : ' entries');
+        badge.style.display = 'inline-block';
+      }
     };
     
     const exportBtn = document.createElement('button');
     exportBtn.title = 'Export Ledger to CSV';
     exportBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
     exportBtn.style.cssText = 'display:flex; align-items:center; justify-content:center; padding:0 12px; background:#fff; border:1.5px solid rgba(20,32,46,0.13); border-radius:6px; color:#14202e; cursor:pointer; flex-shrink:0;';
-    exportBtn.onclick = () => window.exportLedgerCsv && window.exportLedgerCsv();
+    exportBtn.onclick = () => exportLedgerCsv();
     exportBtn.onmouseover = () => exportBtn.style.background = '#f5f5f5';
     exportBtn.onmouseout = () => exportBtn.style.background = '#fff';
     
@@ -3471,6 +3561,11 @@ async function renderLedgerHistory() {
         rowsWrap.appendChild(rowDiv);
       });
     });
+    const badge = document.getElementById('ledger-count-badge');
+    if (badge) {
+      badge.textContent = rows.length + (rows.length === 1 ? ' entry' : ' entries');
+      badge.style.display = 'inline-block';
+    }
     return;
   }
 
@@ -3683,10 +3778,44 @@ async function renderLedgerHistory() {
       }
     });
 
+    // ── Row expand panel (click info to toggle) ──
+    const expandPanel = document.createElement('div');
+    expandPanel.style.cssText = 'display:none; flex-direction:column; gap:6px; margin-top:8px; padding-top:8px; border-top:1px solid rgba(20,32,46,0.08); font-size:11px; color:#6c7682;';
+
+    const detailsGrid = document.createElement('div');
+    detailsGrid.style.cssText = 'display:grid; grid-template-columns:1fr 1fr; gap:4px 16px;';
+    const field = (label, value) => {
+      const d = document.createElement('div');
+      d.innerHTML = `<span style="color:#9aa2ac; font-size:10px; text-transform:uppercase; letter-spacing:0.5px;">${label}</span><br><span style="color:#14202e; font-weight:500;">${value || '—'}</span>`;
+      return d;
+    };
+    detailsGrid.append(
+      field('Project Total', row.projectTotal || row.amountDue),
+      field('Amount Due', row.amountDue),
+      field('Service', row.service || '—'),
+      field('Pay Period', row.payPeriod || '—')
+    );
+
+    const openBtn = document.createElement('button');
+    openBtn.textContent = '↗ Open Invoice';
+    openBtn.style.cssText = 'align-self:flex-start; font-family:Roboto,sans-serif; font-size:11px; padding:4px 10px; background:#14202e; color:#fff; border:none; border-radius:5px; cursor:pointer; margin-top:2px;';
+    openBtn.addEventListener('click', e => { e.stopPropagation(); loadInvoiceFromLedger(row); document.getElementById('print-overlay').style.display = 'none'; });
+
+    expandPanel.append(detailsGrid, openBtn);
+
+    let expanded = false;
+    info.style.cursor = 'pointer';
+    info.title = 'Click to expand';
+    info.addEventListener('click', () => {
+      expanded = !expanded;
+      expandPanel.style.display = expanded ? 'flex' : 'none';
+    });
+
     rowMain.append(info, noteBtn, loadBtn, sel, delBtn);
-    wrap.append(rowMain, allocWrap);
+    wrap.append(rowMain, expandPanel, allocWrap);
     listEl.appendChild(wrap);
   });
+  if (searchEl && searchEl.oninput) searchEl.oninput();
 }
 
 async function updateLedger() {
@@ -4034,6 +4163,36 @@ function openPrintPreview() {
   overlay.style.display = 'flex';
   overlay.scrollTop = 0;
 }
+function sendInvoiceViaEmail() {
+  const data = getData();
+  const clientName = (data.to && data.to.name) ? data.to.name.trim() : 'Client';
+  const clientEmail = (data.to && data.to.email) ? data.to.email.trim() : '';
+  const bname = (data.from && data.from.name) ? data.from.name.trim() : 'Us';
+
+  const totalAmount = (data.lineItems || []).reduce((sum, item) => {
+    const costs = Array.isArray(item.costs) ? item.costs : [];
+    return sum + costs.reduce((s, c) => s + (parseFloat(c) || 0), 0);
+  }, 0);
+  const currency = data.currency || localStorage.getItem('invoicer-default-currency') || 'USD';
+  const amtFormatted = typeof formatCurrencyNative === 'function'
+    ? formatCurrencyNative(totalAmount, currency)
+    : `${currency} ${totalAmount.toFixed(2)}`;
+
+  const subject = encodeURIComponent(`Invoice ${data.receiptNumber || ''} from ${bname}`);
+
+  let dueDateStr = '';
+  const dueEl = document.getElementById('due-date-value');
+  if (dueEl && dueEl.style.display !== 'none' && dueEl.textContent.trim()) {
+    dueDateStr = `\nDue: ${dueEl.textContent.trim()}`;
+  }
+
+  const body = encodeURIComponent(
+    `Hi ${clientName},\n\nPlease find attached Invoice ${data.receiptNumber || ''} for ${amtFormatted}.${dueDateStr}\n\nLet me know if you have any questions.\n\nThanks,\n${bname}`
+  );
+
+  window.location.href = `mailto:${clientEmail}?subject=${subject}&body=${body}`;
+}
+
 
 async function downloadPdfFromPreview() {
   const data = getData();
@@ -5100,13 +5259,23 @@ function renderClientBook() {
   let list = masterList.map((c, i) => ({ ...c, _origIdx: i }));
   list.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Build unpaid totals map keyed by client name (case-insensitive)
+  // Build unpaid totals + last-invoiced maps keyed by client name (case-insensitive)
   const unpaidMap = {};
+  const lastInvoicedMap = {};
+  const parseDate = str => {
+    if (!str) return null;
+    const p = str.split('/').map(s => s.trim());
+    if (p.length === 3) { const d = new Date(+p[2], +p[1] - 1, +p[0]); if (!isNaN(d)) return d; }
+    const d = new Date(str); return isNaN(d) ? null : d;
+  };
   loadLedgerRows().forEach(r => {
-    if ((r.status || '').toLowerCase() === 'paid') return;
     const key = (r.client || '').toLowerCase();
-    const amt = parseFloat((r.amountDue || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
-    unpaidMap[key] = (unpaidMap[key] || 0) + amt;
+    if ((r.status || '').toLowerCase() !== 'paid') {
+      const amt = parseFloat((r.amountDue || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
+      unpaidMap[key] = (unpaidMap[key] || 0) + amt;
+    }
+    const d = parseDate(r.date);
+    if (d && (!lastInvoicedMap[key] || d > lastInvoicedMap[key])) lastInvoicedMap[key] = d;
   });
 
   const query = (document.getElementById('client-search')?.value || '').toLowerCase();
@@ -5144,7 +5313,14 @@ function renderClientBook() {
     const unpaidBadge = unpaidAmt > 0
       ? `<span style="display:inline-block;margin-left:6px;padding:1px 6px;background:#ffebee;color:#c62828;border-radius:10px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;vertical-align:middle;">OWES</span>`
       : '';
-    info.innerHTML = `<div class="client-card-name">${c.name}${unpaidBadge}</div><div class="client-card-sub">${c.email || c.phone || c.address || '—'}</div>`;
+    const lastInvDate = lastInvoicedMap[(c.name || '').toLowerCase()];
+    const lastInvStr = lastInvDate
+      ? `Last invoiced: ${String(lastInvDate.getDate()).padStart(2,'0')} / ${String(lastInvDate.getMonth()+1).padStart(2,'0')} / ${lastInvDate.getFullYear()}`
+      : '';
+    const lastInvHtml = lastInvStr
+      ? `<div class="client-card-last" style="font-size:10px;color:#9aa2ac;margin-top:1px;">${lastInvStr}</div>`
+      : '';
+    info.innerHTML = `<div class="client-card-name">${c.name}${unpaidBadge}</div><div class="client-card-sub">${c.email || c.phone || c.address || '—'}</div>${lastInvHtml}`;
 
     const useBtn = document.createElement('button');
     useBtn.className   = 'btn-use-client';
@@ -6202,9 +6378,15 @@ function renderGoalsList() {
       <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" style="color:#5b4fcf; word-break:break-all;">${url}</a>`) : 'No notes provided'}</div>
       <!-- Progress Bar -->
       <div style="width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2;">
-         <div style="height:100%; width:${target > 0 ? Math.min(100, (reached/target)*100) : 0}%; background:#14202e; transition:width 0.3s;"></div>
+         <div class="goal-bar-fill" style="height:100%; width:0%; background:#14202e; transition:width 0.6s ease-out;"></div>
       </div>`;
     el.appendChild(div);
+    // Animate bar from 0 → target width on next frame so CSS transition fires
+    const targetPct = target > 0 ? Math.min(100, (reached / target) * 100) : 0;
+    requestAnimationFrame(() => {
+      const fill = div.querySelector('.goal-bar-fill');
+      if (fill) fill.style.width = targetPct + '%';
+    });
   });
 }
 
@@ -7176,44 +7358,6 @@ try {
     }
   }
 } catch(e) {}
-window.exportLedgerCsv = function() {
-  const rows = loadLedgerRows();
-  if (!rows.length) {
-    showToast('Ledger is empty', 'warning');
-    return;
-  }
-  
-  let csvContent = "Receipt,Date,Client,Amount Due,Status\n";
-  rows.forEach(r => {
-    const escapeCsv = (str) => {
-      const s = String(str || '');
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return '"' + s.replace(/"/g, '""') + '"';
-      }
-      return s;
-    };
-    
-    const rowStr = [
-      escapeCsv(r.receipt),
-      escapeCsv(r.date),
-      escapeCsv(r.client),
-      escapeCsv(r.amountDue),
-      escapeCsv(r.status)
-    ].join(',');
-    
-    csvContent += rowStr + "\n";
-  });
-  
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", "ledger_export_" + new Date().toISOString().split('T')[0] + ".csv");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  showToast('Ledger exported to CSV', 'success');
-};
 window.restoreDraft = function() {
   try {
     const data = JSON.parse(localStorage.getItem('invoicer-autosave'));
@@ -7379,12 +7523,17 @@ if ('serviceWorker' in navigator) {
     const isInField = tag === 'INPUT' || tag === 'TEXTAREA' ||
       (document.activeElement || {}).isContentEditable;
 
-    if ((e.ctrlKey || e.metaKey) && e.key === 'e' && !isInField) {
+    const isE = e.key.toLowerCase() === 'e';
+    const isS = e.key.toLowerCase() === 's';
+    const isP = e.key.toLowerCase() === 'p';
+    const isCtrl = e.ctrlKey || e.metaKey;
+
+    if ((isCtrl && isE && !isInField) || (isE && !isCtrl && !isInField)) {
       e.preventDefault();
       if (!document.body.classList.contains('editing')) startEdit();
     }
 
-    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    if ((isCtrl && isS) || (isS && !isCtrl && !isInField)) {
       e.preventDefault();
       if (document.body.classList.contains('editing')) {
         saveEdit();
@@ -7395,6 +7544,15 @@ if ('serviceWorker' in navigator) {
         });
         if (!hasOpenModal) confirmPrint();
       }
+    }
+
+    if ((isCtrl && isP) || (isP && !isCtrl && !isInField)) {
+      e.preventDefault();
+      const hasOpenModal = Array.from(document.querySelectorAll('div[id$="-overlay"]')).some(el => {
+        const s = window.getComputedStyle(el);
+        return s.display === 'flex' || s.display === 'block';
+      });
+      if (!hasOpenModal && !document.body.classList.contains('editing')) confirmPrint();
     }
 
     if (e.key === 'Escape' && document.body.classList.contains('editing')) {
@@ -7408,7 +7566,7 @@ if ('serviceWorker' in navigator) {
       }
     }
 
-    if (e.key === '?' && e.shiftKey && !isInField) {
+    if (e.key === '?' && !isInField) {
       e.preventDefault();
       toggleShortcutsModal();
     }
@@ -7575,6 +7733,7 @@ document.addEventListener('click', function(e) {
   <div style="width:100%; max-width:860px; display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-shrink:0;">
     <span style="font-size:11px; letter-spacing:3px; text-transform:uppercase; color:rgba(255,255,255,0.5);">Preview</span>
     <div style="display:flex; gap:10px;">
+      <button onclick="sendInvoiceViaEmail()" style="padding:8px 20px; background:#4CAF50; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">✉️ Send via Email</button>
       <button onclick="downloadPdfFromPreview()" style="padding:8px 20px; background:#1a73e8; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">📄 Download PDF</button>
       <button onclick="closeDialog();proceedPrint()" style="padding:8px 20px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">⎙ Print</button>
       <button onclick="document.getElementById('preview-overlay').style.display='none'" style="padding:8px 16px; background:rgba(255,255,255,0.1); color:#fff; border:1.5px solid rgba(255,255,255,0.2); border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">✕ Close</button>
