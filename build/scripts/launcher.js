@@ -94,7 +94,7 @@ const headers = isDev ? csp.local : csp.production;
 
 console.log(isDev ? "⚠️  Development Mode: Relaxed CSP" : "🔒 Production Mode: Strict CSP");
 
-const port = await findFreePort(3000);
+const port = await findFreePort(7337);
 createServer(
   { cert: readFileSync(CERT), key: readFileSync(KEY) },
   (req, res) => {

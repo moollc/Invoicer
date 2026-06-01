@@ -892,6 +892,18 @@
       max-height: 70vh;
       border-radius: 12px 12px 0 0;
     }
+
+    /* Dashboard modal */
+    #dashboard-overlay > div {
+      padding: 20px 16px !important;
+      border-radius: 10px;
+    }
+
+    /* Dashboard stat card labels — tighten letter-spacing so they don't wrap at 390px */
+    #dashboard-overlay [style*="letter-spacing:2px"],
+    #dashboard-overlay [style*="letter-spacing: 2px"] {
+      letter-spacing: 0.5px !important;
+    }
   }
 
   /* ── AI CHAT PANEL ── */
@@ -1471,6 +1483,42 @@
     flex-shrink: 0;
   }
   .btn-expand-client:hover { color: var(--ink); }
+
+  #toast-container {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    z-index: 10000;
+    pointer-events: none;
+  }
+  .toast {
+    background: #1e1e1e;
+    color: #fff;
+    padding: 10px 20px;
+    border-radius: 30px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    pointer-events: auto;
+  }
+  .toast.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .toast.success { background: #2a8c55; }
+  .toast.error { background: #d0241b; color: white; }
+  .toast.info { background: #1e1e1e; }
+  
+  .confirm-overlay .modal { max-width: 400px; text-align: center; }
+  .confirm-actions { display: flex; justify-content: center; gap: 12px; margin-top: 24px; }
 </style>
 </head>
 <body>
@@ -2021,6 +2069,63 @@ function autoDate() {
   return `${dd} / ${mm} / ${yyyy}`;
 }
 
+// ── Toast Notifications ──────────────────────────────────────
+
+(function() {
+  const style = document.createElement('style');
+  style.textContent = `
+    #toast-container { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); z-index:10100; display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
+    .toast { font-family:'Roboto',sans-serif; font-size:12.5px; padding:11px 18px; border-radius:10px; box-shadow:0 4px 20px rgba(0,0,0,0.3); display:flex; align-items:center; gap:10px; pointer-events:all; max-width:420px; animation:toastIn 0.2s ease; }
+    .toast.info    { background:#14202e; color:#fff; }
+    .toast.success { background:#1a7a4a; color:#fff; }
+    .toast.error   { background:#c0211a; color:#fff; }
+    .toast.warning { background:#e07b00; color:#fff; }
+    .toast .toast-close { background:none; border:none; color:inherit; opacity:0.6; font-size:16px; cursor:pointer; padding:0; line-height:1; flex-shrink:0; }
+    .toast .toast-close:hover { opacity:1; }
+    .toast-confirm { background:#14202e; color:#fff; font-family:'Roboto',sans-serif; font-size:12.5px; padding:14px 18px; border-radius:10px; box-shadow:0 4px 24px rgba(0,0,0,0.4); display:flex; flex-direction:column; gap:10px; pointer-events:all; max-width:380px; }
+    .toast-confirm .toast-msg { line-height:1.5; }
+    .toast-confirm .toast-actions { display:flex; gap:8px; justify-content:flex-end; }
+    .toast-confirm .toast-actions button { font-family:'Roboto',sans-serif; font-size:11.5px; padding:6px 14px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
+    .toast-confirm .btn-cancel { background:rgba(255,255,255,0.12); color:#fff; }
+    .toast-confirm .btn-confirm { background:#d0241b; color:#fff; }
+    .toast-confirm .btn-confirm.safe { background:#1a7a4a; }
+    @keyframes toastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+  `;
+  document.head.appendChild(style);
+  const container = document.createElement('div');
+  container.id = 'toast-container';
+  document.body.appendChild(container);
+})();
+
+function showToast(message, type = 'info', duration = 4000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `<span style="flex:1">${message}</span><button class="toast-close" onclick="this.parentElement.remove()">×</button>`;
+  container.appendChild(toast);
+  if (duration > 0) setTimeout(() => toast.remove(), duration);
+  return toast;
+}
+
+function showConfirm(message, onConfirm, { confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = true } = {}) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast-confirm';
+  toast.innerHTML = `
+    <div class="toast-msg">${message}</div>
+    <div class="toast-actions">
+      <button class="btn-cancel">${cancelLabel}</button>
+      <button class="btn-confirm${danger ? '' : ' safe'}">${confirmLabel}</button>
+    </div>`;
+  // Returns a Promise so callers can use await; also supports callback for legacy use
+  let resolve;
+  const p = new Promise(res => { resolve = res; });
+  toast.querySelector('.btn-cancel').onclick = () => { toast.remove(); resolve(false); if (typeof onConfirm !== 'function') return; };
+  toast.querySelector('.btn-confirm').onclick = () => { toast.remove(); resolve(true); if (typeof onConfirm === 'function') onConfirm(); };
+  container.appendChild(toast);
+  return p;
+}
+
 // ── Data ─────────────────────────────────────────────────────
 
 function getData() {
@@ -2149,22 +2254,31 @@ function startEdit() {
   }
 }
 
+const escapeHTML = (str) => {
+  if (typeof str !== 'string') return str;
+  return str.replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+};
+
 function extractEditData() {
   const data = getData();
   document.querySelectorAll('.rate-edit-ta').forEach(function(ta) {
     const i = parseInt(ta.dataset.lineIndex);
-    const vals = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const vals = escapeHTML(ta.value).split('\n').map(s => s.trim()).filter(Boolean);
     data.lineItems[i].rates = vals.length ? vals : [''];
   });
   document.querySelectorAll('.cost-edit-ta').forEach(function(ta) {
     const i = parseInt(ta.dataset.lineIndex);
-    const vals = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const vals = escapeHTML(ta.value).split('\n').map(s => s.trim()).filter(Boolean);
     data.lineItems[i].costs = vals.length ? vals : ['0'];
   });
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
     if (field === 'from._sub') {
-      const lines = el.textContent.split('\n').map(s => s.trim()).filter(Boolean);
+      const lines = escapeHTML(el.textContent).split('\n').map(s => s.trim()).filter(Boolean);
       // Last line is "email · phone", everything before is address
       const contactLine = lines[lines.length - 1] || '';
       const contactParts = contactLine.split(' · ').map(s => s.trim());
@@ -2175,13 +2289,13 @@ function extractEditData() {
       return;
     }
     if (field === 'to._sub') {
-      const parts = el.textContent.split(' · ').map(s => s.trim());
+      const parts = escapeHTML(el.textContent).split(' · ').map(s => s.trim());
       data.to.address = parts[0] || '';
       data.to.email   = parts[1] || '';
       data.to.phone   = parts[2] || '';
       return;
     }
-    setNestedField(data, field, el.textContent.trim());
+    setNestedField(data, field, escapeHTML(el.textContent.trim()));
   });
   return data;
 }
@@ -2526,7 +2640,7 @@ async function proceedPrint() {
         savePdfToDrive(pdfBlob, filename);
       } catch(e) { 
         console.error('Drive PDF save failed:', e.message); 
-        alert('Drive PDF save failed: ' + e.message);
+        showToast('Drive PDF save failed: ' + e.message, 'error');
       }
     }, 3000);
   }
@@ -3411,7 +3525,7 @@ function addClient() {
   renderClientBook();
   renderClientChips();
   setTimeout(() => document.getElementById(`client-fields-${list.length - 1}`)?.classList.add('open'), 50);
-  alert('New client added to Address Book.');
+  showToast('New client added to Address Book.', 'success');
 }
 
 function toggleClientBook() {
@@ -3562,7 +3676,7 @@ function applyTemplate(id) {
   const template = getTemplateData(id);
   let existing;
   try { existing = JSON.parse(document.getElementById('invoice-data').textContent); }
-  catch(e) { alert('Could not read invoice data. Try reloading the page.'); return; }
+  catch(e) { showToast('Could not read invoice data. Try reloading the page.', 'error'); return; }
   const merged = Object.assign({}, existing, template, { from: existing.from, to: existing.to });
   document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
   render(merged);
@@ -3874,7 +3988,7 @@ The sheet must have columns: Receipt #, Date, Client, Service, Project Total, Am
   if (id) {
     _sheetsSpreadsheetId = id.trim();
     localStorage.setItem('sheets-spreadsheet-id', id);
-    alert('✓ Spreadsheet ID saved. Invoices will now sync to Google Sheets.');
+    showToast('✓ Spreadsheet ID saved. Invoices will now sync to Google Sheets.', 'success');
   }
 }
 
@@ -4289,15 +4403,17 @@ function renderGoalsList() {
     div.style.cssText = `background:${bg}; border-radius:8px; padding:12px 14px; margin-bottom:8px; position:relative; overflow:hidden;`;
     
     div.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; position:relative; z-index:2;">
-        <strong style="font-size:13px; color:#14202e;">${g.name}</strong>
-        <div style="display:flex; align-items:center; gap:8px;">
-          ${claimBtn}
-          ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
-          <span style="font-size:12px; color:#6c7682;">USD $${reached.toLocaleString()} / $${target.toLocaleString()}</span>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px; position:relative; z-index:2; gap:6px;">
+        <strong style="font-size:13px; color:#14202e; flex:1; min-width:0; word-break:break-word;">${g.name}</strong>
+        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
           <button onclick="editGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:11px; color:#9aa2ac; padding:0; line-height:1; letter-spacing:0.5px;" title="Edit goal">Edit</button>
           <button onclick="deleteGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:13px; color:#9aa2ac; padding:0; line-height:1;" title="Delete goal">✕</button>
         </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:2;">
+        ${claimBtn}
+        ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
+        <span style="font-size:12px; color:#6c7682;">USD $${reached.toLocaleString()} / $${target.toLocaleString()}</span>
       </div>
       <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" style="color:#5b4fcf; word-break:break-all;">${url}</a>`) : 'No notes provided'}</div>
       <!-- Progress Bar -->
@@ -4431,7 +4547,7 @@ function renderAllocationUI(container, row) {
         const devPanel = document.querySelector('#print-overlay .dev-chevron')?.closest('button');
         if (devPanel) { const panel = devPanel.nextElementSibling; if (panel) panel.style.display = 'block'; devPanel.querySelector('.dev-chevron').style.transform = 'rotate(180deg)'; }
       } else {
-        alert(err.message);
+        showToast(err.message, 'error');
       }
     }
   };
@@ -4502,8 +4618,7 @@ function closeClaimModal() {
 async function submitClaimModal() {
   const receipt = document.getElementById('claim-input-receipt').value.trim();
   if (!receipt) {
-    alert("Receipt reference is required.");
-    return;
+    showToast('Receipt reference is required.', 'warning'); return;
   }
   const fileInput = document.getElementById('claim-input-file');
   const file = fileInput.files[0];
@@ -4560,9 +4675,9 @@ async function submitClaimModal() {
       renderGoalsList();
     }
     closeClaimModal();
-    alert("Goal claimed successfully!");
+    showToast('Goal claimed successfully!', 'success');
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Submit Claim';
@@ -4644,7 +4759,7 @@ function applyUpdateStatus(statusData, data, actionNotes) {
 
 function openCalendarImport() {
   if (!gmailTokenValid()) {
-    alert('Please sign in with Google first.');
+    showToast('Please sign in with Google first.', 'error');
     return;
   }
   const savedKw = localStorage.getItem('cal-keyword');
@@ -4709,7 +4824,7 @@ function applyCalendarEvent(event) {
   try {
     existing = JSON.parse(document.getElementById('invoice-data').textContent);
   } catch (e) {
-    alert('Could not read invoice data. Try reloading the page.');
+    showToast('Could not read invoice data. Try reloading the page.', 'error');
     return;
   }
   const merged = Object.assign({}, existing, draft, { from: existing.from });
@@ -4966,7 +5081,7 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
 
   if (messages.length) {
     const notice = messages.join('\n');
-    setTimeout(() => alert(notice), 100);
+    setTimeout(() => showToast(notice, 'success'), 100);
   }
 };
 
@@ -4985,7 +5100,7 @@ function saveBusinessProfile() {
     email:   data.from.email   || '',
     phone:   data.from.phone   || '',
   };
-  if (!profile.name) { alert('Please enter a business name before saving the profile.'); return; }
+  if (!profile.name) { showToast('Please enter a business name before saving the profile.', 'error'); return; }
   localStorage.setItem('invoice-business-profile', JSON.stringify(profile));
   const btn = document.querySelector('.edit-only[onclick="saveBusinessProfile()"]');
   if (btn) { btn.textContent = '✓ Profile Saved'; setTimeout(() => { btn.textContent = '⬇ Save as Profile'; }, 2000); }
@@ -4998,7 +5113,29 @@ function loadBusinessProfile() {
 
 function applyBusinessProfile() {
   const profile = loadBusinessProfile();
-  if (!profile) { alert('No saved business profile found. Fill in your From details and click "Save as Profile".'); return; }
+  if (!profile) {
+    // No profile yet — enter edit mode and guide user to the From section
+    if (!document.body.classList.contains('editing')) startEdit();
+    const fromEl = document.querySelector('.party.from');
+    if (fromEl) {
+      fromEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Show a dismissible tip if not already showing
+      if (!document.getElementById('profile-setup-tip')) {
+        const tip = document.createElement('div');
+        tip.id = 'profile-setup-tip';
+        tip.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:#14202e;color:#fff;font-family:"Roboto",sans-serif;font-size:12px;padding:12px 18px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,0.35);display:flex;align-items:center;gap:12px;max-width:400px;';
+        tip.innerHTML = '<span>✏️ Fill in your <strong>From</strong> details, then click <strong>⬇ Save as Profile</strong> to save them for future invoices.</span><button onclick="this.parentElement.remove()" style="background:none;border:none;color:#9aa2ac;font-size:16px;cursor:pointer;line-height:1;padding:0;flex-shrink:0;">×</button>';
+        document.body.appendChild(tip);
+        setTimeout(() => tip.remove(), 8000);
+      }
+      // Pulse the From section briefly
+      fromEl.style.transition = 'outline 0.2s';
+      fromEl.style.outline = '2px solid #5b4fcf';
+      fromEl.style.borderRadius = '4px';
+      setTimeout(() => { fromEl.style.outline = ''; fromEl.style.borderRadius = ''; }, 2000);
+    }
+    return;
+  }
   const data = getData();
   data.from.name    = profile.name;
   data.from.address = profile.address;
@@ -5030,7 +5167,7 @@ function handleLogoUpload(input) {
   const file = input.files[0];
   if (!file) return;
   if (file.size > 2 * 1024 * 1024) {
-    alert('Logo file is too large. Please use an image under 2MB.');
+    showToast('Logo file is too large. Please use an image under 2MB.', 'error');
     input.value = '';
     return;
   }
@@ -5039,7 +5176,7 @@ function handleLogoUpload(input) {
     try {
       localStorage.setItem('invoice-logo', e.target.result);
     } catch (err) {
-      alert('Could not save logo — storage quota exceeded. Try a smaller image.');
+      showToast('Could not save logo — storage quota exceeded. Try a smaller image.', 'error');
       input.value = '';
       return;
     }
@@ -5166,8 +5303,8 @@ window.discardDraft = function() {
   if (b) b.remove();
 };
 
-window.clearInvoice = function() {
-  if (confirm('Are you sure you want to clear this invoice and start fresh?')) {
+window.clearInvoice = async function() {
+  if (await showConfirm('Are you sure you want to clear this invoice and start fresh?', 'Clear Invoice')) {
     localStorage.removeItem('invoice-last-state');
     localStorage.removeItem('invoicer-autosave');
     localStorage.removeItem('invoice-logo');
@@ -5272,29 +5409,37 @@ function importLocalData(event) {
           count++;
         }
       }
-      alert(`Imported ${count} keys successfully. The app will now reload.`);
+      showToast(`Imported ${count} keys successfully. The app will now reload.`, 'success');
       location.reload();
     } catch (err) {
-      alert("Invalid backup file.");
+      showToast("Invalid backup file.", 'error');
     }
   };
   reader.readAsText(file);
 }
 
 function resetAllData() {
-  if (confirm("Are you ABSOLUTELY sure? This will delete all local data, clients, and history. This cannot be undone unless you have an exported backup.")) {
-    if (confirm("FINAL WARNING: Click OK to delete everything and reload.")) {
+  showConfirm(
+    'Are you <strong>absolutely sure</strong>? This will delete all local data, clients, and history. Export a backup first if you need to recover.',
+    null,
+    { confirmLabel: 'Yes, continue', cancelLabel: 'Cancel', danger: true }
+  ).then(confirmed => {
+    if (!confirmed) return;
+    showConfirm(
+      '<strong>Final warning:</strong> Click Delete to erase everything and reload. This cannot be undone.',
+      null,
+      { confirmLabel: 'Delete everything', cancelLabel: 'Cancel', danger: true }
+    ).then(confirmed2 => {
+      if (!confirmed2) return;
       const keys = [];
       for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key.startsWith('invoice-') || key === 'drive-folder-id' || key === 'oauth-client-id') {
-          keys.push(key);
-        }
+        if (key.startsWith('invoice-') || key === 'drive-folder-id' || key === 'oauth-client-id') keys.push(key);
       }
       keys.forEach(k => localStorage.removeItem(k));
       location.reload();
-    }
-  }
+    });
+  });
 }
 </script>
 </body>
