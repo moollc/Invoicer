@@ -939,22 +939,16 @@
     gap: 8px;
     flex-shrink: 0;
   }
+  #chat-title-group:hover #chat-title { opacity: 0.75; }
   #chat-title {
     font-size: 13px;
     font-weight: 700;
     color: var(--ink);
     letter-spacing: -0.3px;
-    flex-shrink: 0;
-  }
-
-  /* Active provider pill in header */
-  #chat-active-provider {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex: 1;
-    min-width: 0;
-    margin-left: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity 0.15s;
   }
   #chat-active-dot {
     width: 8px;
@@ -1646,8 +1640,8 @@
 
   <!-- Profile group -->
   <div class="tb-group">
-    <button id="btn-load-profile" onclick="applyBusinessProfile()" title="My Business Profile" aria-label="My Business Profile">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+    <button id="btn-load-profile" onclick="gmailTokenValid() ? openProfileModal() : googleSignIn()" title="Google Sign-in" aria-label="Google Sign-in">
+      <svg id="profile-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
       <span class="tb-label">Profile</span>
     </button>
   </div>
@@ -1657,11 +1651,11 @@
 <!-- AI CHAT PANEL -->
 <div id="chat-panel">
   <div id="chat-header">
-    <span id="chat-title">AI Assistant</span>
-    <div id="chat-active-provider">
+    <div id="chat-title-group" onclick="toggleChatSettings()" title="Manage providers" style="display:flex;align-items:center;gap:7px;flex:1;min-width:0;cursor:pointer;">
       <div id="chat-active-dot"></div>
-      <span id="chat-active-name">No provider</span>
+      <span id="chat-title">Setup Assistant</span>
     </div>
+    <button class="btn-manage-clients" onclick="toggleClientBook()" title="Address Book" aria-label="Address Book" style="font-size:11px;padding:3px 8px;border:1px solid rgba(20,32,46,0.13);border-radius:5px;color:var(--muted);flex-shrink:0;">Address Book</button>
     <button id="btn-chat-clear" onclick="clearChatHistory()" title="Clear history" style="background:none;border:none;cursor:pointer;font-size:13px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:flex;align-items:center;justify-content:center;transition:background 0.15s;flex-shrink:0;">✕</button>
     <button id="btn-chat-settings" onclick="toggleChatSettings()" title="Manage providers" aria-label="Manage providers">⚙</button>
   </div>
@@ -1696,7 +1690,6 @@
   <div id="client-picker-row">
     <span class="cp-label">Clients</span>
     <div id="client-chips"></div>
-    <button class="btn-manage-clients" onclick="toggleClientBook()" title="Manage address book" aria-label="Manage address book">✎</button>
   </div>
 
   <div id="chat-image-preview"></div>
@@ -1910,6 +1903,43 @@
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Template</div>
     <div id="templates-list" style="display:flex; flex-direction:column; gap:8px;"></div>
     <button onclick="closeTemplatesModal()" style="margin-top:20px; width:100%; padding:10px; background:#eee; color:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer;">Cancel</button>
+  </div>
+</div>
+
+<div id="profile-overlay" role="dialog" aria-modal="true" aria-label="Profile & Account" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px;" onclick="if(event.target.id==='profile-overlay') closeProfileModal()">
+  <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:420px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
+    <button onclick="closeProfileModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
+    <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Account</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:4px;">Business Profile</div>
+    <div id="profile-signin-note" style="font-size:12px; color:#2a8c55; margin-bottom:20px;">✓ Signed in with Google</div>
+
+    <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:11px; font-weight:600; color:#6c7682; text-transform:uppercase; letter-spacing:1px;">Business Name</label>
+        <input id="prof-name" type="text" placeholder="Your Business Name" style="font-family:'Roboto',sans-serif; font-size:13px; padding:9px 12px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+      </div>
+      <div style="display:flex; flex-direction:column; gap:4px;">
+        <label style="font-size:11px; font-weight:600; color:#6c7682; text-transform:uppercase; letter-spacing:1px;">Address</label>
+        <textarea id="prof-address" rows="2" placeholder="123 Main St, City, State" style="font-family:'Roboto',sans-serif; font-size:13px; padding:9px 12px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e; resize:vertical;"></textarea>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <div style="display:flex; flex-direction:column; gap:4px; flex:1;">
+          <label style="font-size:11px; font-weight:600; color:#6c7682; text-transform:uppercase; letter-spacing:1px;">Email</label>
+          <input id="prof-email" type="email" placeholder="you@example.com" style="font-family:'Roboto',sans-serif; font-size:13px; padding:9px 12px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+        </div>
+        <div style="display:flex; flex-direction:column; gap:4px; flex:1;">
+          <label style="font-size:11px; font-weight:600; color:#6c7682; text-transform:uppercase; letter-spacing:1px;">Phone</label>
+          <input id="prof-phone" type="tel" placeholder="+1 555 000 0000" style="font-family:'Roboto',sans-serif; font-size:13px; padding:9px 12px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e;">
+        </div>
+      </div>
+    </div>
+
+    <button onclick="saveProfileFromModal()" style="width:100%; padding:11px; background:#14202e; color:#fff; border:none; border-radius:7px; font-family:'Roboto',sans-serif; font-size:13px; font-weight:600; cursor:pointer; margin-bottom:10px;">Save Profile</button>
+    <button onclick="applyProfileFromModal()" style="width:100%; padding:10px; background:#f0f4ff; color:#14202e; border:none; border-radius:7px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer; margin-bottom:20px;">Apply to Current Invoice</button>
+
+    <div style="border-top:1px solid #eee; padding-top:16px;">
+      <button onclick="googleSignOut()" style="width:100%; padding:10px; background:#fff; color:#d0241b; border:1.5px solid #d0241b; border-radius:7px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer;">Sign Out of Google</button>
+    </div>
   </div>
 </div>
 
@@ -3058,18 +3088,22 @@ function setSelectedIdx(i) {
 }
 
 function updateActiveProviderPill() {
-  const list = loadChatProviders();
-  const idx  = getSelectedIdx();
-  const cfg  = list[idx];
-  const dot  = document.getElementById('chat-active-dot');
-  const name = document.getElementById('chat-active-name');
+  const list  = loadChatProviders();
+  const idx   = getSelectedIdx();
+  const cfg   = list[idx];
+  const dot   = document.getElementById('chat-active-dot');
+  const title = document.getElementById('chat-title');
   if (cfg) {
     const prov = PROVIDERS[cfg.type] || {};
-    dot.style.background = prov.color || '#aaa';
-    name.textContent = cfg.name;
+    dot.style.background    = prov.color || '#aaa';
+    dot.style.display       = 'block';
+    title.textContent       = prov.label || cfg.name;
+    title.style.color       = 'var(--ink)';
   } else {
-    dot.style.background = '#aaa';
-    name.textContent = 'No provider — ⚙ add one';
+    dot.style.background    = '#aaa';
+    dot.style.display       = 'none';
+    title.textContent       = 'Setup Assistant';
+    title.style.color       = 'var(--muted)';
   }
 }
 
@@ -4240,6 +4274,14 @@ function requestGmailToken(onToken) {
 }
 
 function updateEmailBtn() {
+  const profileIcon = document.getElementById('profile-icon');
+  if (profileIcon) {
+    profileIcon.style.stroke = gmailTokenValid() ? '#2a8c55' : '#d0241b';
+  }
+  const profileBtn = document.getElementById('btn-load-profile');
+  if (profileBtn) {
+    profileBtn.title = gmailTokenValid() ? '✓ Signed in — click to refresh token' : 'Sign in with Google';
+  }
   const btn = document.getElementById('btn-email-client');
   if (btn) {
     btn.textContent = '✉ Email Client';
@@ -5581,6 +5623,68 @@ let _recognition = null;
 let _recognizing = false;
 
 // ── Business Profile ─────────────────────────────────────────
+
+function openProfileModal() {
+  const profile = loadBusinessProfile() || {};
+  document.getElementById('prof-name').value    = profile.name    || '';
+  document.getElementById('prof-address').value = profile.address || '';
+  document.getElementById('prof-email').value   = profile.email   || '';
+  document.getElementById('prof-phone').value   = profile.phone   || '';
+  const note = document.getElementById('profile-signin-note');
+  if (note) {
+    const exp = parseInt(localStorage.getItem('gmail-token-exp') || '0');
+    const expiresIn = Math.round((exp - Date.now()) / 60000);
+    note.textContent = gmailTokenValid()
+      ? `✓ Signed in · token expires in ${expiresIn} min`
+      : '⚠ Not signed in';
+    note.style.color = gmailTokenValid() ? '#2a8c55' : '#d0241b';
+  }
+  document.getElementById('profile-overlay').style.display = 'flex';
+}
+
+function closeProfileModal() {
+  document.getElementById('profile-overlay').style.display = 'none';
+}
+
+function saveProfileFromModal() {
+  const name    = document.getElementById('prof-name').value.trim();
+  const address = document.getElementById('prof-address').value.trim();
+  const email   = document.getElementById('prof-email').value.trim();
+  const phone   = document.getElementById('prof-phone').value.trim();
+  if (!name) { showToast('Business name is required.', 'error'); return; }
+  localStorage.setItem('invoice-business-profile', JSON.stringify({ name, address, email, phone }));
+  showToast('Profile saved.', 'success');
+  closeProfileModal();
+}
+
+function applyProfileFromModal() {
+  saveProfileFromModal();
+  // saveProfileFromModal shows toast and closes — also apply to invoice
+  const profile = loadBusinessProfile();
+  if (!profile) return;
+  const data = getData();
+  data.from.name    = profile.name;
+  data.from.address = profile.address;
+  data.from.email   = profile.email;
+  data.from.phone   = profile.phone;
+  data.dateOverride    = data.date;
+  data.receiptOverride = data.receiptNumber;
+  document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
+  render(getData());
+}
+
+function googleSignOut() {
+  const token = localStorage.getItem('gmail-token');
+  if (token && window.google && google.accounts && google.accounts.oauth2) {
+    google.accounts.oauth2.revoke(token, () => {});
+  }
+  localStorage.removeItem('gmail-token');
+  localStorage.removeItem('gmail-token-exp');
+  localStorage.removeItem('gmail-token-scopes');
+  closeProfileModal();
+  updateEmailBtn();
+  showToast('Signed out of Google.', 'info');
+}
 
 function saveBusinessProfile() {
   const data = extractEditData();
