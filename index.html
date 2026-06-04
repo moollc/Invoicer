@@ -2085,8 +2085,19 @@
   <div style="background:#fff; border-radius:10px; padding:32px 36px; max-width:420px; width:100%; font-family:'Roboto',sans-serif; box-shadow:0 20px 60px rgba(0,0,0,0.3); margin:auto; position:relative;">
     <button onclick="closeProfileModal()" aria-label="Close" style="position:absolute; top:12px; right:12px; width:32px; height:32px; border-radius:50%; background:none; border:1.5px solid #ddd; cursor:pointer; font-size:18px; color:#999; display:flex; align-items:center; justify-content:center;">✕</button>
     <div style="font-size:11px; letter-spacing:4px; text-transform:uppercase; color:#6c7682; margin-bottom:8px;">Account</div>
-    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:4px;">Business Profile</div>
-    <div id="profile-signin-note" style="font-size:12px; color:#2a8c55; margin-bottom:20px;">✓ Signed in with Google</div>
+    <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:4px;">Business Profiles</div>
+    <div id="profile-signin-note" style="font-size:12px; color:#2a8c55; margin-bottom:12px;">✓ Signed in with Google</div>
+
+    <!-- Profile Selector -->
+    <div style="margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid #f0f0f0;">
+      <label style="font-size:11px; font-weight:600; color:#6c7682; text-transform:uppercase; letter-spacing:1px; display:block; margin-bottom:6px;">Select Active Profile</label>
+      <div style="display:flex; gap:8px;">
+        <select id="profile-selector" onchange="switchProfile(this.value)" style="flex:1; font-family:'Roboto',sans-serif; font-size:13px; padding:8px 10px; border:1.5px solid rgba(20,32,46,0.13); border-radius:7px; outline:none; color:#14202e; background:#f9f9f9;">
+          <!-- Options added via JS -->
+        </select>
+        <button onclick="addNewProfile()" style="padding:0 12px; background:#f0f0f0; border:1.5px solid rgba(20,32,46,0.1); border-radius:7px; font-size:18px; cursor:pointer;" title="Add New Profile">+</button>
+      </div>
+    </div>
 
     <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">
       <div style="display:flex; flex-direction:column; gap:4px;">
@@ -2150,7 +2161,7 @@
     <div style="font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px;">Dashboard</div>
 
     <!-- Stats grid -->
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
+    <div id="dash-stats-grid" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px;">
       <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px;">
         <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">This Month · Paid</div>
         <div id="dash-month" style="font-size:20px; font-weight:700; color:#14202e;">—</div>
@@ -2170,7 +2181,7 @@
     </div>
 
     <!-- Top client -->
-    <div style="background:#f6f6f4; border-radius:8px; padding:14px 16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+    <div id="dash-top-client-card" style="background:#f6f6f4; border-radius:8px; padding:14px 16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
       <div>
         <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:4px;">Top Client · All Time</div>
         <div id="dash-top-client" style="font-size:16px; font-weight:700; color:#14202e;">—</div>
@@ -2179,7 +2190,7 @@
     </div>
 
     <!-- Monthly bar chart -->
-    <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:10px;">Last 6 Months · Invoiced</div>
+    <div id="dash-chart-title" style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:10px;">Last 6 Months · Invoiced</div>
     <div id="dash-chart" style="margin-bottom:24px;"></div>
 
     <!-- Business Profile -->
@@ -2330,6 +2341,7 @@ function changeTitleFont(fontName) {
   if (fromNameEl) fromNameEl.style.fontFamily = family;
   if (thankYouEl) thankYouEl.style.fontFamily = family;
   localStorage.setItem('invoice-title-font', fontName);
+  syncSettingsToSheet();
 }
 
 function restoreTitleFont() {
@@ -2344,6 +2356,7 @@ function changeTheme(themeName) {
     document.body.classList.add(`theme-${themeName}`);
   }
   localStorage.setItem('invoice-theme', themeName);
+  syncSettingsToSheet();
 }
 
 function restoreTheme() {
@@ -4180,11 +4193,13 @@ function getCompanyPrefix() {
 function saveCompanyPrefix() {
   const val = document.getElementById('company-prefix').value;
   localStorage.setItem('invoice-company-prefix', val);
+  syncSettingsToSheet();
 }
 
 function saveReceiptPrefix() {
   const val = document.getElementById('receipt-prefix-input').value;
   localStorage.setItem('invoice-receipt-prefix', val);
+  syncSettingsToSheet();
 }
 
 function buildFilename(presetId, data) {
@@ -4716,7 +4731,8 @@ window.saveDefaultSettings = function() {
   const selCur = document.getElementById('default-currency-select');
   if (selCur) localStorage.setItem('invoicer-default-currency', selCur.value);
 
-  showToast('Default settings saved', 'success');
+  syncSettingsToSheet();
+  showToast('Default settings saved and synced', 'success');
 };
 
 function toggleChatMenu() {
@@ -5306,7 +5322,7 @@ async function syncGoalsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   const goals = loadGoals();
   if (!goals.length) return;
-  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:K');
+  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
   for (const goal of goals) {
     const rowIdx = existing.findIndex(r => r[0] && r[0].toLowerCase() === goal.name.toLowerCase());
     const newRow = [
@@ -5320,20 +5336,21 @@ async function syncGoalsToSheet() {
       goal.status || 'Active',
       goal.claimDate || '',
       goal.receiptNumber || '',
-      goal.receiptFilename || ''
+      goal.receiptFilename || '',
+      goal.allocationPct || '0'
     ];
     if (rowIdx === -1) {
-      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A:K', [newRow]);
+      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A:L', [newRow]);
     } else {
       const sheetRow = rowIdx + 2;
-      await sheetsWrite(_sheetsSpreadsheetId, `Goals!A${sheetRow}:K${sheetRow}`, [newRow]);
+      await sheetsWrite(_sheetsSpreadsheetId, `Goals!A${sheetRow}:L${sheetRow}`, [newRow]);
     }
   }
 }
 
 async function loadGoalsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:K');
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
   if (!rows.length) return;
   const sheetGoals = rows
     .filter(r => r[0])
@@ -5348,7 +5365,8 @@ async function loadGoalsFromSheet() {
       status: r[7] || 'Active',
       claimDate: r[8] || '',
       receiptNumber: r[9] || '',
-      receiptFilename: r[10] || ''
+      receiptFilename: r[10] || '',
+      allocationPct: r[11] || '0'
     }));
   const local = loadGoals();
   sheetGoals.forEach(sg => {
@@ -5360,6 +5378,117 @@ async function loadGoalsFromSheet() {
     }
   });
   saveGoals(local);
+}
+
+// ── Business Profiles & Settings Sync ──────────────────────────
+
+function loadBusinessProfiles() {
+  const raw = localStorage.getItem('invoice-business-profiles');
+  if (raw) return JSON.parse(raw);
+  
+  // Migration: if old single profile exists, convert to multi-profile
+  const old = localStorage.getItem('invoice-business-profile');
+  if (old) {
+    const profile = JSON.parse(old);
+    profile.id = 'default';
+    profile.logo = localStorage.getItem('invoice-logo') || '';
+    const profiles = [profile];
+    saveBusinessProfiles(profiles);
+    localStorage.removeItem('invoice-business-profile');
+    return profiles;
+  }
+  return [];
+}
+
+function saveBusinessProfiles(profiles) {
+  localStorage.setItem('invoice-business-profiles', JSON.stringify(profiles));
+}
+
+function getActiveProfileId() {
+  return localStorage.getItem('invoice-active-profile-id') || 'default';
+}
+
+function setActiveProfileId(id) {
+  localStorage.setItem('invoice-active-profile-id', id);
+}
+
+function getActiveProfile() {
+  const profiles = loadBusinessProfiles();
+  const id = getActiveProfileId();
+  return profiles.find(p => p.id === id) || profiles[0] || null;
+}
+
+async function syncProfilesToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const profiles = loadBusinessProfiles();
+  if (!profiles.length) return;
+  
+  const rows = profiles.map(p => [
+    p.id, p.name, p.address || '', p.email || '', p.phone || '', p.logo || ''
+  ]);
+  
+  // Overwrite the Profiles sheet (simple sync for now)
+  await sheetsWrite(_sheetsSpreadsheetId, `Profiles!A2:F${rows.length + 1}`, rows);
+}
+
+async function loadProfilesFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Profiles!A2:F');
+  if (!rows.length) return;
+  
+  const sheetProfiles = rows.map(r => ({
+    id: r[0], name: r[1], address: r[2], email: r[3], phone: r[4], logo: r[5]
+  }));
+  
+  saveBusinessProfiles(sheetProfiles);
+  
+  // If the active profile was deleted or doesn't exist, reset to the first one
+  const activeId = getActiveProfileId();
+  if (!sheetProfiles.find(p => p.id === activeId)) {
+    setActiveProfileId(sheetProfiles[0].id);
+  }
+  
+  // Refresh logo if active profile changed
+  const active = getActiveProfile();
+  if (active && active.logo) {
+    localStorage.setItem('invoice-logo', active.logo);
+    renderLogo(active.logo);
+  }
+}
+
+async function syncSettingsToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  
+  const keys = [
+    'invoicer-default-currency',
+    'invoicer-default-pay-period',
+    'invoice-theme',
+    'invoice-title-font',
+    'invoice-filename-preset',
+    'invoice-company-prefix',
+    'invoice-receipt-prefix'
+  ];
+  
+  const rows = keys.map(k => [k, localStorage.getItem(k) || '']);
+  await sheetsWrite(_sheetsSpreadsheetId, `Settings!A2:B${rows.length + 1}`, rows);
+}
+
+async function loadSettingsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Settings!A2:B');
+  if (!rows.length) return;
+  
+  rows.forEach(r => {
+    if (r[0] && r[1] !== undefined) {
+      localStorage.setItem(r[0], r[1]);
+    }
+  });
+  
+  // Apply visual settings immediately
+  restoreTheme();
+  restoreTitleFont();
+  refreshSheetsIdStatus();
+  refreshGmailIdStatus();
 }
 
 function applyClient(client) {
@@ -6014,11 +6143,12 @@ async function syncToGoogleSheets(invoiceData) {
       services,
       invoiceData.currency + ' ' + invoiceData.projectTotal,
       invoiceData.totalAmount,
-      '⬜ Unpaid'
+      '⬜ Unpaid',
+      (invoiceData.from && invoiceData.from.name) || ''
     ];
 
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:G:append?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:H:append?valueInputOption=USER_ENTERED`,
       {
         method: 'POST',
         headers: {
@@ -6117,7 +6247,7 @@ async function ensureAllTabs(spreadsheetId) {
     }});
   }
 
-  for (const tab of ['Analysis', 'Clients', 'Goals']) {
+  for (const tab of ['Analysis', 'Clients', 'Goals', 'Profiles', 'Settings']) {
     if (!existing.includes(tab)) {
       requests.push({ addSheet: { properties: { title: tab } } });
     }
@@ -6130,11 +6260,24 @@ async function ensureAllTabs(spreadsheetId) {
     await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}:batchUpdate`, { requests });
   }
 
+  // Ensure Ledger has 'Company' header (Column H)
+  const ledgerMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Ledger!A1:H1`);
+  const ledgerHeaders = ledgerMeta.values ? ledgerMeta.values[0] : [];
+  if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Company')) {
+    await sheetsWrite(spreadsheetId, 'Ledger!H1', [['Company']]);
+  }
+
   if (!existing.includes('Clients')) {
     await sheetsWrite(spreadsheetId, 'Clients!A1:D1', [['Name', 'Address', 'Email', 'Phone']]);
   }
   if (!existing.includes('Goals')) {
-    await sheetsWrite(spreadsheetId, 'Goals!A1:E1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created']]);
+    await sheetsWrite(spreadsheetId, 'Goals!A1:L1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created', 'Amount Reached', 'Last Contribution', 'Status', 'Claim Date', 'Receipt #', 'Receipt File', 'Allocation %']]);
+  }
+  if (!existing.includes('Profiles')) {
+    await sheetsWrite(spreadsheetId, 'Profiles!A1:F1', [['Profile ID', 'Name', 'Address', 'Email', 'Phone', 'LogoData']]);
+  }
+  if (!existing.includes('Settings')) {
+    await sheetsWrite(spreadsheetId, 'Settings!A1:B1', [['Setting Key', 'Value']]);
   }
   if (!existing.includes('Analysis')) {
     await writeAnalysisFormulas(spreadsheetId);
@@ -6204,15 +6347,21 @@ async function setupDrive() {
     await ensureLedgerSheet(folderId);
     await ensureAllTabs(_sheetsSpreadsheetId);
 
-    // Sync latest sheet data to warm localStorage cache on load/sign-in
-    const sheetRows = await loadLedgerFromSheet();
+    // Pull all data in parallel to warm cache
+    const [sheetRows] = await Promise.all([
+      loadLedgerFromSheet(),
+      loadClientsFromSheet(),
+      loadGoalsFromSheet(),
+      loadProfilesFromSheet(),
+      loadSettingsFromSheet()
+    ]);
+
     if (sheetRows) saveLedgerRows(sheetRows);
 
-    await loadClientsFromSheet();
-    await loadGoalsFromSheet();
     // If Clients sheet is empty, seed address book from ledger rows
     seedClientsFromLedger();
     renderClientChips();
+    
     if (statusEl) {
       statusEl.innerHTML = '✓ <strong style="color:#2a8c55;">mooInvoicer/</strong> folder ready : Ledger connected';
       statusEl.style.color = '#2a8c55';
@@ -6331,14 +6480,21 @@ async function openDashboard() {
     emptyEl.style.display = 'block';
     emptyEl.textContent = 'Syncing...';
   }
-  const [rows] = await Promise.all([
-    loadLedgerFromSheet(),
-    loadGoalsFromSheet(),
-  ]);
-  if (rows) saveLedgerRows(rows);
-  if (emptyEl) {
-    emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
+  
+  try {
+    const [rows] = await Promise.all([
+      loadLedgerFromSheet(),
+      loadGoalsFromSheet(),
+    ]);
+    if (rows) saveLedgerRows(rows);
+    if (emptyEl) {
+      emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
+    }
+  } catch (e) {
+    console.error('Dashboard sync failed:', e);
+    if (emptyEl) emptyEl.textContent = 'Sync failed. Using local data.';
   }
+  
   renderDashboard();
 }
 function closeDashboard() {
@@ -6348,11 +6504,24 @@ function closeDashboard() {
 function renderDashboard() {
   const rows = loadLedgerRows();
   const emptyEl = document.getElementById('dash-empty');
-  if (!rows.length) {
-    if (emptyEl) emptyEl.style.display = 'block';
-    return;
-  }
-  if (emptyEl) emptyEl.style.display = 'none';
+  
+  // Toggle visibility of empty state vs ledger stats
+  if (emptyEl) emptyEl.style.display = rows.length ? 'none' : 'block';
+  
+  const statsDisplay = rows.length ? 'flex' : 'none';
+  const gridDisplay  = rows.length ? 'grid' : 'none';
+  
+  const statsGrid = document.getElementById('dash-stats-grid');
+  if (statsGrid) statsGrid.style.display = gridDisplay;
+  
+  const topClientCard = document.getElementById('dash-top-client-card');
+  if (topClientCard) topClientCard.style.display = statsDisplay;
+  
+  const chartTitle = document.getElementById('dash-chart-title');
+  if (chartTitle) chartTitle.style.display = statsDisplay;
+  
+  const chartDiv = document.getElementById('dash-chart');
+  if (chartDiv) chartDiv.style.display = statsDisplay;
 
   const now = new Date();
 
@@ -6361,7 +6530,6 @@ function renderDashboard() {
   }
   function parseRowDate(str) {
     if (!str) return null;
-    // MM/DD/YYYY — parse manually to avoid browser M/D/Y misinterpretation
     const parts = str.split('/').map(s => s.trim());
     if (parts.length === 3) {
       const d = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
@@ -6388,7 +6556,6 @@ function renderDashboard() {
   const paid = rows.filter(r => r.status === '✅ Paid');
   const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit');
 
-  // "This Month" paid — if current month has no paid invoices yet, fall back to last month
   let monthPaidYM = thisYM;
   let monthPaid = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
   if (monthPaid === 0) {
@@ -6401,7 +6568,6 @@ function renderDashboard() {
   const avgInvoice  = rows.length ? rows.reduce((s, r) => s + parseAmt(r.amountDue), 0) / rows.length : 0;
   const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
 
-  // Derive currency symbol from ledger rows (projectTotal stores e.g. "JMD 60,000")
   const currencyCode = (() => {
     const pt = rows[0] && rows[0].projectTotal;
     if (!pt) return 'USD';
@@ -6410,69 +6576,69 @@ function renderDashboard() {
   })();
   window.currentDashCurrency = currencyCode;
   const fmt = n => formatCurrencyNative(Math.round(n), currencyCode, 0);
-  const monthLabelEl = document.querySelector('#dash-month').previousElementSibling;
-  if (monthLabelEl && monthPaidYM !== thisYM) {
-    const [ly, lm] = monthPaidYM.split('-').map(Number);
-    const lastMonthName = new Date(ly, lm - 1, 1).toLocaleString('default', { month: 'long' });
-    monthLabelEl.textContent = `${lastMonthName} · Paid`;
-  } else if (monthLabelEl) {
-    monthLabelEl.textContent = 'This Month · Paid';
-  }
-  document.getElementById('dash-month').textContent       = fmt(monthPaid);
-  document.getElementById('dash-quarter').textContent     = fmt(quarterAll);
-  document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
-  document.getElementById('dash-outstanding').textContent = fmt(outstanding);
 
-  // Top client by total invoiced amount
-  const clientTotals = {};
-  rows.forEach(r => {
-    const name = (r.client || '').trim();
-    if (!name) return;
-    clientTotals[name] = (clientTotals[name] || 0) + parseAmt(r.amountDue);
-  });
-  const topClient = Object.entries(clientTotals).sort((a, b) => b[1] - a[1])[0];
-  const topClientEl    = document.getElementById('dash-top-client');
-  const topClientAmtEl = document.getElementById('dash-top-client-amt');
-  if (topClientEl && topClientAmtEl) {
-    if (topClient) {
-      topClientEl.textContent    = topClient[0];
-      topClientAmtEl.textContent = fmt(topClient[1]);
-    } else {
-      topClientEl.textContent    = '—';
-      topClientAmtEl.textContent = '—';
+  if (rows.length) {
+    const monthLabelEl = document.querySelector('#dash-month').previousElementSibling;
+    if (monthLabelEl && monthPaidYM !== thisYM) {
+      const [ly, lm] = monthPaidYM.split('-').map(Number);
+      const lastMonthName = new Date(ly, lm - 1, 1).toLocaleString('default', { month: 'long' });
+      monthLabelEl.textContent = `${lastMonthName} · Paid`;
+    } else if (monthLabelEl) {
+      monthLabelEl.textContent = 'This Month · Paid';
     }
-  }
+    document.getElementById('dash-month').textContent       = fmt(monthPaid);
+    document.getElementById('dash-quarter').textContent     = fmt(quarterAll);
+    document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
+    document.getElementById('dash-outstanding').textContent = fmt(outstanding);
 
-  // Last 6 months bar chart
-  const months = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
-  }
-  const totals = months.map(m => {
-    const [y, mo] = m.split('-').map(Number);
-    const date = new Date(y, mo - 1, 1);
-    return {
-      label: date.toLocaleString('default', { month: 'short' }),
-      total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0)
-    };
-  });
-  const maxTotal = Math.max(...totals.map(t => t.total), 1);
+    const clientTotals = {};
+    rows.forEach(r => {
+      const name = (r.client || '').trim();
+      if (!name) return;
+      clientTotals[name] = (clientTotals[name] || 0) + parseAmt(r.amountDue);
+    });
+    const topClient = Object.entries(clientTotals).sort((a, b) => b[1] - a[1])[0];
+    const topClientEl    = document.getElementById('dash-top-client');
+    const topClientAmtEl = document.getElementById('dash-top-client-amt');
+    if (topClientEl && topClientAmtEl) {
+      if (topClient) {
+        topClientEl.textContent    = topClient[0];
+        topClientAmtEl.textContent = fmt(topClient[1]);
+      } else {
+        topClientEl.textContent    = '—';
+        topClientAmtEl.textContent = '—';
+      }
+    }
 
-  const chart = document.getElementById('dash-chart');
-  chart.innerHTML = '';
-  totals.forEach(t => {
-    const pct = Math.round((t.total / maxTotal) * 100);
-    const bar = document.createElement('div');
-    bar.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:5px;';
-    bar.innerHTML = `
-      <span style="font-size:10px; width:28px; color:#9aa2ac; flex-shrink:0;">${t.label}</span>
-      <div style="flex:1; background:#eeeeec; border-radius:3px; height:14px;">
-        <div style="width:${pct}%; background:#14202e; height:100%; border-radius:3px; transition:width 0.3s;"></div>
-      </div>
-      <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">${t.total > 0 ? fmt(t.total) : '—'}</span>`;
-    chart.appendChild(bar);
-  });
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+    }
+    const totals = months.map(m => {
+      const [y, mo] = m.split('-').map(Number);
+      const date = new Date(y, mo - 1, 1);
+      return {
+        label: date.toLocaleString('default', { month: 'short' }),
+        total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0)
+      };
+    });
+    const maxTotal = Math.max(...totals.map(t => t.total), 1);
+    const chart = document.getElementById('dash-chart');
+    chart.innerHTML = '';
+    totals.forEach(t => {
+      const pct = Math.round((t.total / maxTotal) * 100);
+      const bar = document.createElement('div');
+      bar.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:5px;';
+      bar.innerHTML = `
+        <span style="font-size:10px; width:28px; color:#9aa2ac; flex-shrink:0;">${t.label}</span>
+        <div style="flex:1; background:#eeeeec; border-radius:3px; height:14px;">
+          <div style="width:${pct}%; background:#14202e; height:100%; border-radius:3px; transition:width 0.3s;"></div>
+        </div>
+        <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">${t.total > 0 ? fmt(t.total) : '—'}</span>`;
+      chart.appendChild(bar);
+    });
+  }
 
   renderGoalsList();
 
@@ -6972,7 +7138,7 @@ async function loadLedgerFromSheet() {
 
   try {
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:G`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:H`,
       {
         headers: { Authorization: `Bearer ${_gmailToken}` }
       }
@@ -6997,7 +7163,8 @@ async function loadLedgerFromSheet() {
       service: row[3] || '',
       projectTotal: row[4] || '',
       amountDue: row[5] || '',
-      status: row[6] || '⬜ Unpaid'
+      status: row[6] || '⬜ Unpaid',
+      company: row[7] || ''
     }));
   } catch (e) {
     console.error('Ledger load error:', e.message);
@@ -7232,18 +7399,25 @@ let _recognizing = false;
 // ── Business Profile ─────────────────────────────────────────
 
 function openProfileModal() {
-  const saved = loadBusinessProfile();
-  const invoiceFrom = getData().from || {};
-  const profile = saved || {
-    name:    invoiceFrom.name    || '',
-    address: invoiceFrom.address || '',
-    email:   invoiceFrom.email   || '',
-    phone:   invoiceFrom.phone   || '',
-  };
-  document.getElementById('prof-name').value    = profile.name    || '';
-  document.getElementById('prof-address').value = profile.address || '';
-  document.getElementById('prof-email').value   = profile.email   || '';
-  document.getElementById('prof-phone').value   = profile.phone   || '';
+  const profiles = loadBusinessProfiles();
+  const activeId = getActiveProfileId();
+  
+  const selector = document.getElementById('profile-selector');
+  selector.innerHTML = '';
+  profiles.forEach(p => {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name || 'Unnamed Profile';
+    opt.selected = (p.id === activeId);
+    selector.appendChild(opt);
+  });
+  
+  const active = getActiveProfile() || { name:'', address:'', email:'', phone:'' };
+  document.getElementById('prof-name').value    = active.name    || '';
+  document.getElementById('prof-address').value = active.address || '';
+  document.getElementById('prof-email').value   = active.email   || '';
+  document.getElementById('prof-phone').value   = active.phone   || '';
+  
   const note = document.getElementById('profile-signin-note');
   if (note) {
     const exp = parseInt(localStorage.getItem('gmail-token-exp') || '0');
@@ -7259,8 +7433,34 @@ function openProfileModal() {
   document.getElementById('profile-overlay').style.display = 'flex';
 }
 
-function closeProfileModal() {
-  document.getElementById('profile-overlay').style.display = 'none';
+function switchProfile(id) {
+  setActiveProfileId(id);
+  const active = getActiveProfile();
+  if (active) {
+    document.getElementById('prof-name').value    = active.name    || '';
+    document.getElementById('prof-address').value = active.address || '';
+    document.getElementById('prof-email').value   = active.email   || '';
+    document.getElementById('prof-phone').value   = active.phone   || '';
+    
+    // Switch logo if exists
+    if (active.logo) {
+      localStorage.setItem('invoice-logo', active.logo);
+      renderLogo(active.logo);
+    } else {
+      removeLogo();
+    }
+  }
+}
+
+function addNewProfile() {
+  const name = prompt('Enter a name for the new profile:');
+  if (!name) return;
+  const profiles = loadBusinessProfiles();
+  const id = 'p' + Date.now();
+  profiles.push({ id, name, address: '', email: '', phone: '', logo: '' });
+  saveBusinessProfiles(profiles);
+  setActiveProfileId(id);
+  openProfileModal();
 }
 
 function saveProfileFromModal() {
@@ -7269,23 +7469,36 @@ function saveProfileFromModal() {
   const email   = document.getElementById('prof-email').value.trim();
   const phone   = document.getElementById('prof-phone').value.trim();
   if (!name) { showToast('Business name is required.', 'error'); return; }
-  localStorage.setItem('invoice-business-profile', JSON.stringify({ name, address, email, phone }));
-  showToast('Profile saved.', 'success');
+  
+  const profiles = loadBusinessProfiles();
+  const activeId = getActiveProfileId();
+  const idx = profiles.findIndex(p => p.id === activeId);
+  
+  const logo = localStorage.getItem('invoice-logo') || '';
+  
+  if (idx >= 0) {
+    profiles[idx] = { ...profiles[idx], name, address, email, phone, logo };
+  } else {
+    profiles.push({ id: activeId, name, address, email, phone, logo });
+  }
+  
+  saveBusinessProfiles(profiles);
+  syncProfilesToSheet();
+  syncSettingsToSheet(); // Also sync app settings while we're at it
+  
+  showToast('Profile saved and synced.', 'success');
   closeProfileModal();
 }
 
 function applyProfileFromModal() {
   saveProfileFromModal();
-  // saveProfileFromModal shows toast and closes — also apply to invoice
-  const profile = loadBusinessProfile();
+  const profile = getActiveProfile();
   if (!profile) return;
   const data = getData();
   data.from.name    = profile.name;
   data.from.address = profile.address;
   data.from.email   = profile.email;
   data.from.phone   = profile.phone;
-  data.dateOverride    = data.date;
-  data.receiptOverride = data.receiptNumber;
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
   render(getData());
 }
@@ -7310,20 +7523,33 @@ function saveBusinessProfile() {
     address: data.from.address || '',
     email:   data.from.email   || '',
     phone:   data.from.phone   || '',
+    logo:    localStorage.getItem('invoice-logo') || ''
   };
   if (!profile.name) { showToast('Please enter a business name before saving the profile.', 'error'); return; }
-  localStorage.setItem('invoice-business-profile', JSON.stringify(profile));
+  
+  const profiles = loadBusinessProfiles();
+  const activeId = getActiveProfileId();
+  const idx = profiles.findIndex(p => p.id === activeId);
+  
+  if (idx >= 0) {
+    profiles[idx] = { ...profiles[idx], ...profile };
+  } else {
+    profiles.push({ ...profile, id: activeId });
+  }
+  
+  saveBusinessProfiles(profiles);
+  syncProfilesToSheet();
+  
   const btn = document.querySelector('.edit-only[onclick="saveBusinessProfile()"]');
   if (btn) { btn.textContent = '✓ Profile Saved'; setTimeout(() => { btn.textContent = '⬇ Save as Profile'; }, 2000); }
 }
 
 function loadBusinessProfile() {
-  const raw = localStorage.getItem('invoice-business-profile');
-  return raw ? JSON.parse(raw) : null;
+  return getActiveProfile();
 }
 
 function applyBusinessProfile() {
-  const profile = loadBusinessProfile();
+  const profile = getActiveProfile();
   if (!profile) {
     // No profile yet — enter edit mode and guide user to the From section
     if (!document.body.classList.contains('editing')) startEdit();
@@ -7900,6 +8126,10 @@ document.addEventListener('click', function(e) {
   <span style="font-size:11px; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,0.5); flex:1;">Editing invoice</span>
   <button onclick="cancelEdit()" style="padding:8px 20px; background:rgba(255,255,255,0.1); color:#fff; border:1.5px solid rgba(255,255,255,0.2); border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer;">Cancel</button>
   <button id="btn-save-changes" onclick="saveEdit()" style="padding:8px 24px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">Save Changes</button>
+</div>
+</body>
+</html>
+4px; background:#d0241b; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:600; cursor:pointer;">Save Changes</button>
 </div>
 </body>
 </html>
