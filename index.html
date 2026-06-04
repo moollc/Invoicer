@@ -781,67 +781,99 @@
       position: fixed;
       right: auto;
       top: auto;
-      bottom: 16px;
+      bottom: 20px;
       left: 50%;
       transform: translateX(-50%);
       flex-direction: row;
       border-radius: 40px;
-      padding: 8px 12px;
-      gap: 4px;
+      padding: 8px 14px;
+      gap: 6px;
       width: auto;
-      max-width: calc(100vw - 32px);
+      max-width: calc(100vw - 24px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+      background: rgba(20,32,46,0.95);
+      backdrop-filter: blur(8px);
+      z-index: 1000;
     }
-    .tb-group { flex-direction: row; gap: 4px; }
-    .tb-divider { width: 1px; height: 22px; margin: 0 4px; }
+    .tb-group { flex-direction: row; gap: 6px; }
+    .tb-divider { width: 1.5px; height: 20px; margin: 0 2px; background: rgba(255,255,255,0.1); }
     #toolbar button {
-      width: 36px;
-      height: 36px;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     #toolbar button .tb-label { display: none; }
     #font-selector, #theme-selector {
-      width: 90px;
-      height: 36px;
-      padding: 2px 4px;
+      width: 80px;
+      height: 40px;
+      padding: 2px 6px;
+      font-size: 11px;
     }
 
     .page {
       width: 100%;
       min-height: auto;
       margin: 0;
-      padding: 12px;
+      padding: 16px 12px 100px; /* Space for toolbar */
       border-radius: 0;
       box-shadow: none;
     }
 
+    /* Modals & Overlays */
+    [id$="-overlay"] > div,
+    #shortcuts-modal > div {
+      max-width: 92% !important;
+      padding: 24px 20px !important;
+      width: 100% !important;
+      margin: 10px !important;
+    }
+
+    #preview-overlay { padding: 12px 10px 80px; }
+    #preview-overlay > div:first-child { 
+      flex-direction: column; 
+      gap: 12px; 
+      align-items: stretch !important;
+    }
+    #preview-overlay .btn-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    #preview-overlay button { width: 100%; padding: 10px !important; }
+
     .header {
       display: block;
-      padding-bottom: 12px;
+      padding-bottom: 16px;
       border-bottom: 1px solid var(--rule);
     }
 
     .title-block {
       border-right: none;
       padding-right: 0;
-      margin-bottom: 12px;
+      margin-bottom: 16px;
     }
 
     .invoice-word {
-      font-size: 36px;
+      font-size: 32px;
       line-height: 0.9;
     }
 
     .this-is-your {
-      font-size: 9px;
+      font-size: 8.5px;
     }
 
     .meta {
-      font-size: 10px;
-      gap: 4px 12px;
+      font-size: 9.5px;
+      gap: 6px 12px;
+      margin-top: 8px;
     }
 
     .right-col {
       text-align: left;
-      gap: 12px;
+      gap: 16px;
+      margin-top: 16px;
     }
 
     .party .name {
@@ -849,46 +881,47 @@
     }
 
     .party.from .name {
-      font-size: 16px;
+      font-size: 15px;
     }
 
     .party .sub {
       font-size: 10px;
+      line-height: 1.5;
     }
 
     .invoice-table {
-      font-size: 11px;
-      margin-top: 12px;
+      font-size: 10.5px;
+      margin-top: 16px;
     }
 
     .invoice-table th {
-      font-size: 9px;
-      padding: 8px 10px;
+      font-size: 8.5px;
+      padding: 6px 8px;
     }
 
     .invoice-table td {
-      padding: 12px 8px;
-      font-size: 11px;
+      padding: 10px 6px;
+      font-size: 10.5px;
     }
 
     .service-name {
-      font-size: 11px;
+      font-size: 10.5px;
     }
 
-    .col-service { width: 25%; }
-    .col-details { width: 35%; }
+    .col-service { width: 30%; }
+    .col-details { width: 30%; }
     .col-rate    { width: 20%; }
     .col-cost    { width: 20%; }
 
     .total-wrap {
-      margin-top: 12px;
+      margin-top: 16px;
       position: sticky;
       bottom: 0;
-      z-index: 20;
+      z-index: 900;
       background: var(--page);
-      padding: 10px 0 6px;
-      box-shadow: 0 -4px 16px rgba(20,32,46,0.10);
-      border-top: 1.5px solid var(--rule);
+      padding: 12px 0 8px;
+      box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
+      border-top: 1px solid var(--rule);
     }
 
     .total-block {
@@ -896,27 +929,29 @@
     }
 
     .project-total-row .ptv {
-      font-size: 16px;
+      font-size: 15px;
     }
 
     .total-card .total-amount {
-      font-size: 32px;
-      gap: 8px;
+      font-size: 28px;
+      gap: 6px;
     }
 
     .total-card .qualifier span {
-      font-size: 12px;
+      font-size: 11px;
     }
 
     .footer {
-      gap: 12px;
-      margin-top: 12px;
+      gap: 16px;
+      margin-top: 24px;
       flex-direction: column;
       align-items: flex-start;
+      padding-bottom: 40px;
     }
 
     .thank-you {
-      font-size: 24px;
+      font-size: 20px;
+      letter-spacing: -0.5px;
     }
 
     .footer-divider {
@@ -924,8 +959,9 @@
     }
 
     .payment-note {
-      font-size: 10px;
+      font-size: 10.5px;
       width: 100%;
+      line-height: 1.4;
     }
 
     #chat-panel {
@@ -933,20 +969,74 @@
       bottom: 0;
       right: 0;
       width: 100%;
-      max-height: 70vh;
-      border-radius: 12px 12px 0 0;
+      max-height: 85vh;
+      border-radius: 20px 20px 0 0;
+      z-index: 2000;
     }
 
     /* Dashboard modal */
     #dashboard-overlay > div {
-      padding: 20px 16px !important;
-      border-radius: 10px;
+      padding: 24px 18px !important;
+      border-radius: 12px;
+      margin: 0 !important;
+      max-width: 100% !important;
+      width: 100% !important;
+      height: 100% !important;
     }
 
-    /* Dashboard stat card labels — tighten letter-spacing so they don't wrap at 390px */
+    #dash-stats-grid {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    /* Dashboard stat card labels — tighter for small screens */
     #dashboard-overlay [style*="letter-spacing:2px"],
-    #dashboard-overlay [style*="letter-spacing: 2px"] {
-      letter-spacing: 0.5px !important;
+    #dashboard-overlay [style*="letter-spacing: 2px"],
+    #dashboard-overlay [style*="letter-spacing:4px"] {
+      letter-spacing: 0.3px !important;
+      font-size: 9px !important;
+    }
+
+    #dash-month, #dash-quarter, #dash-avg, #dash-outstanding {
+      font-size: 17px !important;
+    }
+
+    /* Ledger Rows Mobile */
+    .ledger-row {
+      padding: 10px 14px !important;
+      border-radius: 8px !important;
+      margin-bottom: 6px !important;
+    }
+    .ledger-row-check {
+      width: 18px !important;
+      height: 18px !important;
+    }
+    .ledger-row-text {
+      font-size: 12px !important;
+    }
+    .ledger-row-subtext {
+      font-size: 10px !important;
+    }
+
+    /* Goal Bars */
+    .goal-bar-wrap {
+      height: 10px !important;
+    }
+    .goal-name {
+      font-size: 13px !important;
+    }
+    .goal-target {
+      font-size: 11px !important;
+    }
+
+    /* Client Picker */
+    #client-picker-row {
+      padding: 0 14px 12px !important;
+    }
+    .client-chip {
+      padding: 6px 12px !important;
+      font-size: 11px !important;
+      border-radius: 20px !important;
     }
   }
 
@@ -2205,8 +2295,12 @@
     <!-- Goals -->
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
       <div style="font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac;">Goals</div>
-      <button onclick="addGoal()" style="font-family:'Roboto',sans-serif; font-size:11px; padding:4px 12px; background:#14202e; color:#fff; border:none; border-radius:5px; cursor:pointer;">+ Add Goal</button>
+      <div style="display:flex; gap:8px;">
+        <button onclick="openDashboard()" style="font-family:'Roboto',sans-serif; font-size:10px; padding:4px 10px; background:#f0f0f0; color:#14202e; border:none; border-radius:5px; cursor:pointer;">⟳ Sync</button>
+        <button onclick="addGoal()" style="font-family:'Roboto',sans-serif; font-size:11px; padding:4px 12px; background:#14202e; color:#fff; border:none; border-radius:5px; cursor:pointer;">+ Add Goal</button>
+      </div>
     </div>
+
     <div id="dash-goals-list"></div>
 
     <div id="dash-empty" style="display:none; font-size:12px; color:#9aa2ac; text-align:center; padding:20px 0;">
@@ -3763,6 +3857,7 @@ async function renderLedgerHistory() {
     rowMain.appendChild(cb);
 
     const info = document.createElement('div');
+    info.className = 'ledger-row-text';
     info.style.cssText = 'font-size:11.5px; color:#14202e; line-height:1.5; min-width:0; flex:1;';
     
     let overdueFlag = '';
@@ -3771,11 +3866,11 @@ async function renderLedgerHistory() {
       const graceDays = parseInt(row.payPeriod) || 30;
       if (daysDiff > graceDays) {
         const daysOver = daysDiff - graceDays;
-        overdueFlag = `<span style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.3px; background:#fdecea; border-radius:3px; padding:1px 5px;">${daysOver}d overdue</span>`;
+        overdueFlag = `<span class="ledger-row-subtext" style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.3px; background:#fdecea; border-radius:3px; padding:1px 5px;">${daysOver}d overdue</span>`;
       } else if (daysDiff >= 0) {
         const daysLeft = graceDays - daysDiff;
         if (daysLeft <= 7) {
-          overdueFlag = `<span style="color:#b45309; font-size:10px; font-weight:600; margin-left:6px; background:#fff8e1; border-radius:3px; padding:1px 5px;">Due in ${daysLeft}d</span>`;
+          overdueFlag = `<span class="ledger-row-subtext" style="color:#b45309; font-size:10px; font-weight:600; margin-left:6px; background:#fff8e1; border-radius:3px; padding:1px 5px;">Due in ${daysLeft}d</span>`;
         }
       }
     }
@@ -5349,9 +5444,11 @@ async function syncGoalsToSheet() {
 }
 
 async function loadGoalsFromSheet() {
-  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Missing token or ID' };
+  console.log('🔄 Syncing goals from sheet...');
   const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
-  if (!rows.length) return;
+  if (rows === null) return { success: false, error: 'Read failed' };
+  
   const sheetGoals = rows
     .filter(r => r[0])
     .map(r => ({ 
@@ -5368,6 +5465,7 @@ async function loadGoalsFromSheet() {
       receiptFilename: r[10] || '',
       allocationPct: r[11] || '0'
     }));
+  
   const local = loadGoals();
   sheetGoals.forEach(sg => {
     const idx = local.findIndex(g => g.name.toLowerCase() === sg.name.toLowerCase());
@@ -5378,6 +5476,8 @@ async function loadGoalsFromSheet() {
     }
   });
   saveGoals(local);
+  console.log(`✅ Goals synced: ${sheetGoals.length} found`);
+  return { success: true, count: sheetGoals.length };
 }
 
 // ── Business Profiles & Settings Sync ──────────────────────────
@@ -6196,22 +6296,57 @@ async function driveRequest(method, path, body, isUpload) {
   return res.json();
 }
 
-async function sheetsRequest(method, path, body) {
-  const res = await fetch('https://sheets.googleapis.com/v4' + path, {
-    method,
-    headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined
-  });
-  return res.json();
+async function sheetsRequest(method, path, body, isRetry = false) {
+  if (!_gmailToken || !_sheetsSpreadsheetId) {
+    // Attempt to restore if missing
+    if (typeof restoreTokenFromStorage === 'function') restoreTokenFromStorage();
+    if (!_gmailToken || !_sheetsSpreadsheetId) return { error: { message: 'Missing token or spreadsheet ID' } };
+  }
+  
+  try {
+    const res = await fetch('https://sheets.googleapis.com/v4' + path, {
+      method,
+      headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    });
+
+    if ((res.status === 401 || res.status === 403) && !isRetry) {
+      console.warn('Sheets API auth error, attempting silent refresh...');
+      return new Promise((resolve) => {
+        if (typeof initGmailAuth === 'function') {
+          initGmailAuth(() => {
+            sheetsRequest(method, path, body, true).then(resolve);
+          }, true); // silent refresh
+        } else {
+          resolve({ error: { message: 'Auth not initialized' } });
+        }
+      });
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('Sheets API Error:', data.error?.message || 'Unknown error');
+      return { error: data.error || { message: res.statusText } };
+    }
+    return data;
+  } catch (e) {
+    console.error('Sheets API Fetch Exception:', e);
+    return { error: { message: e.message } };
+  }
 }
 async function sheetsWrite(spreadsheetId, range, values) {
-  return sheetsRequest('PUT', `/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, { values });
+  const res = await sheetsRequest('PUT', `/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, { values });
+  if (res.error) throw new Error(res.error.message);
+  return res;
 }
 async function sheetsAppend(spreadsheetId, range, values) {
-  return sheetsRequest('POST', `/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, { values });
+  const res = await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, { values });
+  if (res.error) throw new Error(res.error.message);
+  return res;
 }
 async function sheetsRead(spreadsheetId, range) {
   const res = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/${range}`);
+  if (!res || res.error) return null;
   return res.values || [];
 }
 
@@ -6478,21 +6613,33 @@ async function openDashboard() {
   const emptyEl = document.getElementById('dash-empty');
   if (emptyEl) {
     emptyEl.style.display = 'block';
-    emptyEl.textContent = 'Syncing...';
+    emptyEl.textContent = '🔄 Syncing cloud data...';
   }
   
   try {
-    const [rows] = await Promise.all([
+    const [rows, goalRes] = await Promise.all([
       loadLedgerFromSheet(),
       loadGoalsFromSheet(),
     ]);
+    
     if (rows) saveLedgerRows(rows);
+    
     if (emptyEl) {
-      emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
+      if (rows && rows.length > 0) {
+        emptyEl.style.display = 'none';
+      } else {
+        emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
+      }
+    }
+    
+    if (goalRes && !goalRes.success) {
+      console.warn('Goals sync failed:', goalRes.error);
+      showToast('Goals sync partially failed. Using local cache.', 'info');
     }
   } catch (e) {
     console.error('Dashboard sync failed:', e);
-    if (emptyEl) emptyEl.textContent = 'Sync failed. Using local data.';
+    if (emptyEl) emptyEl.textContent = '⚠️ Sync failed. Check connection.';
+    showToast('Could not sync with Google Sheets.', 'error');
   }
   
   renderDashboard();
@@ -6679,7 +6826,7 @@ function renderGoalsList() {
     
     div.innerHTML = `
       <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px; position:relative; z-index:2; gap:6px;">
-        <strong style="font-size:13px; color:#14202e; flex:1; min-width:0; word-break:break-word;">${g.name}</strong>
+        <strong class="goal-name" style="font-size:13px; color:#14202e; flex:1; min-width:0; word-break:break-word;">${g.name}</strong>
         <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
           <button onclick="editGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:11px; color:#9aa2ac; padding:0; line-height:1; letter-spacing:0.5px;" title="Edit goal">Edit</button>
           <button onclick="deleteGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:13px; color:#9aa2ac; padding:0; line-height:1;" title="Delete goal">✕</button>
@@ -6687,12 +6834,12 @@ function renderGoalsList() {
       </div>
       <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:2;">
         ${claimBtn}
-        ${g.deadline ? `<span style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
-        <span style="font-size:12px; color:#6c7682;">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
+        ${g.deadline ? `<span class="goal-target" style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
+        <span class="goal-target" style="font-size:12px; color:#6c7682;">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
       </div>
       <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" style="color:#5b4fcf; word-break:break-all;">${url}</a>`) : 'No notes provided'}</div>
       <!-- Progress Bar -->
-      <div style="width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2;">
+      <div class="goal-bar-wrap" style="width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2;">
          <div class="goal-bar-fill" style="height:100%; width:0%; background:#14202e; transition:width 0.6s ease-out;"></div>
       </div>`;
     el.appendChild(div);
