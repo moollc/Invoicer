@@ -5450,12 +5450,18 @@ async function syncGoalsToSheet() {
 
 async function loadGoalsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Missing token or ID' };
-  console.log('🔄 Syncing goals from sheet...');
+  console.log(`🔄 [Goals] Syncing from spreadsheet: ${_sheetsSpreadsheetId}`);
   const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
-  if (rows === null) return { success: false, error: 'Read failed' };
+  
+  if (rows === null) {
+    console.error('❌ [Goals] Read failed (Check tab name "Goals")');
+    return { success: false, error: 'Read failed' };
+  }
+  
+  console.log(`[Goals] Raw data rows received: ${rows.length}`);
   
   const sheetGoals = rows
-    .filter(r => r[0])
+    .filter(r => r[0] && r[0].trim() !== '')
     .map(r => ({ 
       name: r[0], 
       amount: r[1] || '0', 
@@ -5470,10 +5476,11 @@ async function loadGoalsFromSheet() {
       receiptFilename: r[10] || '',
       allocationPct: r[11] || '0'
     }));
-
-    const local = loadGoals();
-    sheetGoals.forEach(sg => {
-    // Only merge if we have a name and amount
+  
+  console.log(`[Goals] Filtered valid goals: ${sheetGoals.length}`);
+  
+  const local = loadGoals();
+  sheetGoals.forEach(sg => {
     if (!sg.name) return;
     const idx = local.findIndex(g => g.name.toLowerCase() === sg.name.toLowerCase());
     if (idx >= 0) {
@@ -5481,13 +5488,13 @@ async function loadGoalsFromSheet() {
     } else {
       local.push(sg);
     }
-    });
-    // Clean up any potential 'undefined' names that leaked in
-    const cleaned = local.filter(g => g.name && g.name !== 'undefined');
-    saveGoals(cleaned);
-    console.log(`✅ Goals synced: ${sheetGoals.length} found`);
-    return { success: true, count: sheetGoals.length };
-    }
+  });
+  
+  const cleaned = local.filter(g => g.name && g.name !== 'undefined');
+  saveGoals(cleaned);
+  console.log(`✅ [Goals] Sync complete. Local storage count: ${cleaned.length}`);
+  return { success: true, count: sheetGoals.length };
+}
 
 
 // ── Business Profiles & Settings Sync ──────────────────────────
@@ -6488,22 +6495,31 @@ async function setupDrive() {
   const statusEl = document.getElementById('drive-setup-status');
   try {
     if (statusEl) statusEl.textContent = 'Setting up...';
+    console.log('[Drive] Starting setup...');
     const folderId = await ensureDriveFolder();
+    console.log(`[Drive] Folder identified: ${folderId}`);
+    
     await ensureLedgerSheet(folderId);
+    console.log(`[Drive] Spreadsheet identified: ${_sheetsSpreadsheetId}`);
+    
     await ensureAllTabs(_sheetsSpreadsheetId);
 
     // Pull all data in parallel to warm cache
-    const [sheetRows] = await Promise.all([
+    const results = await Promise.allSettled([
       loadLedgerFromSheet(),
       loadClientsFromSheet(),
       loadGoalsFromSheet(),
       loadProfilesFromSheet(),
       loadSettingsFromSheet()
     ]);
+    
+    results.forEach((res, i) => {
+      if (res.status === 'rejected') console.error(`[Drive] Sync task ${i} failed:`, res.reason);
+    });
 
+    const [sheetRows] = results[0].status === 'fulfilled' ? [results[0].value] : [null];
     if (sheetRows) saveLedgerRows(sheetRows);
 
-    // If Clients sheet is empty, seed address book from ledger rows
     seedClientsFromLedger();
     renderClientChips();
     
@@ -6514,7 +6530,7 @@ async function setupDrive() {
     refreshSheetsIdStatus();
     renderDashboard();
   } catch (e) {
-    console.error('Drive setup failed:', e);
+    console.error('[Drive] Setup failed:', e);
     if (statusEl) { statusEl.textContent = '✗ Drive setup failed. Check permissions.'; statusEl.style.color = '#d0241b'; }
   }
 }
