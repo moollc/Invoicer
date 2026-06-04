@@ -2311,6 +2311,12 @@
     <div id="dash-empty" style="display:none; font-size:12px; color:#9aa2ac; text-align:center; padding:20px 0;">
       Sign in with Google and save an invoice to see your stats here.
     </div>
+
+    <!-- Connection Diagnostics (Hidden by default, shown on error) -->
+    <div id="dash-diagnostics" style="display:none; margin-top:20px; padding:12px; background:#fff8f8; border:1px solid #fde7e7; border-radius:8px;">
+      <div style="font-size:10px; text-transform:uppercase; letter-spacing:1px; color:#d0241b; font-weight:700; margin-bottom:8px;">Sync Diagnostics</div>
+      <div id="diag-details" style="font-family:monospace; font-size:10px; color:#6c7682; line-height:1.4; word-break:break-all;"></div>
+    </div>
   </div>
 </div>
 
@@ -6682,7 +6688,19 @@ async function openDashboard() {
     
     if (goalRes && !goalRes.success) {
       console.warn('Goals sync failed:', goalRes.error);
-      showToast('Goals sync partially failed. Using local cache.', 'info');
+      showToast('Goals sync failed.', 'info');
+      
+      const diagEl = document.getElementById('dash-diagnostics');
+      const detEl  = document.getElementById('diag-details');
+      if (diagEl && detEl) {
+        diagEl.style.display = 'block';
+        detEl.innerHTML = `
+          Folder: ${_driveFolderId || 'Not found'}<br>
+          Sheet: ${_sheetsSpreadsheetId || 'Not found'}<br>
+          Error: ${goalRes.error}<br>
+          Token: ${gmailTokenValid() ? 'Valid' : 'Expired/Missing'}
+        `;
+      }
     }
   } catch (e) {
     console.error('Dashboard sync failed:', e);
@@ -6765,28 +6783,25 @@ function renderDashboard() {
 
   const currencyCode = (() => {
     try {
-      // 1. Try to get currency from the first ledger row (format: "USD 1,234.56")
+      // 1. Try first ledger row
       const pt = rows[0] && rows[0].amountDue;
       if (pt) {
         const match = String(pt).trim().match(/^([a-zA-Z]{2,4})/);
         if (match) return match[1].toUpperCase();
       }
-      // 2. Fallback to active invoice currency
+      // 2. Fallback to active invoice
       const data = getData();
-      if (data && data.currency) return data.currency.toUpperCase();
-    } catch (e) {
-      console.warn('Dashboard currency detection failed:', e);
-    }
+      if (data && data.currency) return String(data.currency).toUpperCase();
+    } catch (e) {}
     return 'USD';
   })();
   
   window.currentDashCurrency = currencyCode;
   const fmt = n => {
-    if (isNaN(n)) return '—';
-    return formatCurrencyNative(Math.round(n), currencyCode, 0);
+    const val = parseFloat(n);
+    if (isNaN(val)) return '—';
+    return formatCurrencyNative(Math.round(val), currencyCode, 0);
   };
-
-  console.log(`[Dashboard] Rendering with currency: ${currencyCode}, rows: ${rows.length}`);
 
   if (rows.length) {
     const monthLabelEl = document.querySelector('#dash-month').previousElementSibling;
