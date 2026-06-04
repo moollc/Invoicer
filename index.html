@@ -6721,10 +6721,15 @@ function renderDashboard() {
   const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
 
   const currencyCode = (() => {
-    const pt = rows[0] && rows[0].projectTotal;
-    if (!pt) return 'USD';
-    const parts = String(pt).trim().split(/\s+/);
-    return parts.length > 1 ? parts[0] : 'USD';
+    // Try to get currency from the first ledger row if available
+    const pt = rows[0] && rows[0].amountDue;
+    if (pt) {
+      const match = String(pt).trim().match(/^([a-zA-Z]{2,4})/);
+      if (match) return match[1].toUpperCase();
+    }
+    // Fallback to the active invoice currency
+    const data = getData();
+    return (data && data.currency) || 'USD';
   })();
   window.currentDashCurrency = currencyCode;
   const fmt = n => formatCurrencyNative(Math.round(n), currencyCode, 0);
