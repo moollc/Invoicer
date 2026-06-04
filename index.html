@@ -1869,9 +1869,9 @@
     </div>
 
     <div style="padding:0 14px 14px;">
-      <button onclick="resetAppSettings()" style="width:100%; padding:7px; background:none; border:1.5px solid rgba(208,36,27,0.35); border-radius:6px; font-family:'Roboto',sans-serif; font-size:11px; color:#d0241b; cursor:pointer; transition:background 0.15s;" onmouseover="this.style.background='rgba(208,36,27,0.06)'" onmouseout="this.style.background='none'">Reset UI to Defaults</button>
+      <button onclick="resetAppSettings()" style="width:100%; padding:7px; background:none; border:1.5px solid rgba(208,36,27,0.35); border-radius:6px; font-family:'Roboto',sans-serif; font-size:11px; color:#d0241b; cursor:pointer; transition:background 0.15s; margin-bottom:8px;" onmouseover="this.style.background='rgba(208,36,27,0.06)'" onmouseout="this.style.background='none'">Reset UI to Defaults</button>
+      <button onclick="forceUpdateApp()" style="width:100%; padding:7px; background:#14202e; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:11px; color:#fff; cursor:pointer; transition:opacity 0.15s;" onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">⟳ Force Pull Latest Update</button>
     </div>
-
     <!-- Google Account -->
     <div style="padding:0 14px 14px; border-top:1px solid rgba(20,32,46,0.06); padding-top:14px; margin-top:2px;">
       <div style="font-size:10px; letter-spacing:3px; text-transform:uppercase; color:var(--muted); font-weight:500; margin-bottom:8px;">Google Account</div>
@@ -4801,6 +4801,28 @@ function toggleChatSettings() {
     }
   }
 }
+
+window.forceUpdateApp = async function() {
+  if (confirm('This will clear the app cache and force a download of the latest version. Your ledger and settings will NOT be deleted. Proceed?')) {
+    if ('serviceWorker' in navigator) {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (let registration of registrations) {
+          await registration.unregister();
+        }
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map(name => caches.delete(name)));
+        console.log('✓ Cache cleared, reloading...');
+        window.location.reload(true);
+      } catch (e) {
+        console.error('Update failed:', e);
+        window.location.reload();
+      }
+    } else {
+      window.location.reload();
+    }
+  }
+};
 
 window.resetAppSettings = async function() {
   if (!await showConfirm('Reset UI preferences to defaults? This will not affect your ledger, templates, clients, or AI providers.', 'Reset UI')) return;

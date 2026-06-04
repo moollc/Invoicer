@@ -94,13 +94,19 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = e.request.url;
 
-  // 1. Strict Network-First for Google APIs, accounts, calendar, and sheet operations
-  if (url.includes('sheets.googleapis.com') || 
-      url.includes('gmail.googleapis.com') || 
-      url.includes('calendar.googleapis.com') || 
-      url.includes('accounts.google.com')) {
+  // 1. Strict Network-First for App Shell and Google APIs
+  if (url.startsWith(self.location.origin) || 
+      url.includes('googleapis.com') || 
+      url.includes('google.com')) {
     e.respondWith(
-      fetch(e.request).catch(() => caches.match(e.request))
+      fetch(e.request).then(response => {
+        // Update cache while we have the fresh network response
+        if (response.status === 200 && url.startsWith(self.location.origin)) {
+          const respClone = response.clone();
+          caches.open(CACHE).then(cache => cache.put(e.request, respClone));
+        }
+        return response;
+      }).catch(() => caches.match(e.request))
     );
     return;
   }
