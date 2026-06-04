@@ -1,4 +1,4 @@
-const CACHE = 'app-__CACHE_VERSION__';
+const CACHE = 'app-1780574946';
 const ASSETS = [
   '/',
   '/index.html',
