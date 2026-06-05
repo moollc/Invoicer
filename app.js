@@ -4210,14 +4210,16 @@ async function sheetsRequest(method, path, body, isRetry = false) {
     });
 
     if ((res.status === 401 || res.status === 403) && !isRetry) {
-      console.warn('Sheets API auth error, attempting silent refresh...');
+      console.warn('Sheets API auth error, attempting silent token refresh...');
       return new Promise((resolve) => {
-        if (typeof initGmailAuth === 'function') {
+        try {
           initGmailAuth(() => {
             sheetsRequest(method, path, body, true).then(resolve);
-          }, true); // silent refresh
-        } else {
-          resolve({ error: { message: 'Auth not initialized' } });
+          });
+          if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: 'none' });
+          else resolve({ error: { message: 'Token client not initialized' } });
+        } catch(e) {
+          resolve({ error: { message: e.message } });
         }
       });
     }
