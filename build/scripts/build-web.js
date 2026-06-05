@@ -17,8 +17,8 @@ writeFileSync(resolve(DEPLOY, '_headers'), lines.join('\n'));
 
 // Copy all root level assets (images, static files, configs)
 const rootFiles = readdirSync(ROOT);
-const allowedExtensions = ['.html', '.json', '.png', '.svg', '.ico', '.ttf'];
-const excludedFiles = ['package.json', 'package-lock.json', 'sw.js', 'service-worker.js'];
+const allowedExtensions = ['.html', '.css', '.js', '.json', '.png', '.svg', '.ico', '.ttf'];
+const excludedFiles = ['package.json', 'package-lock.json', 'sw.js', 'service-worker.js', 'fix_styles.py', 'verify.js'];
 
 rootFiles.forEach(file => {
   const ext = extname(file).toLowerCase();

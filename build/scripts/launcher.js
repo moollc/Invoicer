@@ -94,7 +94,9 @@ const headers = isDev ? csp.local : csp.production;
 
 console.log(isDev ? "⚠️  Development Mode: Relaxed CSP" : "🔒 Production Mode: Strict CSP");
 
-const port = await findFreePort(7337);
+const portArgIdx = args.indexOf('--port');
+const port = portArgIdx !== -1 ? parseInt(args[portArgIdx + 1]) : await findFreePort(7337);
+const swVersion = Date.now(); // fixed for this server session — prevents SW update loop in dev
 createServer(
   { cert: readFileSync(CERT), key: readFileSync(KEY) },
   (req, res) => {
@@ -102,7 +104,7 @@ createServer(
 
     if (req.url === '/service-worker.js') {
       const sw = readFileSync(resolve(ROOT, 'service-worker.js'), 'utf8')
-        .replace('__CACHE_VERSION__', `dev-${Date.now()}`);
+        .replace('__CACHE_VERSION__', isDev ? `dev-${swVersion}` : swVersion);
       res.setHeader('Content-Type', 'application/javascript');
       res.end(sw);
       return;

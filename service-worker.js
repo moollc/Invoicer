@@ -1,4 +1,4 @@
-const CACHE = 'app-1780584400';
+const CACHE = 'app-__CACHE_VERSION__';
 const ASSETS = [
   '/',
   '/index.html',
@@ -94,39 +94,22 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = e.request.url;
 
-  // 1. Strict Network-First for App Shell and Google APIs
-  if (url.startsWith(self.location.origin) || 
-      url.includes('googleapis.com') || 
-      url.includes('google.com')) {
+  // Let the browser handle all cross-origin requests natively — SW fetch()
+  // runs under the page's CSP and will be blocked for auth/CDN origins.
+  if (!url.startsWith(self.location.origin)) {
+    return;
+  }
+
+  // 1. Network-First for same-origin app shell
+  if (url.startsWith(self.location.origin)) {
     e.respondWith(
       fetch(e.request).then(response => {
-        // Update cache while we have the fresh network response
-        if (response.status === 200 && url.startsWith(self.location.origin)) {
+        if (response.status === 200) {
           const respClone = response.clone();
           caches.open(CACHE).then(cache => cache.put(e.request, respClone));
         }
         return response;
       }).catch(() => caches.match(e.request))
-    );
-    return;
-  }
-
-  // 2. Stale-While-Revalidate for CDN assets (Google Fonts, cdnjs html2pdf)
-  if (url.includes('fonts.googleapis.com') || 
-      url.includes('fonts.gstatic.com') || 
-      url.includes('cdnjs.cloudflare.com')) {
-    e.respondWith(
-      caches.open(CACHE).then(cache => 
-        cache.match(e.request).then(cached => {
-          const fetched = fetch(e.request).then(response => {
-            if (response.status === 200 || response.type === 'opaque') {
-              cache.put(e.request, response.clone());
-            }
-            return response;
-          }).catch(() => {}); // Silent catch when offline
-          return cached || fetched;
-        })
-      )
     );
     return;
   }
