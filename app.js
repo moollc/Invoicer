@@ -3232,7 +3232,16 @@ async function loadGoalsFromSheet() {
     }
   });
   
-  const cleaned = local.filter(g => g.name && g.name !== 'undefined');
+  // Sheet is source of truth — only keep local goals that exist in sheet (prevents deleted goals from resurrection)
+  const sheetNames = new Set(sheetGoals.map(g => g.name.toLowerCase()));
+  const merged = local.filter(g => g.name && sheetNames.has(g.name.toLowerCase()));
+  // Re-apply sheet data on top of any local fields
+  sheetGoals.forEach(sg => {
+    const idx = merged.findIndex(g => g.name.toLowerCase() === sg.name.toLowerCase());
+    if (idx >= 0) merged[idx] = { ...merged[idx], ...sg };
+    else merged.push(sg);
+  });
+  const cleaned = merged.filter(g => g.name && g.name !== 'undefined');
   saveGoals(cleaned);
   console.log(`✅ [Goals] Sync complete. Local storage count: ${cleaned.length}`);
   return { success: true, count: sheetGoals.length };
@@ -4927,7 +4936,7 @@ function renderAllocationUI(container, row) {
     // Save this % back to the goal so it pre-fills next time
     const goals = loadGoals();
     const idx = goals.findIndex(g => g.name === selectedGoal.name);
-    if (idx !== -1) { goals[idx].allocationPct = pct; saveGoals(goals); }
+    if (idx !== -1) { goals[idx].allocationPct = pct; saveGoals(goals); syncGoalsToSheet(); }
     doAllocate(selectedGoal, pct, manualConfirmBtn);
   };
   inputWrap.append(pctInput, document.createTextNode('%  '), manualConfirmBtn);
