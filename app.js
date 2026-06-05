@@ -4525,7 +4525,17 @@ async function openDashboard() {
     emptyEl.style.display = 'block';
     emptyEl.textContent = '🔄 Syncing cloud data...';
   }
-  
+
+  // Wait for setupDrive to finish if spreadsheet ID isn't available yet
+  if (gmailTokenValid() && !_sheetsSpreadsheetId) {
+    await new Promise(resolve => {
+      const check = setInterval(() => {
+        if (_sheetsSpreadsheetId || !gmailTokenValid()) { clearInterval(check); resolve(); }
+      }, 200);
+      setTimeout(() => { clearInterval(check); resolve(); }, 8000); // 8s max wait
+    });
+  }
+
   try {
     const [rows, goalRes] = await Promise.all([
       loadLedgerFromSheet(),
