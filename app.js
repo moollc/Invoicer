@@ -3244,6 +3244,9 @@ async function loadGoalsFromSheet() {
   const cleaned = merged.filter(g => g.name && g.name !== 'undefined');
   saveGoals(cleaned);
   console.log(`✅ [Goals] Sync complete. Local storage count: ${cleaned.length}`);
+  if (document.getElementById('dashboard-overlay')?.style.display === 'flex') {
+    renderDashboard();
+  }
   return { success: true, count: sheetGoals.length };
 }
 
