@@ -3193,10 +3193,16 @@ async function syncGoalsToSheet() {
 async function loadGoalsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Missing token or ID' };
   console.log(`🔄 [Goals] Syncing from spreadsheet: ${_sheetsSpreadsheetId}`);
-  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
-  
+  let rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
+
   if (rows === null) {
-    console.error('❌ [Goals] Read failed (Check tab name "Goals")');
+    console.warn('⚠️ [Goals] Read returned null — attempting ensureAllTabs then retry...');
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch(e) { console.error('[Goals] ensureAllTabs failed:', e); }
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
+  }
+
+  if (rows === null) {
+    console.error('❌ [Goals] Read failed after retry (tab missing or auth error)');
     return { success: false, error: 'Read failed' };
   }
   
