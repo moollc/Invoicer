@@ -681,6 +681,15 @@
       Sign in with Google and save an invoice to see your stats here.
     </div>
 
+    <!-- Sheet link row -->
+    <div id="dash-sheet-link-row" style="display:none; align-items:center; justify-content:space-between; padding:10px 0; border-top:1.5px solid #f0f0f0; margin-top:8px;">
+      <div class="modal-stat-label">Linked Spreadsheet</div>
+      <div style="display:flex; gap:8px;">
+        <button class="dash-add-btn-outline" onclick="openDashboard()">⟳ Sync</button>
+        <button class="dash-add-btn-outline" onclick="copySheetLink()">⧉ Copy Sheet Link</button>
+      </div>
+    </div>
+
     <!-- Connection Diagnostics (Hidden by default, shown on error) -->
     <div id="dash-diagnostics">
       <div class="dash-diag-label-sm">Sync Diagnostics</div>

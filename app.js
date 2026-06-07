@@ -2730,6 +2730,11 @@ async function sendChat() {
   sendBtn.disabled = true;
   const thinking = appendMsg('assistant', '…');
 
+  // Refresh sheet data so AI always sees live values
+  if (_gmailToken && _sheetsSpreadsheetId) {
+    await Promise.allSettled([loadGoalsFromSheet(), loadClientsFromSheet()]);
+  }
+
   const currentData = JSON.stringify(getData(), null, 2);
   const existingGoals = loadGoals();
   const goalNamesLine = existingGoals.length
@@ -2750,11 +2755,15 @@ async function sendChat() {
 
   const queryMode = isQueryMessage(text) && !images.length;
 
+  const goalsDetail = existingGoals.length
+    ? existingGoals.map(g => `  ${g.name}: target $${g.amount}, saved $${g.amountReached || 0}, deadline: ${g.deadline || 'none'}, status: ${g.status || 'Active'}, alloc: ${g.allocationPct || 0}%`).join('\n')
+    : 'none';
+
   const systemPrompt = queryMode
-    ? `You are an invoice assistant with access to the user's ledger and current invoice. Answer questions conversationally and concisely. Do not return JSON.
+    ? `You are an invoice assistant with access to the user's live ledger, goals, and current invoice data pulled directly from their linked Google Sheet. Answer questions conversationally and concisely. Do not return JSON.
 Current invoice data: ${currentData}
 ${ledgerSummary}
-Goals: ${existingGoals.map(g => `${g.name} $${g.amount} deadline:${g.deadline || 'none'}`).join(', ') || 'none'}
+Goals (live from sheet):\n${goalsDetail}
 Address book: ${existingClients.map(c => c.name).join(', ') || 'empty'}`
     : `You are an invoice data assistant. The current invoice data is shown below — it already reflects all previous changes.
 The user will describe what to change next. Return ONLY a single valid JSON object with the fields that need to change.
@@ -5329,6 +5338,15 @@ function refreshSheetsIdStatus() {
   if (!el) return;
   const id = localStorage.getItem('sheets-spreadsheet-id');
   el.textContent = id ? id.slice(0, 20) + '…' : 'not set';
+  const linkRow = document.getElementById('dash-sheet-link-row');
+  if (linkRow) linkRow.style.display = id ? 'flex' : 'none';
+}
+
+function copySheetLink() {
+  const id = _sheetsSpreadsheetId || localStorage.getItem('sheets-spreadsheet-id');
+  if (!id) { showToast('No sheet linked yet.', 'info'); return; }
+  const url = `https://docs.google.com/spreadsheets/d/${id}`;
+  navigator.clipboard.writeText(url).then(() => showToast('Sheet link copied!', 'success'));
 }
 
 // ── FX Rate Service ───────────────────────────────────────────
