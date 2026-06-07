@@ -106,26 +106,6 @@ function autoDate() {
 // ── Toast Notifications ──────────────────────────────────────
 
 (function() {
-  const style = document.createElement('style');
-  style.textContent = `
-    #toast-container { position:fixed; bottom:28px; left:50%; transform:translateX(-50%); z-index:10100; display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
-    .toast { font-family:'Roboto',sans-serif; font-size:12.5px; padding:11px 18px; border-radius:10px; box-shadow:0 4px 20px rgba(0,0,0,0.3); display:flex; align-items:center; gap:10px; pointer-events:all; max-width:420px; animation:toastIn 0.2s ease; }
-    .toast.info    { background:#14202e; color:#fff; }
-    .toast.success { background:#1a7a4a; color:#fff; }
-    .toast.error   { background:#c0211a; color:#fff; }
-    .toast.warning { background:#e07b00; color:#fff; }
-    .toast .toast-close { background:none; border:none; color:inherit; opacity:0.6; font-size:16px; cursor:pointer; padding:0; line-height:1; flex-shrink:0; }
-    .toast .toast-close:hover { opacity:1; }
-    .toast-confirm { background:#14202e; color:#fff; font-family:'Roboto',sans-serif; font-size:12.5px; padding:14px 18px; border-radius:10px; box-shadow:0 4px 24px rgba(0,0,0,0.4); display:flex; flex-direction:column; gap:10px; pointer-events:all; max-width:380px; }
-    .toast-confirm .toast-msg { line-height:1.5; }
-    .toast-confirm .toast-actions { display:flex; gap:8px; justify-content:flex-end; }
-    .toast-confirm .toast-actions button { font-family:'Roboto',sans-serif; font-size:11.5px; padding:6px 14px; border-radius:6px; border:none; cursor:pointer; font-weight:600; }
-    .toast-confirm .btn-cancel { background:rgba(255,255,255,0.12); color:#fff; }
-    .toast-confirm .btn-confirm { background:#d0241b; color:#fff; }
-    .toast-confirm .btn-confirm.safe { background:#1a7a4a; }
-    @keyframes toastIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
-  `;
-  document.head.appendChild(style);
   const container = document.createElement('div');
   container.id = 'toast-container';
   document.body.appendChild(container);
@@ -316,7 +296,7 @@ function render(data) {
     } else {
       badge.style.display = 'none';
     }
-    overdueBadge.style.display = isOverdue ? 'inline-block' : 'none';
+    overdueBadge.classList.toggle('hidden', !isOverdue);
     
     const watermark = document.getElementById('invoice-watermark');
     if (watermark) {
@@ -384,8 +364,8 @@ function render(data) {
         const mm = String(due.getMonth() + 1).padStart(2, '0');
         const yyyy = due.getFullYear();
         dueDateValue.textContent = `${dd} / ${mm} / ${yyyy}`;
-        dueDateLabel.style.display = '';
-        dueDateValue.style.display = '';
+        dueDateLabel.classList.remove('hidden');
+        dueDateValue.classList.remove('hidden');
         // Aging chip — hide if Paid, otherwise colour by urgency
         if (agingChip) {
           let isPaid = false;
@@ -418,14 +398,14 @@ function render(data) {
           }
         }
       } else {
-        dueDateLabel.style.display = 'none';
-        dueDateValue.style.display = 'none';
-        if (agingChip) agingChip.style.display = 'none';
+        dueDateLabel.classList.add('hidden');
+        dueDateValue.classList.add('hidden');
+        if (agingChip) agingChip.classList.add('hidden');
       }
     } else {
-      dueDateLabel.style.display = 'none';
-      dueDateValue.style.display = 'none';
-      if (agingChip) agingChip.style.display = 'none';
+      dueDateLabel.classList.add('hidden');
+      dueDateValue.classList.add('hidden');
+      if (agingChip) agingChip.classList.add('hidden');
     }
   }
 
@@ -2084,7 +2064,7 @@ function sendInvoiceViaEmail() {
 
   let dueDateStr = '';
   const dueEl = document.getElementById('due-date-value');
-  if (dueEl && dueEl.style.display !== 'none' && dueEl.textContent.trim()) {
+  if (dueEl && !dueEl.classList.contains('hidden') && dueEl.textContent.trim()) {
     dueDateStr = `\nDue: ${dueEl.textContent.trim()}`;
   }
 
@@ -3984,7 +3964,7 @@ function updateEmailBtn() {
     authLabel.textContent = gmailTokenValid() ? 'Sign out of Google' : 'Sign in with Google';
   }
   const calBtn = document.getElementById('btn-calendar');
-  if (calBtn) calBtn.style.display = gmailTokenValid() ? '' : 'none';
+  if (calBtn) calBtn.classList.toggle('hidden', !gmailTokenValid());
 }
 
 function googleSignIn() {
@@ -4426,8 +4406,8 @@ async function setupDrive() {
     renderClientChips();
     
     if (statusEl) {
-      statusEl.innerHTML = '✓ <strong style="color:#2a8c55;">mooInvoicer/</strong> folder ready : Ledger connected';
-      statusEl.style.color = '#2a8c55';
+      statusEl.innerHTML = '✓ <strong class="text-success">mooInvoicer/</strong> folder ready : Ledger connected';
+      statusEl.className = 'text-success';
     }
     refreshSheetsIdStatus();
     renderDashboard();
@@ -4538,6 +4518,7 @@ function buildDraftFromEvent(event) {
 
 async function openDashboard() {
   document.getElementById('dashboard-overlay').style.display = 'flex';
+  refreshSheetsIdStatus();
   const emptyEl = document.getElementById('dash-empty');
   if (emptyEl) {
     emptyEl.style.display = 'block';
@@ -4739,14 +4720,15 @@ function renderDashboard() {
     totals.forEach(t => {
       const pct = Math.round((t.total / maxTotal) * 100);
       const bar = document.createElement('div');
-      bar.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:5px;';
+      bar.className = 'dash-chart-row';
       bar.innerHTML = `
-        <span style="font-size:10px; width:28px; color:#9aa2ac; flex-shrink:0;">${t.label}</span>
-        <div style="flex:1; background:#eeeeec; border-radius:3px; height:14px;">
-          <div style="width:${pct}%; background:#14202e; height:100%; border-radius:3px; transition:width 0.3s;"></div>
+        <span class="dash-chart-label">${t.label}</span>
+        <div class="dash-chart-track">
+          <div class="dash-chart-fill"></div>
         </div>
-        <span style="font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e;">${t.total > 0 ? fmt(t.total) : '—'}</span>`;
+        <span class="dash-chart-amt">${t.total > 0 ? fmt(t.total) : '—'}</span>`;
       chart.appendChild(bar);
+      bar.querySelector('.dash-chart-fill').style.width = pct + '%';
     });
   }
 
@@ -4770,40 +4752,37 @@ function renderGoalsList() {
   }
   goals.forEach((g, i) => {
     const div = document.createElement('div');
-    let bg = '#f6f6f4';
-    let claimBtn = '';
+    div.className = 'goal-card';
     const reached = parseFloat(g.amountReached) || 0;
     const target = parseFloat(g.amount) || 0;
-    
+    let claimBtn = '';
+
     if (g.status === 'Claimed') {
-      bg = '#e2e3e5';
-      claimBtn = `<span style="font-size:11px; color:#6c7682; font-weight:600; display:flex; align-items:center; gap:4px;">✓ Claimed</span>`;
+      div.classList.add('goal-card--claimed');
+      claimBtn = `<span class="goal-claimed-label">✓ Claimed</span>`;
     } else if (reached >= target && target > 0) {
-      bg = '#d4edda';
-      claimBtn = `<button onclick="openClaimModal('${g.name}')" style="background:#155724; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;">Claim Reward</button>`;
+      div.classList.add('goal-card--complete');
+      claimBtn = `<button onclick="openClaimModal('${g.name}')" class="goal-claim-btn">Claim Reward</button>`;
     } else if (reached > 0) {
-      bg = '#cce5ff';
+      div.classList.add('goal-card--progress');
     }
-    
-    div.style.cssText = `background:${bg}; border-radius:8px; padding:12px 14px; margin-bottom:8px; position:relative; overflow:hidden;`;
-    
+
     div.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px; position:relative; z-index:2; gap:6px;">
-        <strong class="goal-name" style="font-size:13px; color:#14202e; flex:1; min-width:0; word-break:break-word;">${g.name}</strong>
-        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-          <button onclick="editGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:11px; color:#9aa2ac; padding:0; line-height:1; letter-spacing:0.5px;" title="Edit goal">Edit</button>
-          <button onclick="deleteGoal(${i})" style="background:none; border:none; cursor:pointer; font-size:13px; color:#9aa2ac; padding:0; line-height:1;" title="Delete goal">✕</button>
+      <div class="goal-card-header">
+        <strong class="goal-name">${g.name}</strong>
+        <div class="goal-card-actions">
+          <button onclick="editGoal(${i})" class="goal-btn-edit" title="Edit goal">Edit</button>
+          <button onclick="deleteGoal(${i})" class="goal-btn-delete" title="Delete goal">✕</button>
         </div>
       </div>
-      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px; position:relative; z-index:2;">
+      <div class="goal-card-meta">
         ${claimBtn}
-        ${g.deadline ? `<span class="goal-target" style="font-size:11px; color:#9aa2ac;">Due ${g.deadline}</span>` : ''}
-        <span class="goal-target" style="font-size:12px; color:#6c7682;">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
+        ${g.deadline ? `<span class="goal-deadline">Due ${g.deadline}</span>` : ''}
+        <span class="goal-target">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
       </div>
-      <div style="font-size:11px; color:#9aa2ac; position:relative; z-index:2;">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" style="color:#5b4fcf; word-break:break-all;">${url}</a>`) : 'No notes provided'}</div>
-      <!-- Progress Bar -->
-      <div class="goal-bar-wrap" style="width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2;">
-         <div class="goal-bar-fill" style="height:100%; width:0%; background:#14202e; transition:width 0.6s ease-out;"></div>
+      <div class="goal-notes">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" class="goal-notes-link">${url}</a>`) : 'No notes provided'}</div>
+      <div class="goal-bar-wrap">
+        <div class="goal-bar-fill"></div>
       </div>`;
     el.appendChild(div);
     // Animate bar from 0 → target width on next frame so CSS transition fires
@@ -5334,12 +5313,11 @@ function refreshGmailIdStatus() {
 }
 
 function refreshSheetsIdStatus() {
-  const el = document.getElementById('sheets-id-status');
-  if (!el) return;
   const id = localStorage.getItem('sheets-spreadsheet-id');
-  el.textContent = id ? id.slice(0, 20) + '…' : 'not set';
-  const linkRow = document.getElementById('dash-sheet-link-row');
-  if (linkRow) linkRow.style.display = id ? 'flex' : 'none';
+  const el = document.getElementById('sheets-id-status');
+  if (el) el.textContent = id ? id.slice(0, 20) + '…' : 'not set';
+  const copyBtn = document.getElementById('dash-copy-sheet-btn');
+  if (copyBtn) copyBtn.classList.toggle('hidden', !id);
 }
 
 function copySheetLink() {

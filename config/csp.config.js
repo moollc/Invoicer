@@ -16,7 +16,7 @@ export const csp = {
     'Content-Security-Policy': [
       "default-src 'self'",
       "frame-src 'self' https://accounts.google.com",
-      "script-src 'self' https://accounts.google.com https://cdnjs.cloudflare.com",
+      "script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdnjs.cloudflare.com",
       "style-src 'self' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https:",
