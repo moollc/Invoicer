@@ -1014,6 +1014,52 @@ function saveLedgerRows(rows) {
   localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows));
 }
 
+// Full-invoice archive, keyed by receipt number. The ledger only keeps a 7-field
+// summary; this stores the complete invoice object so a past invoice can be
+// loaded back exactly (and so the AI reads real fields instead of inventing them).
+function loadInvoiceArchive() {
+  try { return JSON.parse(localStorage.getItem('invoice-archive') || '{}'); } catch { return {}; }
+}
+function archiveInvoice(receipt, data) {
+  if (!receipt) return;
+  const arc = loadInvoiceArchive();
+  arc[receipt] = JSON.parse(JSON.stringify(data));
+  try { localStorage.setItem('invoice-archive', JSON.stringify(arc)); } catch(e) { console.warn('[Archive] save failed:', e); }
+}
+function getArchivedInvoice(receipt) {
+  return loadInvoiceArchive()[receipt] || null;
+}
+
+// Load a past invoice into the editor. Full restore from the archive when
+// available; otherwise restore the known summary fields and tell the user the
+// rest weren't recorded — never silently leave wrong data behind.
+function loadInvoiceIntoEditor(receipt) {
+  if (!receipt) return;
+  const current = getData();
+  const archived = getArchivedInvoice(receipt);
+  if (archived) {
+    const restored = JSON.parse(JSON.stringify(archived));
+    restored.receiptOverride = receipt;
+    document.getElementById('invoice-data').textContent = JSON.stringify(restored, null, 2);
+    if (typeof closeDialog === 'function') closeDialog();
+    render(restored);
+    startEdit();
+    showToast(`Invoice ${receipt} loaded`, 'success');
+    return;
+  }
+  const row = loadLedgerRows().find(r => r.receipt === receipt);
+  if (!row) { showToast(`Invoice ${receipt} not found`, 'info'); return; }
+  if (row.client)  current.to = { ...current.to, name: row.client };
+  if (row.date)    current.dateOverride = row.date;
+  if (row.service) current.lineItems = [{ service: row.service, details: '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
+  current.receiptOverride = row.receipt;
+  document.getElementById('invoice-data').textContent = JSON.stringify(current, null, 2);
+  if (typeof closeDialog === 'function') closeDialog();
+  render(current);
+  startEdit();
+  showToast(`Invoice ${receipt} loaded (summary only — re-enter address and line details)`, 'info');
+}
+
 function markReceiptAsSent() {
   const data = getData();
   // Read receipt from rendered DOM — avoids autoReceiptNumber() re-incrementing
@@ -1036,6 +1082,7 @@ function markReceiptAsSent() {
     });
   }
   saveLedgerRows(rows);
+  archiveInvoice(receipt, data);
   updateLedgerStatusOnSheet(receipt, '📤 Sent');
 }
 
@@ -1053,6 +1100,8 @@ async function confirmPrint() {
     amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
     status:       '⬜ Unpaid',
   };
+
+  archiveInvoice(data.receiptNumber, data);
 
   // Show the row that will be added
   const preview = `| ${_pendingRow.receipt} | ${_pendingRow.date} | ${_pendingRow.client} | ${_pendingRow.service} | ${_pendingRow.projectTotal} | ${_pendingRow.amountDue} | ${_pendingRow.status} |`;
@@ -1639,10 +1688,16 @@ async function renderLedgerHistory() {
     });
 
     const loadBtn = document.createElement('button');
-    loadBtn.textContent = '📋 Duplicate';
-    loadBtn.title = 'Duplicate as new draft';
+    loadBtn.textContent = '↗ Load';
+    loadBtn.title = 'Open this invoice in the editor';
     loadBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
     loadBtn.addEventListener('click', () => loadInvoiceFromLedger(row));
+
+    const dupBtn = document.createElement('button');
+    dupBtn.textContent = '📋 Duplicate';
+    dupBtn.title = 'Duplicate as a new draft';
+    dupBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
+    dupBtn.addEventListener('click', () => duplicateInvoiceFromLedger(row));
 
     const delBtn = document.createElement('button');
     delBtn.textContent = '🗑';
@@ -1691,7 +1746,7 @@ async function renderLedgerHistory() {
       expandPanel.style.display = expanded ? 'flex' : 'none';
     });
 
-    rowMain.append(info, noteBtn, loadBtn, sel, delBtn);
+    rowMain.append(info, noteBtn, loadBtn, dupBtn, sel, delBtn);
     wrap.append(rowMain, expandPanel, allocWrap);
     listEl.appendChild(wrap);
   });
@@ -1728,36 +1783,47 @@ async function updateLedger() {
   confirmEl.textContent   = `✓ Saved — ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} in ledger${_sheetsSpreadsheetId ? ' & synced to Sheets' : ''}.`;
 }
 
+// Load the exact past invoice (read-only restore of the original receipt).
+// Uses the full archive when available so the real client, contact, line items,
+// and currency come back — not the current editor's data or invented values.
 function loadInvoiceFromLedger(row) {
-  const existing = getData();
-  // Parse amountDue — strip currency prefix, keep numeric string
-  const rawAmt = (row.amountDue || '').replace(/^[a-zA-Z$]+\s*/i, '').trim();
-  const prevReceipt = existing.receiptOverride || existing.receiptNumber || '';
-  const newReceipt = nextReceiptNumber(prevReceipt ? prevReceipt.trim() : '');
+  loadInvoiceIntoEditor(row.receipt);
+}
 
+// Duplicate a past invoice as a NEW draft (new receipt number, cleared date).
+// Carries the archived invoice's real fields forward when available; falls back
+// to the summary only when the original wasn't archived.
+function duplicateInvoiceFromLedger(row) {
+  const archived = getArchivedInvoice(row.receipt);
+  const prevReceipt = archived ? (archived.receiptOverride || archived.receiptNumber || row.receipt) : row.receipt;
+  const newReceipt = nextReceiptNumber((prevReceipt || '').trim());
+
+  if (archived) {
+    const draft = JSON.parse(JSON.stringify(archived));
+    draft.dateOverride = '';
+    draft.receiptOverride = newReceipt;
+    document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
+    render(draft);
+    closeDialog();
+    showToast(`Duplicated ${row.receipt} as new draft ${newReceipt}`, 'success');
+    return;
+  }
+
+  const existing = getData();
+  const rawAmt = (row.amountDue || '').replace(/^[a-zA-Z$]+\s*/i, '').trim();
   const draft = {
     ...existing,
     dateOverride:    '',
     receiptOverride: newReceipt,
-    to: {
-      name:    row.client  || existing.to.name,
-      address: existing.to.address || '',
-      email:   existing.to.email   || '',
-      phone:   existing.to.phone   || '',
-    },
-    lineItems: [{
-      service: row.service || 'Service',
-      details: '',
-      rates:   ['Rate'],
-      costs:   [rawAmt || '0'],
-    }],
-    projectTotal:     rawAmt || '0',
-    totalAmount:      row.amountDue || existing.totalAmount,
+    to: { name: row.client || existing.to.name, address: '', email: '', phone: '' },
+    lineItems: [{ service: row.service || 'Service', details: '', rates: ['Rate'], costs: [rawAmt || '0'] }],
+    projectTotal: rawAmt || '0',
+    totalAmount:  row.amountDue || existing.totalAmount,
   };
   document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
-  render(getData());
+  render(draft);
   closeDialog();
-  showToast(`Loaded ${row.client} — ready to edit`, 'success');
+  showToast(`Duplicated ${row.receipt} (summary only) as ${newReceipt}`, 'info');
 }
 
 // ── Invoice Templates ──────────────────────────────────────────────────────────
@@ -2751,7 +2817,7 @@ Do not repeat fields that are already correct. Do not return markdown, explanati
 If nothing needs to change, return an empty object: {}
 Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, invoiceNotes (freeform notes shown below line items — payment terms, bank details, late fee policy, etc.), paid.
 When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
-To load a past invoice into the editor, include "_loadReceipt": "RECEIPT_NUMBER" — use the exact receipt number from the ledger. The invoice will be pre-filled from ledger data. Only use this if the user explicitly asks to open, load, or re-open a past invoice.
+To load a past invoice into the editor, include "_loadReceipt": "RECEIPT_NUMBER" — use the exact receipt number from the ledger. The app restores the invoice itself; you must NOT output invoice field values for a past invoice from memory. Never invent or guess the client address, email, phone, line-item details, rates, or currency of a past invoice — if a field was not stored, leave it blank rather than fabricating it. Only use this if the user explicitly asks to open, load, or re-open a past invoice.
 To save a contact to the address book, include "_addContact": { "name": "...", "address": "...", "email": "...", "phone": "..." } in your response. Only include fields you know. This does not update the invoice — combine with "to" if you also want to set the client.
 To add a new savings or revenue goal, include "_addGoal": { "name": "...", "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 15, "notes": "..." } — amount is a number, deadline is ISO 8601, allocationPct is 0–100 (default 0 if not mentioned), notes is optional; this does not change the invoice.
 To update an existing goal, include "_updateGoal": { "name": "...", "changes": { "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 20, "notes": "..." } } — name must match an existing goal (case-insensitive), include only the fields that are changing.
@@ -2876,17 +2942,28 @@ ${currentData}`;
     if (patch._addExpense)   { applyAddExpense(patch._addExpense, data, actionNotes);     delete patch._addExpense; }
     if (patch._updateStatus) { applyUpdateStatus(patch._updateStatus, data, actionNotes); delete patch._updateStatus; }
 
-    // ── _loadReceipt: merge ledger row fields into invoice ──
+    // ── _loadReceipt: restore a past invoice ──
+    // Prefer the full archived invoice (exact restore). Only fall back to the
+    // 7-field ledger summary when no archive exists (invoices created before
+    // archiving), and say so explicitly so the AI never invents the rest.
     if (loadReceiptId) {
-      const row = loadLedgerRows().find(r => r.receipt === loadReceiptId);
-      if (row) {
-        if (row.client)  data.to = { ...data.to, name: row.client };
-        if (row.date)    data.dateOverride = row.date;
-        if (row.service) data.lineItems = [{ service: row.service, details: '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
-        data.receiptOverride = row.receipt;
-        actionNotes.push(`Loaded receipt ${row.receipt}`);
+      const archived = getArchivedInvoice(loadReceiptId);
+      if (archived) {
+        Object.keys(data).forEach(k => delete data[k]);
+        Object.assign(data, JSON.parse(JSON.stringify(archived)));
+        data.receiptOverride = loadReceiptId;
+        actionNotes.push(`Loaded full invoice ${loadReceiptId} from archive`);
       } else {
-        actionNotes.push(`Receipt ${loadReceiptId} not found in ledger`);
+        const row = loadLedgerRows().find(r => r.receipt === loadReceiptId);
+        if (row) {
+          if (row.client)  data.to = { ...data.to, name: row.client };
+          if (row.date)    data.dateOverride = row.date;
+          if (row.service) data.lineItems = [{ service: row.service, details: '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
+          data.receiptOverride = row.receipt;
+          actionNotes.push(`Loaded receipt ${row.receipt} from ledger summary only — address, contact, line-item details, and currency were not stored for this invoice and have been left as-is. Do not fabricate them.`);
+        } else {
+          actionNotes.push(`Receipt ${loadReceiptId} not found`);
+        }
       }
     }
 
@@ -3837,23 +3914,61 @@ function openTemplatesModal() {
     if (!categories[t.category]) categories[t.category] = [];
     categories[t.category].push(t);
   });
-  Object.keys(categories).forEach(function(cat) {
+  const renderBtn = function(label, description, onClick) {
+    const btn = document.createElement('button');
+    btn.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; padding:10px 14px; background:#f6f6f4; border:1.5px solid transparent; border-radius:7px; cursor:pointer; font-family:Roboto,sans-serif; text-align:left; width:100%; transition:border-color 0.15s;';
+    btn.onmouseover = function() { btn.style.borderColor = '#14202e'; };
+    btn.onmouseout  = function() { btn.style.borderColor = 'transparent'; };
+    btn.innerHTML = '<span style="font-size:13px; font-weight:600; color:#14202e;">' + label + '</span>'
+      + '<span style="font-size:11px; color:#6c7682; margin-top:2px;">' + description + '</span>';
+    btn.onclick = onClick;
+    list.appendChild(btn);
+  };
+  const catHeader = function(cat) {
     const catLabel = document.createElement('div');
     catLabel.style.cssText = 'font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-top:12px; margin-bottom:4px;';
     catLabel.textContent = cat;
     list.appendChild(catLabel);
+  };
+
+  Object.keys(categories).forEach(function(cat) {
+    catHeader(cat);
     categories[cat].forEach(function(t) {
-      const btn = document.createElement('button');
-      btn.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; padding:10px 14px; background:#f6f6f4; border:1.5px solid transparent; border-radius:7px; cursor:pointer; font-family:Roboto,sans-serif; text-align:left; width:100%; transition:border-color 0.15s;';
-      btn.onmouseover = function() { btn.style.borderColor = '#14202e'; };
-      btn.onmouseout  = function() { btn.style.borderColor = 'transparent'; };
-      btn.innerHTML = '<span style="font-size:13px; font-weight:600; color:#14202e;">' + t.label + '</span>'
-        + '<span style="font-size:11px; color:#6c7682; margin-top:2px;">' + t.description + '</span>';
-      btn.onclick = function() { applyTemplate(t.id); };
-      list.appendChild(btn);
+      renderBtn(t.label, t.description, function() { applyTemplate(t.id); });
     });
   });
+
+  // "From your invoices" — start a new invoice from a past one (uses the archive).
+  const archive = loadInvoiceArchive();
+  const receipts = Object.keys(archive);
+  if (receipts.length) {
+    catHeader('From your invoices');
+    // newest first by receipt label
+    receipts.sort().reverse().forEach(function(receipt) {
+      const inv = archive[receipt];
+      const client = (inv.to && inv.to.name) || 'No client';
+      const svc = (inv.lineItems && inv.lineItems[0] && inv.lineItems[0].service) || '';
+      const desc = [client, svc].filter(Boolean).join(' · ') || 'Past invoice';
+      renderBtn(receipt, desc, function() { useInvoiceAsTemplate(receipt); });
+    });
+  }
+
   document.getElementById('templates-overlay').style.display = 'flex';
+}
+
+// Start a NEW invoice from a past one: real fields restored, fresh receipt,
+// cleared date. The "use a previous invoice as a template" flow.
+function useInvoiceAsTemplate(receipt) {
+  const archived = getArchivedInvoice(receipt);
+  if (!archived) { showToast('Invoice not found in archive', 'info'); return; }
+  const draft = JSON.parse(JSON.stringify(archived));
+  draft.dateOverride = '';
+  draft.receiptOverride = nextReceiptNumber((archived.receiptOverride || archived.receiptNumber || receipt || '').trim());
+  document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
+  render(draft);
+  closeTemplatesModal();
+  startEdit();
+  showToast(`New invoice from ${receipt}`, 'success');
 }
 
 function closeTemplatesModal() {

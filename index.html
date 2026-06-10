@@ -381,15 +381,7 @@
     <div id="template-section">
       <div class="modal-section-label-sm">Invoice Templates</div>
       <div class="modal-flex-row">
-        <select id="template-select">
-          <option value="">— select a template —</option>
-        </select>
-        <button onclick="loadInvoiceTemplate()" class="tmpl-btn-dark" title="Load selected template">Load</button>
-        <button onclick="deleteInvoiceTemplate()" class="tmpl-btn-delete" title="Delete selected template">✕</button>
-      </div>
-      <div class="modal-flex-row">
-        <input id="template-name-input" type="text" placeholder="Template name…" maxlength="60">
-        <button onclick="saveInvoiceTemplate()" class="tmpl-btn-save" title="Save current invoice as template">Save as Template</button>
+        <button onclick="openTemplatesModal()" class="tmpl-btn-dark sp-btn-full" title="Start from a built-in template or one of your past invoices">🗂 Use a template or past invoice</button>
       </div>
     </div>
 
