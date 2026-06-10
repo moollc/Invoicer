@@ -1030,6 +1030,23 @@ function getArchivedInvoice(receipt) {
   return loadInvoiceArchive()[receipt] || null;
 }
 
+// Ensure a loaded/archived invoice has the structural fields render() requires,
+// so a partial or malformed archive can't crash the editor on load. Fills only
+// missing top-level objects; never overwrites real restored data.
+function normalizeInvoiceShape(inv) {
+  const base = getData();
+  const safe = inv && typeof inv === 'object' ? inv : {};
+  safe.from = { ...(base.from || { name:'', address:'', email:'', phone:'' }), ...(safe.from || {}) };
+  safe.to   = { name:'', address:'', email:'', phone:'', ...(safe.to || {}) };
+  if (!Array.isArray(safe.lineItems) || !safe.lineItems.length) {
+    safe.lineItems = [{ service:'Service', details:'', rates:['Rate'], costs:['0'] }];
+  }
+  if (safe.currency === undefined) safe.currency = base.currency || 'USD';
+  if (safe.projectTotal === undefined) safe.projectTotal = '0';
+  if (safe.totalAmount === undefined) safe.totalAmount = '0';
+  return safe;
+}
+
 // Load a past invoice into the editor. Full restore from the archive when
 // available; otherwise restore the known summary fields and tell the user the
 // rest weren't recorded — never silently leave wrong data behind.
@@ -1038,7 +1055,7 @@ function loadInvoiceIntoEditor(receipt) {
   const current = getData();
   const archived = getArchivedInvoice(receipt);
   if (archived) {
-    const restored = JSON.parse(JSON.stringify(archived));
+    const restored = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
     restored.receiptOverride = receipt;
     document.getElementById('invoice-data').textContent = JSON.stringify(restored, null, 2);
     if (typeof closeDialog === 'function') closeDialog();
@@ -1799,7 +1816,7 @@ function duplicateInvoiceFromLedger(row) {
   const newReceipt = nextReceiptNumber((prevReceipt || '').trim());
 
   if (archived) {
-    const draft = JSON.parse(JSON.stringify(archived));
+    const draft = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
     draft.dateOverride = '';
     draft.receiptOverride = newReceipt;
     document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
@@ -2949,8 +2966,9 @@ ${currentData}`;
     if (loadReceiptId) {
       const archived = getArchivedInvoice(loadReceiptId);
       if (archived) {
+        const restored = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
         Object.keys(data).forEach(k => delete data[k]);
-        Object.assign(data, JSON.parse(JSON.stringify(archived)));
+        Object.assign(data, restored);
         data.receiptOverride = loadReceiptId;
         actionNotes.push(`Loaded full invoice ${loadReceiptId} from archive`);
       } else {
@@ -3961,7 +3979,7 @@ function openTemplatesModal() {
 function useInvoiceAsTemplate(receipt) {
   const archived = getArchivedInvoice(receipt);
   if (!archived) { showToast('Invoice not found in archive', 'info'); return; }
-  const draft = JSON.parse(JSON.stringify(archived));
+  const draft = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
   draft.dateOverride = '';
   draft.receiptOverride = nextReceiptNumber((archived.receiptOverride || archived.receiptNumber || receipt || '').trim());
   document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
