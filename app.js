@@ -4177,9 +4177,16 @@ async function promptForSheetsId() {
     { placeholder: 'Paste Sheet ID here', defaultValue: _sheetsSpreadsheetId || '', confirmLabel: 'Save' }
   );
   if (id) {
-    _sheetsSpreadsheetId = id;
-    localStorage.setItem('sheets-spreadsheet-id', id);
+    const clean = id.trim();
+    _sheetsSpreadsheetId = clean;
+    localStorage.setItem('sheets-spreadsheet-id', clean);
+    // Pin it: a user-entered ID is authoritative and must never be overwritten
+    // by Drive auto-resolution (which under drive.file scope only sees files this
+    // device created, and would otherwise revert to a wrong/duplicate ledger).
+    localStorage.setItem('sheets-id-pinned', '1');
     showToast('✓ Spreadsheet ID saved. Invoices will now sync to Google Sheets.', 'success');
+    if (typeof loadGoalsFromSheet === 'function') { try { await loadGoalsFromSheet(); } catch(e){} }
+    if (typeof renderDashboard === 'function') renderDashboard();
   }
 }
 
@@ -4352,9 +4359,16 @@ async function sheetHasLedgerTab(spreadsheetId) {
 }
 
 async function ensureLedgerSheet(folderId) {
-  // Trust a cached ID only if it still resolves to a real ledger. A stale ID
-  // (old session, duplicate folder, or wrong account) would otherwise be used
-  // forever, leaving the device reading an empty/wrong sheet — the mobile bug.
+  // A user-pinned ID is authoritative — never auto-overwrite it. This is the
+  // fix for the desktop/mobile split: under drive.file scope each device only
+  // sees files it created, so Drive auto-resolution picks a different ledger per
+  // device (e.g. 'InvoiceLedger' on desktop vs a duplicate 'Invoice Ledger' on
+  // mobile). Pinning lets the user force both devices onto the same sheet id.
+  if (_sheetsSpreadsheetId && localStorage.getItem('sheets-id-pinned') === '1') {
+    return _sheetsSpreadsheetId;
+  }
+
+  // Trust a cached (unpinned) ID only if it still resolves to a real ledger.
   if (_sheetsSpreadsheetId) {
     if (await sheetHasLedgerTab(_sheetsSpreadsheetId)) return _sheetsSpreadsheetId;
     console.warn(`[Drive] Cached sheet ${_sheetsSpreadsheetId} has no Ledger tab — discarding and re-resolving.`);
@@ -4366,9 +4380,15 @@ async function ensureLedgerSheet(folderId) {
   const query = `(name = 'Invoice Ledger' or name = 'InvoiceLedger') and '${folderId}' in parents and trashed = false`;
   const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)`);
   if (search && search.files && search.files.length > 0) {
-    // If duplicates exist, prefer one that actually has a Ledger tab; fall back
-    // to the most recently modified so we don't silently pick an empty twin.
-    const files = search.files.slice().sort((a, b) => (b.modifiedTime || '').localeCompare(a.modifiedTime || ''));
+    // If duplicates exist, prefer the canonical no-space 'InvoiceLedger' name,
+    // then one that actually has a Ledger tab, then most recently modified — so
+    // a stray 'Invoice Ledger' (with space) twin can't win.
+    const files = search.files.slice().sort((a, b) => {
+      const an = a.name === 'InvoiceLedger' ? 0 : 1;
+      const bn = b.name === 'InvoiceLedger' ? 0 : 1;
+      if (an !== bn) return an - bn;
+      return (b.modifiedTime || '').localeCompare(a.modifiedTime || '');
+    });
     let chosen = null;
     for (const f of files) {
       if (await sheetHasLedgerTab(f.id)) { chosen = f.id; break; }
