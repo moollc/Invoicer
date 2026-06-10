@@ -3154,6 +3154,7 @@ async function syncGoalsToSheet() {
   const goals = loadGoals();
   if (!goals.length) return;
   const existing = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
+  if (existing === null) { console.warn('[Goals] Push aborted — sheet read failed (auth/tab missing). Local goals kept.'); return; }
   for (const goal of goals) {
     const rowIdx = existing.findIndex(r => r[0] && r[0].toLowerCase() === goal.name.toLowerCase());
     const newRow = [
@@ -3217,28 +3218,31 @@ async function loadGoalsFromSheet() {
   console.log(`[Goals] Filtered valid goals: ${sheetGoals.length}`);
   
   const local = loadGoals();
-  sheetGoals.forEach(sg => {
-    if (!sg.name) return;
-    const idx = local.findIndex(g => g.name.toLowerCase() === sg.name.toLowerCase());
-    if (idx >= 0) {
-      local[idx] = { ...local[idx], ...sg };
-    } else {
-      local.push(sg);
-    }
-  });
-  
-  // Sheet is source of truth — only keep local goals that exist in sheet (prevents deleted goals from resurrection)
   const sheetNames = new Set(sheetGoals.map(g => g.name.toLowerCase()));
-  const merged = local.filter(g => g.name && sheetNames.has(g.name.toLowerCase()));
-  // Re-apply sheet data on top of any local fields
-  sheetGoals.forEach(sg => {
-    const idx = merged.findIndex(g => g.name.toLowerCase() === sg.name.toLowerCase());
-    if (idx >= 0) merged[idx] = { ...merged[idx], ...sg };
-    else merged.push(sg);
+
+  // Non-destructive merge. Sheet data wins for goals that exist in both, but
+  // local goals that aren't in the sheet yet are kept and pushed up — never
+  // silently deleted. A goal only leaves local storage via an explicit delete.
+  const merged = local.map(g => {
+    const sg = sheetGoals.find(s => s.name.toLowerCase() === g.name.toLowerCase());
+    return sg ? { ...g, ...sg } : g;
   });
+  // Add goals that exist only in the sheet
+  sheetGoals.forEach(sg => {
+    if (!merged.some(g => g.name.toLowerCase() === sg.name.toLowerCase())) merged.push(sg);
+  });
+
+  const localOnly = local.filter(g => g.name && !sheetNames.has(g.name.toLowerCase()));
   const cleaned = merged.filter(g => g.name && g.name !== 'undefined');
   saveGoals(cleaned);
   console.log(`✅ [Goals] Sync complete. Local storage count: ${cleaned.length}`);
+
+  // Push any local-only goals up so they propagate to other devices instead of
+  // being lost on the next sync. Runs only when a token is present.
+  if (localOnly.length && _gmailToken) {
+    console.log(`⬆️ [Goals] Pushing ${localOnly.length} local-only goal(s) to sheet...`);
+    try { await syncGoalsToSheet(); } catch (e) { console.error('[Goals] Push of local-only goals failed:', e); }
+  }
   if (document.getElementById('dashboard-overlay')?.style.display === 'flex') {
     renderDashboard();
   }
@@ -4337,14 +4341,41 @@ async function writeAnalysisFormulas(spreadsheetId) {
   await sheetsWrite(spreadsheetId, 'Analysis!A1:B8', rows);
 }
 
+// Returns true if the spreadsheet exists and has a Ledger tab — i.e. it's a
+// real Invoicer ledger, not a stale/duplicate/empty sheet a cached ID may point at.
+async function sheetHasLedgerTab(spreadsheetId) {
+  if (!spreadsheetId) return false;
+  const meta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`);
+  if (!meta || meta.error || !meta.sheets) return false;
+  const titles = meta.sheets.map(s => s.properties.title);
+  return titles.includes('Ledger') || titles.includes('Sheet1');
+}
+
 async function ensureLedgerSheet(folderId) {
-  if (_sheetsSpreadsheetId) return _sheetsSpreadsheetId;
+  // Trust a cached ID only if it still resolves to a real ledger. A stale ID
+  // (old session, duplicate folder, or wrong account) would otherwise be used
+  // forever, leaving the device reading an empty/wrong sheet — the mobile bug.
+  if (_sheetsSpreadsheetId) {
+    if (await sheetHasLedgerTab(_sheetsSpreadsheetId)) return _sheetsSpreadsheetId;
+    console.warn(`[Drive] Cached sheet ${_sheetsSpreadsheetId} has no Ledger tab — discarding and re-resolving.`);
+    _sheetsSpreadsheetId = '';
+    localStorage.removeItem('sheets-spreadsheet-id');
+  }
 
   // Search for existing ledger in folder (match either 'Invoice Ledger' or 'InvoiceLedger')
   const query = `(name = 'Invoice Ledger' or name = 'InvoiceLedger') and '${folderId}' in parents and trashed = false`;
-  const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
+  const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name,modifiedTime)`);
   if (search && search.files && search.files.length > 0) {
-    _sheetsSpreadsheetId = search.files[0].id;
+    // If duplicates exist, prefer one that actually has a Ledger tab; fall back
+    // to the most recently modified so we don't silently pick an empty twin.
+    const files = search.files.slice().sort((a, b) => (b.modifiedTime || '').localeCompare(a.modifiedTime || ''));
+    let chosen = null;
+    for (const f of files) {
+      if (await sheetHasLedgerTab(f.id)) { chosen = f.id; break; }
+    }
+    if (!chosen) chosen = files[0].id;
+    if (files.length > 1) console.warn(`[Drive] ${files.length} ledger files found — selected ${chosen}.`);
+    _sheetsSpreadsheetId = chosen;
     localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
     return _sheetsSpreadsheetId;
   }
@@ -4523,6 +4554,28 @@ async function openDashboard() {
   if (emptyEl) {
     emptyEl.style.display = 'block';
     emptyEl.textContent = '🔄 Syncing cloud data...';
+  }
+
+  // No valid token (common on mobile, where silent re-auth often fails): make
+  // it explicit rather than silently showing stale local-only goals. Try a
+  // silent refresh once, then prompt interactive sign-in if still missing.
+  if (!gmailTokenValid()) {
+    if (!_gmailToken && typeof restoreTokenFromStorage === 'function') restoreTokenFromStorage();
+    if (!gmailTokenValid() && _gmailTokenClient) {
+      await new Promise(resolve => {
+        initGmailAuth(() => resolve());
+        try { _gmailTokenClient.requestAccessToken({ prompt: 'none' }); } catch (e) { resolve(); }
+        setTimeout(resolve, 3000);
+      });
+    }
+    if (!gmailTokenValid()) {
+      if (emptyEl) emptyEl.textContent = 'Not signed in — your goals are stored in Google Sheets. Tap the profile icon to sign in and sync.';
+      showToast('Sign in with Google to load your goals from the sheet.', 'info');
+      renderDashboard();
+      return;
+    }
+    // Token just acquired — make sure Drive/sheet are wired before reading
+    if (!_sheetsSpreadsheetId) await setupDrive();
   }
 
   // Wait for setupDrive to finish if spreadsheet ID isn't available yet
@@ -5318,6 +5371,89 @@ function refreshSheetsIdStatus() {
   if (el) el.textContent = id ? id.slice(0, 20) + '…' : 'not set';
   const copyBtn = document.getElementById('dash-copy-sheet-btn');
   if (copyBtn) copyBtn.classList.toggle('hidden', !id);
+}
+
+function closeSyncDiagnostics() {
+  document.getElementById('sync-diag-overlay').style.display = 'none';
+}
+
+async function openSyncDiagnostics() {
+  const overlay = document.getElementById('sync-diag-overlay');
+  const envEl   = document.getElementById('sync-diag-env');
+  const tabsEl  = document.getElementById('sync-diag-tabs');
+  overlay.style.display = 'block';
+
+  const id    = _sheetsSpreadsheetId || localStorage.getItem('sheets-spreadsheet-id');
+  const token = _gmailToken;
+  const hasToken = !!token;
+
+  envEl.innerHTML = `
+    <strong>Token:</strong> ${hasToken ? '✅ Present' : '❌ Missing'}<br>
+    <strong>Sheet ID:</strong> ${id ? `✅ ${id}` : '❌ Not found'}<br>
+    <strong>Drive Folder:</strong> ${_driveFolderId || localStorage.getItem('drive-folder-id') || '❌ Not found'}<br>
+    <strong>Invoice Currency:</strong> ${(getData().currency || 'n/a')}<br>
+    <strong>Invoice Data:</strong> projectTotal="${getData().projectTotal || ''}" totalAmount="${getData().totalAmount || ''}"
+  `;
+
+  if (!id || !hasToken) {
+    tabsEl.innerHTML = '<p style="color:#d0241b; font-size:13px;">Cannot read tabs — missing token or sheet ID. Sign in first.</p>';
+    return;
+  }
+
+  const TABS = [
+    { name: 'Ledger',   range: 'Ledger!A1:H',   local: () => loadLedgerRows(),   label: 'Ledger rows' },
+    { name: 'Goals',    range: 'Goals!A1:L',     local: () => loadGoals(),        label: 'Goals' },
+    { name: 'Clients',  range: 'Clients!A1:D',   local: () => loadClients(),      label: 'Clients' },
+    { name: 'Profiles', range: 'Profiles!A1:F',  local: () => { try { return JSON.parse(localStorage.getItem('business-profiles') || '[]'); } catch(e){ return []; } }, label: 'Profiles' },
+    { name: 'Settings', range: 'Settings!A1:B',  local: () => { try { return JSON.parse(localStorage.getItem('invoice-settings') || '[]'); } catch(e){ return []; } }, label: 'Settings rows' },
+    { name: '_AppData', range: '_AppData!A1:C',  local: () => [], label: 'AppData rows' },
+  ];
+
+  tabsEl.innerHTML = '<p style="font-size:12px; color:#9aa2ac; margin-bottom:12px;">Reading all tabs from sheet…</p>';
+
+  const results = await Promise.allSettled(TABS.map(t => sheetsRead(id, t.range)));
+
+  tabsEl.innerHTML = '';
+  TABS.forEach((tab, i) => {
+    const res = results[i];
+    const sheetRows = res.status === 'fulfilled' ? (res.value || []) : null;
+    const localData = tab.local();
+    const ok = sheetRows !== null;
+    const sheetCount = ok ? Math.max(0, sheetRows.length - 1) : 0;
+    const localCount = Array.isArray(localData) ? localData.length : 0;
+    const mismatch = ok && sheetCount !== localCount;
+    const state = !ok ? 'error' : sheetCount === 0 ? 'empty' : 'ok';
+    const statusIcon = state === 'error' ? '❌' : state === 'empty' ? '⚠️' : '✅';
+
+    const section = document.createElement('div');
+    section.className = 'diag-tab-section';
+
+    const header = document.createElement('div');
+    header.className = `diag-tab-header diag-tab-header--${state}`;
+    header.innerHTML = `
+      <span class="diag-tab-name diag-tab-name--${state}">${statusIcon} ${tab.name}</span>
+      <span class="diag-tab-meta">Sheet: ${ok ? sheetCount + ' rows' : 'READ FAILED'} · Local: ${localCount} rows${mismatch ? ' ⚠️ mismatch' : ''}</span>`;
+
+    const body = document.createElement('div');
+    body.className = 'diag-tab-body';
+
+    if (!ok) {
+      body.textContent = `ERROR: sheetsRead returned null.\nThis means the tab is missing, the token is expired, or the API call failed.`;
+    } else if (sheetRows.length === 0) {
+      body.textContent = `Tab exists but has no data (not even a header row).`;
+    } else {
+      const headerRow = sheetRows[0] ? `HEADERS: ${sheetRows[0].join(' | ')}\n\n` : '';
+      const dataRows = sheetRows.slice(1).map((r, j) => `[${j+1}] ${r.join(' | ')}`).join('\n') || '(no data rows)';
+      body.textContent = headerRow + dataRows;
+      if (localCount > 0) {
+        body.textContent += '\n\n── LOCAL STORAGE ──\n' + JSON.stringify(localData, null, 2).slice(0, 2000);
+      }
+    }
+
+    header.onclick = () => { body.style.display = body.style.display === 'none' ? 'block' : 'none'; };
+    section.append(header, body);
+    tabsEl.appendChild(section);
+  });
 }
 
 function copySheetLink() {

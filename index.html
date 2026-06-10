@@ -305,6 +305,9 @@
           </div>
           <button onclick="resetAllData()" class="sp-btn-danger">⚠️ Factory Reset</button>
         </div>
+        <div class="modal-section-divider">
+          <button onclick="openSyncDiagnostics()" class="sp-btn-secondary sp-btn-full">🔬 Sync Diagnostics</button>
+        </div>
       </div>
     </div>
 
@@ -461,6 +464,25 @@
 
     <div id="ledger-confirm">✓ Ledger updated successfully.</div>
 
+  </div>
+</div>
+
+<!-- SYNC DIAGNOSTICS OVERLAY -->
+<div id="sync-diag-overlay" role="dialog" aria-modal="true" onclick="if(event.target.id==='sync-diag-overlay') closeSyncDiagnostics()" class="diag-overlay">
+  <div class="diag-box">
+    <div class="diag-header">
+      <div>
+        <div class="diag-label">Developer</div>
+        <div class="diag-title">Sync Diagnostics</div>
+      </div>
+      <button onclick="closeSyncDiagnostics()" class="diag-close">✕</button>
+    </div>
+    <div id="sync-diag-env" class="diag-env"></div>
+    <div id="sync-diag-tabs"></div>
+    <div class="diag-footer">
+      <button onclick="openSyncDiagnostics()" class="diag-btn-refresh">⟳ Refresh</button>
+      <button onclick="closeSyncDiagnostics()" class="diag-btn-close">Close</button>
+    </div>
   </div>
 </div>
 
