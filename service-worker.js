@@ -1,4 +1,4 @@
-const CACHE = 'app-mq8copay'; // __CACHE_VERSION__
+const CACHE = 'app-mq8g7kc0'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',

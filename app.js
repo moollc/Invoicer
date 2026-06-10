@@ -3010,7 +3010,7 @@ async function doSyncClientsToSheet() {
     const rowIdx = existing.findIndex(r => r[0] && r[0].toLowerCase() === client.name.toLowerCase());
     const newRow = [client.name, client.address || '', client.email || '', client.phone || ''];
     if (rowIdx === -1) {
-      await sheetsAppend(_sheetsSpreadsheetId, 'Clients!A:D', [newRow]);
+      await sheetsAppend(_sheetsSpreadsheetId, 'Clients!A1', [newRow]);
       existing.push(newRow); // Prevent duplicate appends if we loop
     } else {
       const sheetRow = rowIdx + 2; // 1-based + header offset
@@ -3172,7 +3172,10 @@ async function syncGoalsToSheet() {
       goal.allocationPct || '0'
     ];
     if (rowIdx === -1) {
-      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A:L', [newRow]);
+      // Anchor append at A1, not the A:L range — append uses the range to detect
+      // the table's last row/column, and an A:L range can make it start the new
+      // row at column L (data lands in L:W, invisible to an A:L read).
+      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A1', [newRow]);
     } else {
       const sheetRow = rowIdx + 2;
       await sheetsWrite(_sheetsSpreadsheetId, `Goals!A${sheetRow}:L${sheetRow}`, [newRow]);
@@ -3927,7 +3930,11 @@ function initGmailAuth(onToken) {
       _gmailToken    = resp.access_token;
       _gmailTokenExp = Date.now() + resp.expires_in * 1000;
       saveTokenToStorage();
+      // Always refresh sign-in UI on token arrival, regardless of which caller's
+      // onToken is attached — fixes sign-in not registering until a manual page
+      // refresh (the GIS callback could fire on a different client instance).
       updateEmailBtn();
+      try { if (typeof refreshSheetsIdStatus === 'function') refreshSheetsIdStatus(); } catch(e){}
       if (onToken) onToken();
     },
   });
@@ -3974,7 +3981,13 @@ function updateEmailBtn() {
 function googleSignIn() {
   initGmailAuth(() => {
     updateEmailBtn();
+    refreshSheetsIdStatus();
     setupDrive();
+    // Repaint the dashboard if it's open so signed-in state shows immediately
+    // instead of only after a manual page refresh.
+    if (document.getElementById('dashboard-overlay')?.style.display === 'flex') {
+      try { renderDashboard(); } catch(e){}
+    }
   });
   if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: '' });
 }
@@ -4149,7 +4162,7 @@ async function syncToGoogleSheets(invoiceData) {
     ];
 
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:H:append?valueInputOption=USER_ENTERED`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
       {
         method: 'POST',
         headers: {
