@@ -5094,15 +5094,26 @@ function renderDashboard() {
 }
 
 function renderGoalsList() {
-  const goals = loadGoals();
+  const rawGoals = loadGoals();
   const el = document.getElementById('dash-goals-list');
   if (!el) return;
   el.innerHTML = '';
-  if (!goals.length) {
+  if (!rawGoals.length) {
     el.innerHTML = '<p style="font-size:12px; color:#9aa2ac; margin:0 0 8px;">No goals yet.</p>';
     return;
   }
-  goals.forEach((g, i) => {
+  // Active goals sorted by deadline soonest-first (no deadline goes last), claimed sink to bottom
+  const goals = [...rawGoals].sort((a, b) => {
+    const aClaimed = a.status === 'Claimed';
+    const bClaimed = b.status === 'Claimed';
+    if (aClaimed !== bClaimed) return aClaimed ? 1 : -1;
+    if (!a.deadline && !b.deadline) return 0;
+    if (!a.deadline) return 1;
+    if (!b.deadline) return -1;
+    return new Date(a.deadline) - new Date(b.deadline);
+  });
+  goals.forEach((g) => {
+    const rawIdx = rawGoals.findIndex(r => r.name === g.name);
     const div = document.createElement('div');
     div.className = 'goal-card';
     const reached = parseFloat(g.amountReached) || 0;
@@ -5123,8 +5134,8 @@ function renderGoalsList() {
       <div class="goal-card-header">
         <strong class="goal-name">${g.name}</strong>
         <div class="goal-card-actions">
-          <button onclick="editGoal(${i})" class="goal-btn-edit" title="Edit goal">Edit</button>
-          <button onclick="deleteGoal(${i})" class="goal-btn-delete" title="Delete goal">✕</button>
+          <button onclick="editGoal(${rawIdx})" class="goal-btn-edit" title="Edit goal">Edit</button>
+          <button onclick="deleteGoal(${rawIdx})" class="goal-btn-delete" title="Delete goal">✕</button>
         </div>
       </div>
       <div class="goal-card-meta">
