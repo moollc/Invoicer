@@ -1,4 +1,4 @@
-const CACHE = 'app-mq8tvsbd'; // __CACHE_VERSION__
+const CACHE = 'app-mq9kvmuw'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
