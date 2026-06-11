@@ -1099,7 +1099,20 @@ const STATUSES = [
 
 // Ledger lives entirely in localStorage as an array of row objects
 function loadLedgerRows() {
-  return JSON.parse(localStorage.getItem('invoice-ledger-rows') || '[]');
+  const rows = JSON.parse(localStorage.getItem('invoice-ledger-rows') || '[]');
+  // Heal rows poisoned by the currency-picker bug (concatenated option list
+  // baked into totals at save time). Persist the cleanup so it sticks.
+  let healed = false;
+  for (const r of rows) {
+    for (const k of ['projectTotal', 'amountDue']) {
+      if (typeof r[k] === 'string' && r[k].includes('USDJMDEURGBPCADAUDTTD')) {
+        r[k] = r[k].replace(/USDJMDEURGBPCADAUDTTD\s*/g, '').replace(/\s{2,}/g, ' ').trim();
+        healed = true;
+      }
+    }
+  }
+  if (healed) { try { localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows)); } catch(e) {} }
+  return rows;
 }
 function saveLedgerRows(rows) {
   localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows));
@@ -2164,10 +2177,13 @@ function updateFilenamePreview() {
 async function proceedPrint() {
   updateFilenamePreview();
   closeDialog();
-  // Leave edit mode before printing so edit chrome (field outlines, add/delete
-  // buttons, drag handles, the DRAFT watermark's editable state) is gone from
-  // the printed page. Without this, printing mid-edit leaks edit UI into output.
-  if (document.body.classList.contains('editing')) stopEdit();
+  // Leave edit mode AND re-render from data before printing — stopEdit alone
+  // leaves injected edit controls (currency select, rate/cost textareas, date
+  // input) in the live DOM, and window.print() would print them.
+  if (document.body.classList.contains('editing')) {
+    stopEdit();
+    render(getData());
+  }
   window.print();
   setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
 
