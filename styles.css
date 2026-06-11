@@ -1990,6 +1990,50 @@
   .profile-signout-btn { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:10px; background:#fff; border:1.5px solid #ddd; border-radius:7px; font-family:'Roboto',sans-serif; font-size:13px; cursor:pointer; color:#14202e; }
   /* Dashboard section labels */
   .dash-section-label { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:10px; }
+  /* Dashboard tabs */
+  .dash-tab-bar { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; border-bottom:1.5px solid #f0f0f0; padding-bottom:10px; }
+  .dash-tabs { display:flex; gap:4px; }
+  .dash-tab { font-family:'Roboto',sans-serif; font-size:11px; font-weight:600; letter-spacing:1px; text-transform:uppercase; padding:5px 14px; border:none; border-radius:4px; cursor:pointer; background:transparent; color:#9aa2ac; transition:background 0.12s, color 0.12s; }
+  .dash-tab--active { background:#14202e; color:#fff; }
+  .dash-tab:not(.dash-tab--active):hover { background:#f0f0f0; color:#14202e; }
+
+  /* Income pool bar */
+  .pool-summary { margin-bottom:14px; padding:12px 14px; background:#f6f6f4; border-radius:8px; }
+  .pool-row { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px; }
+  .pool-label { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:#9aa2ac; font-weight:600; }
+  .pool-total { font-size:14px; font-weight:800; color:#14202e; }
+  .pool-track { height:6px; border-radius:3px; background:#e0e0e0; display:flex; overflow:hidden; margin-bottom:6px; }
+  .pool-fill { height:100%; transition:width 0.5s ease-out; }
+  .pool-fill--goals { background:#2a8c55; }
+  .pool-fill--bills { background:#d0241b; }
+  .pool-legend { display:flex; gap:12px; flex-wrap:wrap; }
+  .pool-legend-item { font-size:10px; font-weight:600; }
+  .pool-legend--goals { color:#2a8c55; }
+  .pool-legend--bills { color:#d0241b; }
+  .pool-legend--free  { color:#9aa2ac; }
+
+  /* Bill cards */
+  .bill-card { border-radius:8px; padding:12px 14px; margin-bottom:8px; background:#f6f6f4; }
+  .bill-card--overdue { background:#fff5f5; border-left:3px solid #d0241b; }
+  .bill-card--due     { background:#fffbf0; border-left:3px solid #e6a817; }
+  .bill-card--paid    { opacity:0.6; }
+  .bill-card-header   { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:4px; }
+  .bill-name  { font-size:13px; font-weight:700; color:#14202e; }
+  .bill-recurrence { font-size:11px; color:#9aa2ac; margin-left:4px; }
+  .bill-card-actions { display:flex; gap:4px; }
+  .bill-meta  { display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }
+  .bill-amount { font-size:13px; font-weight:600; color:#14202e; }
+  .bill-due   { font-size:11px; font-weight:600; padding:2px 7px; border-radius:3px; }
+  .bill-due--upcoming { background:#e8f5e9; color:#2a8c55; }
+  .bill-due--due      { background:#fff8e1; color:#b45309; }
+  .bill-due--overdue  { background:#ffebee; color:#c62828; }
+  .bill-due--paid     { background:#e8f5e9; color:#2a8c55; }
+  .bill-alloc { font-size:10px; color:#9aa2ac; }
+  .bill-funded-row { display:flex; justify-content:space-between; align-items:center; margin-top:6px; }
+  .bill-funded-label { font-size:11px; color:#6c7682; }
+  .goal-claim-btn--warn { background:#e6a817 !important; }
+  .bills-empty { font-size:12px; color:#9aa2ac; margin:0 0 8px; }
+
   .dash-flex-between { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
   .dash-section-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; }
   .dash-btn-row { display:flex; gap:8px; }

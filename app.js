@@ -3534,6 +3534,424 @@ async function loadProfilesFromSheet() {
   }
 }
 
+// ── Bills ─────────────────────────────────────────────────────
+
+function loadBills() {
+  return JSON.parse(localStorage.getItem('invoice-bills') || '[]');
+}
+function saveBills(bills) {
+  localStorage.setItem('invoice-bills', JSON.stringify(bills));
+}
+
+function billCycleLabel(bill) {
+  if (bill.recurrence === 'monthly') return '/mo';
+  if (bill.recurrence === 'annual')  return '/yr';
+  return bill.customDays ? `/${bill.customDays}d` : '';
+}
+
+// Returns { dueDate, cycleStart, cycleEnd } for the current cycle of a bill
+function billCurrentCycle(bill) {
+  const now = new Date();
+  let cycleStart, cycleEnd, dueDate;
+
+  if (bill.recurrence === 'monthly') {
+    const day = Math.min(parseInt(bill.dueDay) || 1, 28);
+    cycleStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    cycleEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    dueDate    = new Date(now.getFullYear(), now.getMonth(), day);
+    if (now.getDate() < day && now.getMonth() > 0) {
+      // if we haven't hit the due day yet, due date is this month
+    }
+  } else if (bill.recurrence === 'annual') {
+    const base = bill.cycleStart ? new Date(bill.cycleStart) : new Date(now.getFullYear(), 0, 1);
+    cycleStart = new Date(base.getFullYear(), base.getMonth(), base.getDate());
+    while (cycleStart > now) cycleStart.setFullYear(cycleStart.getFullYear() - 1);
+    cycleEnd = new Date(cycleStart); cycleEnd.setFullYear(cycleEnd.getFullYear() + 1);
+    dueDate = new Date(cycleEnd);
+  } else {
+    const days = parseInt(bill.customDays) || 30;
+    const base = bill.cycleStart ? new Date(bill.cycleStart) : new Date(now.getTime() - days * 86400000);
+    cycleStart = new Date(base);
+    while (new Date(cycleStart.getTime() + days * 86400000) < now) {
+      cycleStart = new Date(cycleStart.getTime() + days * 86400000);
+    }
+    cycleEnd = new Date(cycleStart.getTime() + days * 86400000);
+    dueDate  = new Date(cycleEnd);
+  }
+  return { dueDate, cycleStart, cycleEnd };
+}
+
+function billStatus(bill) {
+  if (bill.paid) return 'paid';
+  const { dueDate } = billCurrentCycle(bill);
+  const now = new Date();
+  const diff = Math.ceil((dueDate - now) / 86400000);
+  if (diff < 0)  return 'overdue';
+  if (diff <= 7) return 'due';
+  return 'upcoming';
+}
+
+// Called when income is allocated — funds bills proportionally from their allocationPct
+function allocateToBills(incomeUSD) {
+  const bills = loadBills();
+  let changed = false;
+  bills.forEach(b => {
+    const pct = parseFloat(b.allocationPct) || 0;
+    if (!pct) return;
+    const contribution = incomeUSD * (pct / 100);
+    b.funded = String(Math.round(((parseFloat(b.funded) || 0) + contribution) * 100) / 100);
+    changed = true;
+  });
+  if (changed) { saveBills(bills); syncBillsToSheet(); }
+}
+
+// Pool calculation — shared across goals and bills
+function calcIncomePool() {
+  const rows = loadLedgerRows();
+  const parseAmt = s => parseFloat((s || '').replace(/[^0-9.]/g, '')) || 0;
+  const totalIncome   = rows.filter(r => r.status === '✅ Paid').reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  const goalsUsed     = loadGoals().reduce((s, g) => s + (parseFloat(g.amountReached) || 0), 0);
+  const billsFunded   = loadBills().reduce((s, b) => s + (parseFloat(b.funded) || 0), 0);
+  return { totalIncome, goalsUsed, billsFunded, free: Math.max(0, totalIncome - goalsUsed - billsFunded) };
+}
+
+async function syncBillsToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const bills = loadBills();
+  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:J');
+  if (existing === null) return;
+  for (const bill of bills) {
+    const newRow = [
+      bill.id, bill.name, bill.amount, bill.recurrence,
+      bill.customDays || '', bill.dueDay || '', bill.allocationPct || '0',
+      bill.funded || '0', bill.paid ? '1' : '0',
+      JSON.stringify(bill.history || [])
+    ];
+    const rowIdx = existing.findIndex(r => r[0] === bill.id);
+    if (rowIdx === -1) {
+      await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
+    } else {
+      await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:J${rowIdx + 2}`, [newRow]);
+    }
+  }
+}
+
+async function loadBillsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:J');
+  if (rows === null) return;
+  const sheetBills = rows.filter(r => r[0] && r[0].trim()).map(r => ({
+    id: r[0], name: r[1] || '', amount: r[2] || '0',
+    recurrence: r[3] || 'monthly', customDays: r[4] || '',
+    dueDay: r[5] || '1', allocationPct: r[6] || '0',
+    funded: r[7] || '0', paid: r[8] === '1',
+    history: (() => { try { return JSON.parse(r[9] || '[]'); } catch(e) { return []; } })()
+  }));
+  if (!sheetBills.length) {
+    const local = loadBills();
+    if (local.length) await syncBillsToSheet();
+    return;
+  }
+  const local = loadBills();
+  const sheetIds = new Set(sheetBills.map(b => b.id));
+  const localOnly = local.filter(b => !sheetIds.has(b.id));
+  saveBills([...sheetBills, ...localOnly]);
+  if (localOnly.length) await syncBillsToSheet();
+}
+
+// Reset a bill for its next cycle (called after marking paid or on overdue rollover)
+function resetBillCycle(bill, compound = false) {
+  const amount = parseFloat(bill.amount) || 0;
+  const funded = parseFloat(bill.funded) || 0;
+  if (compound && funded < amount) {
+    // Past due — carry over the deficit into the new cycle
+    bill.funded = String(Math.max(0, funded - amount));
+  } else {
+    bill.funded = '0';
+  }
+  bill.paid = false;
+  bill.cycleStart = new Date().toISOString().slice(0, 10);
+}
+
+let _editingBillId = null;
+
+function openBillModal(id) {
+  _editingBillId = id || null;
+  const bill = id ? loadBills().find(b => b.id === id) : null;
+  document.getElementById('bill-modal-title').textContent = bill ? 'Edit Bill' : 'New Bill';
+  document.getElementById('bill-input-name').value         = bill ? bill.name : '';
+  document.getElementById('bill-input-amount').value       = bill ? bill.amount : '';
+  document.getElementById('bill-input-recurrence').value   = bill ? bill.recurrence : 'monthly';
+  document.getElementById('bill-input-dueday').value       = bill ? (bill.dueDay || '') : '';
+  document.getElementById('bill-input-customdays').value   = bill ? (bill.customDays || '') : '';
+  document.getElementById('bill-input-allocation').value   = bill ? (bill.allocationPct || '') : '';
+  document.getElementById('bill-input-recipient').value    = bill ? (bill.recipient || '') : '';
+  toggleBillRecurrenceFields();
+  document.getElementById('bill-modal-error').textContent = '';
+  document.getElementById('bill-overlay').style.display = 'flex';
+}
+function closeBillModal() {
+  document.getElementById('bill-overlay').style.display = 'none';
+  _editingBillId = null;
+}
+function toggleBillRecurrenceFields() {
+  const rec = document.getElementById('bill-input-recurrence').value;
+  document.getElementById('bill-dueday-row').style.display    = rec === 'monthly' ? 'block' : 'none';
+  document.getElementById('bill-customdays-row').style.display = rec === 'custom'  ? 'block' : 'none';
+}
+function saveBillModal() {
+  const name      = document.getElementById('bill-input-name').value.trim();
+  const amount    = document.getElementById('bill-input-amount').value.trim();
+  const recurrence = document.getElementById('bill-input-recurrence').value;
+  const dueDay    = document.getElementById('bill-input-dueday').value.trim();
+  const customDays = document.getElementById('bill-input-customdays').value.trim();
+  const alloc     = document.getElementById('bill-input-allocation').value.trim();
+  const recipient = document.getElementById('bill-input-recipient').value.trim();
+  const errEl     = document.getElementById('bill-modal-error');
+
+  if (!name)   { errEl.textContent = 'Name is required.'; return; }
+  if (!amount || isNaN(parseFloat(amount))) { errEl.textContent = 'Valid amount required.'; return; }
+
+  const bills = loadBills();
+  if (_editingBillId) {
+    const idx = bills.findIndex(b => b.id === _editingBillId);
+    if (idx !== -1) {
+      bills[idx] = { ...bills[idx], name, amount, recurrence, dueDay, customDays,
+        allocationPct: alloc || '0', recipient };
+      saveBills(bills);
+    }
+  } else {
+    bills.push({ id: String(Date.now()), name, amount, recurrence, dueDay, customDays,
+      allocationPct: alloc || '0', recipient, funded: '0', paid: false,
+      cycleStart: new Date().toISOString().slice(0, 10), history: [] });
+    saveBills(bills);
+  }
+  syncBillsToSheet();
+  closeBillModal();
+  renderBillsList();
+}
+function deleteBill(id) {
+  const bills = loadBills().filter(b => b.id !== id);
+  saveBills(bills);
+  syncBillsToSheet();
+  renderBillsList();
+}
+
+async function markBillPaid(id) {
+  const bills = loadBills();
+  const idx = bills.findIndex(b => b.id === id);
+  if (idx === -1) return;
+  const bill = bills[idx];
+  const amount = parseFloat(bill.amount) || 0;
+
+  // Log payment to history
+  bill.history = bill.history || [];
+  bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
+  bill.paid = true;
+  bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
+  saveBills(bills);
+  syncBillsToSheet();
+  renderBillsList();
+  showToast(`✓ ${bill.name} marked paid`, 'success');
+
+  // Generate payment receipt PDF
+  await generatePaymentReceipt(bill);
+}
+
+async function generatePaymentReceipt(bill) {
+  const profile = getActiveProfile() || {};
+  const today = new Date();
+  const dateStr = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
+  const currency = window.currentDashCurrency || localStorage.getItem('invoicer-default-currency') || 'USD';
+  const amt = parseFloat(bill.amount) || 0;
+  const fmtAmt = currency + ' ' + amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+    body{font-family:'Helvetica Neue',Arial,sans-serif;margin:0;padding:40px;color:#14202e;background:#fff;}
+    .header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:3px solid #14202e;margin-bottom:32px;}
+    .from-name{font-size:22px;font-weight:800;letter-spacing:-0.5px;}
+    .from-sub{font-size:11px;color:#6c7682;margin-top:4px;}
+    .receipt-title{text-align:right;}
+    .receipt-title h1{font-size:28px;font-weight:900;letter-spacing:2px;text-transform:uppercase;margin:0;color:#14202e;}
+    .receipt-title .meta{font-size:11px;color:#6c7682;margin-top:6px;}
+    .to-block{background:#f6f6f4;border-radius:8px;padding:14px 18px;margin-bottom:28px;font-size:12px;}
+    .to-block strong{font-size:14px;display:block;margin-bottom:4px;}
+    table{width:100%;border-collapse:collapse;margin-bottom:24px;}
+    thead tr{background:#14202e;color:#fff;}
+    thead td{padding:10px 12px;font-size:11px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;}
+    tbody td{padding:10px 12px;border-bottom:1px solid #eee;font-size:13px;}
+    .total-row{display:flex;justify-content:flex-end;margin-top:8px;}
+    .total-box{width:240px;border-top:2px solid #14202e;padding-top:12px;}
+    .total-line{display:flex;justify-content:space-between;font-size:15px;font-weight:800;}
+    .footer{margin-top:48px;font-size:10px;color:#9aa2ac;text-align:center;border-top:1px solid #eee;padding-top:14px;}
+  </style></head><body>
+  <div class="header">
+    <div><div class="from-name">${profile.name || 'Your Business'}</div>
+    <div class="from-sub">${[profile.email, profile.phone].filter(Boolean).join(' · ')}</div></div>
+    <div class="receipt-title"><h1>Receipt</h1><div class="meta">Date: ${dateStr}<br>Payment confirmation</div></div>
+  </div>
+  <div class="to-block"><strong>Paid to: ${bill.recipient || bill.name}</strong>${bill.recipient && bill.recipient !== bill.name ? bill.name : ''}</div>
+  <table>
+    <thead><tr><td>Description</td><td>Period</td><td style="text-align:right">Amount</td></tr></thead>
+    <tbody><tr>
+      <td>${bill.name}</td>
+      <td>${bill.recurrence === 'monthly' ? 'Monthly' : bill.recurrence === 'annual' ? 'Annual' : `Every ${bill.customDays} days`}</td>
+      <td style="text-align:right;font-weight:600;">${fmtAmt}</td>
+    </tr></tbody>
+  </table>
+  <div class="total-row"><div class="total-box">
+    <div class="total-line"><span>Total Paid</span><span>${fmtAmt}</span></div>
+  </div></div>
+  <div class="footer">${profile.name || 'Your Business'} · Payment receipt · ${dateStr}</div>
+  </body></html>`;
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:-9999px;top:0;width:816px;background:#fff;';
+  container.innerHTML = html;
+  document.body.appendChild(container);
+  try {
+    const filename = `Receipt-${bill.name.replace(/\s+/g,'-')}-${dateStr.replace(/\//g,'')}.pdf`;
+    const opt = { margin:[10,10], filename, image:{type:'jpeg',quality:0.98}, html2canvas:{scale:2}, jsPDF:{unit:'mm',format:'letter',orientation:'portrait'} };
+    await html2pdf().set(opt).from(container).save();
+    showToast('✓ Payment receipt downloaded', 'success');
+  } catch(e) {
+    console.error('Receipt PDF error:', e);
+  } finally {
+    document.body.removeChild(container);
+  }
+}
+
+// Check each bill for cycle rollovers — call on dashboard open
+function tickBillCycles() {
+  const bills = loadBills();
+  let changed = false;
+  bills.forEach(b => {
+    const { cycleEnd } = billCurrentCycle(b);
+    const now = new Date();
+    // If cycle has ended and bill was paid → clean reset
+    // If cycle has ended and bill was NOT paid → compound (carry deficit)
+    if (now > cycleEnd) {
+      const wasPaid = b.paid;
+      resetBillCycle(b, !wasPaid);
+      b.cycleStart = now.toISOString().slice(0, 10);
+      changed = true;
+    }
+  });
+  if (changed) { saveBills(bills); syncBillsToSheet(); }
+}
+
+function switchDashTab(tab) {
+  const goalsPane = document.getElementById('dash-goals-pane');
+  const billsPane = document.getElementById('dash-bills-pane');
+  const goalsPill = document.getElementById('dash-tab-goals');
+  const billsPill = document.getElementById('dash-tab-bills');
+  if (!goalsPane || !billsPane) return;
+  const showGoals = tab === 'goals';
+  goalsPane.style.display = showGoals ? 'block' : 'none';
+  billsPane.style.display = showGoals ? 'none'  : 'block';
+  goalsPill.classList.toggle('dash-tab--active', showGoals);
+  billsPill.classList.toggle('dash-tab--active', !showGoals);
+}
+
+function renderBillsList() {
+  const el = document.getElementById('dash-bills-list');
+  if (!el) return;
+  el.innerHTML = '';
+
+  // Pool summary
+  const pool = calcIncomePool();
+  const fmt = n => {
+    const code = window.currentDashCurrency || 'USD';
+    return formatCurrencyNative(Math.round(n), code, 0);
+  };
+  const poolBar = document.createElement('div');
+  poolBar.className = 'pool-summary';
+  const poolPct = pool.totalIncome > 0 ? Math.round(((pool.goalsUsed + pool.billsFunded) / pool.totalIncome) * 100) : 0;
+  const freePct = 100 - Math.min(poolPct, 100);
+  poolBar.innerHTML = `
+    <div class="pool-row">
+      <span class="pool-label">Income Pool</span>
+      <span class="pool-total">${fmt(pool.totalIncome)}</span>
+    </div>
+    <div class="pool-track">
+      <div class="pool-fill pool-fill--goals" style="width:${pool.totalIncome > 0 ? Math.round((pool.goalsUsed/pool.totalIncome)*100) : 0}%"></div>
+      <div class="pool-fill pool-fill--bills" style="width:${pool.totalIncome > 0 ? Math.round((pool.billsFunded/pool.totalIncome)*100) : 0}%"></div>
+    </div>
+    <div class="pool-legend">
+      <span class="pool-legend-item pool-legend--goals">Goals ${fmt(pool.goalsUsed)}</span>
+      <span class="pool-legend-item pool-legend--bills">Bills ${fmt(pool.billsFunded)}</span>
+      <span class="pool-legend-item pool-legend--free">Free ${fmt(pool.free)}</span>
+    </div>`;
+  el.appendChild(poolBar);
+
+  const bills = loadBills();
+  if (!bills.length) {
+    const empty = document.createElement('p');
+    empty.className = 'bills-empty';
+    empty.textContent = 'No bills yet. Add one to start tracking.';
+    el.appendChild(empty);
+    return;
+  }
+
+  // Sort: overdue first, then by due date, paid last
+  const sorted = [...bills].sort((a, b) => {
+    const sa = billStatus(a), sb = billStatus(b);
+    const order = { overdue: 0, due: 1, upcoming: 2, paid: 3 };
+    if (order[sa] !== order[sb]) return order[sa] - order[sb];
+    const { dueDate: da } = billCurrentCycle(a);
+    const { dueDate: db } = billCurrentCycle(b);
+    return da - db;
+  });
+
+  sorted.forEach(bill => {
+    const status = billStatus(bill);
+    const amount = parseFloat(bill.amount) || 0;
+    const funded = parseFloat(bill.funded) || 0;
+    const pct    = amount > 0 ? Math.min(100, Math.round((funded / amount) * 100)) : 0;
+    const { dueDate } = billCurrentCycle(bill);
+    const daysLeft = Math.ceil((dueDate - new Date()) / 86400000);
+    const dueTxt = status === 'paid' ? 'Paid this cycle'
+      : status === 'overdue' ? `${Math.abs(daysLeft)}d overdue`
+      : daysLeft === 0 ? 'Due today'
+      : daysLeft <= 7 ? `Due in ${daysLeft}d`
+      : `Due ${dueDate.toLocaleDateString('en-US', { month:'short', day:'numeric' })}`;
+
+    const card = document.createElement('div');
+    card.className = `bill-card bill-card--${status}`;
+    card.innerHTML = `
+      <div class="bill-card-header">
+        <div>
+          <strong class="bill-name">${bill.name}</strong>
+          <span class="bill-recurrence">${billCycleLabel(bill)}</span>
+        </div>
+        <div class="bill-card-actions">
+          <button onclick="openBillModal('${bill.id}')" class="goal-btn-edit">Edit</button>
+          <button onclick="deleteBill('${bill.id}')" class="goal-btn-delete">✕</button>
+        </div>
+      </div>
+      <div class="bill-meta">
+        <span class="bill-amount">${fmt(amount)}</span>
+        <span class="bill-due bill-due--${status}">${dueTxt}</span>
+        ${bill.allocationPct ? `<span class="bill-alloc">${bill.allocationPct}% allocated</span>` : ''}
+      </div>
+      <div class="goal-bar-wrap">
+        <div class="goal-bar-fill bill-bar-fill" style="width:0%"></div>
+      </div>
+      <div class="bill-funded-row">
+        <span class="bill-funded-label">Funded: ${fmt(funded)} of ${fmt(amount)}</span>
+        ${status !== 'paid' ? `<button onclick="markBillPaid('${bill.id}')" class="goal-claim-btn ${pct < 100 ? 'goal-claim-btn--warn' : ''}">
+          ${pct >= 100 ? 'Pay & Receipt' : 'Pay Anyway'}
+        </button>` : '<span class="goal-claimed-label">✓ Paid</span>'}
+      </div>`;
+    el.appendChild(card);
+    // Animate bar
+    requestAnimationFrame(() => {
+      const fill = card.querySelector('.bill-bar-fill');
+      if (fill) fill.style.width = pct + '%';
+    });
+  });
+}
+
 async function syncSettingsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   
@@ -4562,7 +4980,7 @@ async function ensureAllTabs(spreadsheetId) {
     }});
   }
 
-  for (const tab of ['Analysis', 'Clients', 'Goals', 'Profiles', 'Settings']) {
+  for (const tab of ['Analysis', 'Clients', 'Goals', 'Bills', 'Profiles', 'Settings']) {
     if (!existing.includes(tab)) {
       requests.push({ addSheet: { properties: { title: tab } } });
     }
@@ -4594,6 +5012,9 @@ async function ensureAllTabs(spreadsheetId) {
     if (goalsHeaders.length === 0 || !goalsHeaders.includes('Allocation %')) {
       await sheetsWrite(spreadsheetId, 'Goals!A1:L1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created', 'Amount Reached', 'Last Contribution', 'Status', 'Claim Date', 'Receipt #', 'Receipt File', 'Allocation %']]);
     }
+  }
+  if (!existing.includes('Bills')) {
+    await sheetsWrite(spreadsheetId, 'Bills!A1:J1', [['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History']]);
   }
   if (!existing.includes('Profiles')) {
     await sheetsWrite(spreadsheetId, 'Profiles!A1:F1', [['Profile ID', 'Name', 'Address', 'Email', 'Phone', 'LogoData']]);
@@ -4719,6 +5140,7 @@ async function setupDrive() {
       loadLedgerFromSheet(),
       loadClientsFromSheet(),
       loadGoalsFromSheet(),
+      loadBillsFromSheet(),
       loadProfilesFromSheet(),
       loadSettingsFromSheet()
     ]);
@@ -4888,6 +5310,7 @@ async function openDashboard() {
     const [rows, goalRes] = await Promise.all([
       loadLedgerFromSheet(),
       loadGoalsFromSheet(),
+      loadBillsFromSheet(),
     ]);
     
     // loadLedgerFromSheet already merges + saves to localStorage internally
@@ -5081,7 +5504,9 @@ function renderDashboard() {
     });
   }
 
+  tickBillCycles();
   renderGoalsList();
+  renderBillsList();
 
   const profileNameEl = document.getElementById('dash-profile-name');
   if (profileNameEl) {
@@ -5949,7 +6374,12 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
 
   saveGoals(goals);
   await syncGoalsToSheet();
+
+  // Also fund bills from the same income allocation
+  allocateToBills(contributionUSD);
+
   renderGoalsList();
+  renderBillsList();
   renderDashboard();
 
   if (messages.length) {

@@ -682,18 +682,36 @@
       <button onclick="closeDashboard(); setTimeout(applyBusinessProfile, 100);" class="dash-add-btn-outline">⚙ My Business</button>
     </div>
 
-    <!-- Goals -->
-    <div class="dash-flex-between">
-      <div class="dash-section-title">Goals</div>
+    <!-- Tab bar -->
+    <div class="dash-tab-bar">
+      <div class="dash-tabs">
+        <button id="dash-tab-goals" class="dash-tab dash-tab--active" onclick="switchDashTab('goals')">Goals</button>
+        <button id="dash-tab-bills" class="dash-tab" onclick="switchDashTab('bills')">Bills</button>
+      </div>
       <div class="sp-btn-row">
         <button onclick="openDashboard()" class="dash-filter-btn">⟳ Sync</button>
         <button onclick="promptForSheetsId()" class="dash-filter-btn" title="Set or change the Google Sheet this device syncs to">⚙ Sheet ID</button>
         <button id="dash-copy-sheet-btn" onclick="copySheetLink()" class="dash-filter-btn hidden">⧉ Sheet</button>
-        <button onclick="addGoal()" class="dash-add-btn">+ Add Goal</button>
       </div>
     </div>
 
-    <div id="dash-goals-list"></div>
+    <!-- Goals pane -->
+    <div id="dash-goals-pane">
+      <div class="dash-flex-between" style="margin-bottom:8px;">
+        <span></span>
+        <button onclick="addGoal()" class="dash-add-btn">+ Add Goal</button>
+      </div>
+      <div id="dash-goals-list"></div>
+    </div>
+
+    <!-- Bills pane -->
+    <div id="dash-bills-pane" style="display:none;">
+      <div class="dash-flex-between" style="margin-bottom:8px;">
+        <span></span>
+        <button onclick="openBillModal()" class="dash-add-btn">+ Add Bill</button>
+      </div>
+      <div id="dash-bills-list"></div>
+    </div>
 
     <div id="dash-empty">
       Sign in with Google and save an invoice to see your stats here.
@@ -854,5 +872,53 @@
     <button onclick="addProvider()" class="modal-btn-full-eee" style="margin-top:8px;">+ Add Provider</button>
   </div>
 </div>
+
+<div id="bill-overlay" role="dialog" aria-modal="true" aria-label="Bill" onclick="if(event.target.id==='bill-overlay') closeBillModal()">
+  <div class="modal-box modal-box--400">
+    <button onclick="closeBillModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
+    <div class="modal-label">Recurring</div>
+    <div id="bill-modal-title" class="modal-title">New Bill</div>
+    <div class="modal-form-group">
+      <div>
+        <label class="modal-form-label">Bill Name *</label>
+        <input id="bill-input-name" type="text" placeholder="e.g. Rent, Adobe CC" class="modal-input-full">
+      </div>
+      <div>
+        <label class="modal-form-label">Amount *</label>
+        <input id="bill-input-amount" type="number" min="0" step="0.01" placeholder="0.00" class="modal-input-full">
+      </div>
+      <div>
+        <label class="modal-form-label">Recurrence</label>
+        <select id="bill-input-recurrence" class="modal-input-full" onchange="toggleBillRecurrenceFields()">
+          <option value="monthly">Monthly</option>
+          <option value="annual">Annual</option>
+          <option value="custom">Custom</option>
+        </select>
+      </div>
+      <div id="bill-dueday-row">
+        <label class="modal-form-label">Due Day of Month</label>
+        <input id="bill-input-dueday" type="number" min="1" max="28" placeholder="e.g. 1" class="modal-input-full">
+      </div>
+      <div id="bill-customdays-row" style="display:none;">
+        <label class="modal-form-label">Every N Days</label>
+        <input id="bill-input-customdays" type="number" min="1" placeholder="e.g. 30" class="modal-input-full">
+      </div>
+      <div>
+        <label class="modal-form-label">Recipient (optional)</label>
+        <input id="bill-input-recipient" type="text" placeholder="e.g. Landlord name" class="modal-input-full">
+      </div>
+      <div>
+        <label class="modal-form-label">Allocation % from invoices</label>
+        <input id="bill-input-allocation" type="number" min="0" max="100" step="0.1" placeholder="e.g. 15" class="modal-input-full">
+      </div>
+    </div>
+    <div id="bill-modal-error" style="color:#c62828;font-size:12px;margin-bottom:8px;"></div>
+    <div class="modal-btn-row">
+      <button onclick="saveBillModal()">Save Bill</button>
+      <button onclick="closeBillModal()" class="modal-btn-secondary">Cancel</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
