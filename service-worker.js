@@ -1,4 +1,4 @@
-const CACHE = 'app-mq9kvmuw'; // __CACHE_VERSION__
+﻿const CACHE = 'app-mqa2na3p'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
@@ -16,7 +16,7 @@ const OFFLINE_HTML = `
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Offline · moo Invoicer</title>
+  <title>Offline Â· moo Invoicer</title>
   <style>
     body {
       background: #14202e;
@@ -64,7 +64,7 @@ const OFFLINE_HTML = `
 </head>
 <body>
   <div class="card">
-    <div style="font-size: 32px; margin-bottom: 12px;">📡</div>
+    <div style="font-size: 32px; margin-bottom: 12px;">ðŸ“¡</div>
     <h1>You are Offline</h1>
     <p>Check your internet connection and try reloading the app. Your local ledger remains fully saved in your browser.</p>
     <button onclick="window.location.reload()">Retry Connection</button>
@@ -94,7 +94,7 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const url = e.request.url;
 
-  // Let the browser handle all cross-origin requests natively — SW fetch()
+  // Let the browser handle all cross-origin requests natively â€” SW fetch()
   // runs under the page's CSP and will be blocked for auth/CDN origins.
   if (!url.startsWith(self.location.origin)) {
     return;

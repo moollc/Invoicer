@@ -7,7 +7,7 @@ export const csp = {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https:",
-      "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://sheets.googleapis.com https://drive.googleapis.com https://mail.googleapis.com https://www.ecb.europa.eu https://cdnjs.cloudflare.com"
+      "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://sheets.googleapis.com https://drive.googleapis.com https://mail.googleapis.com https://gmail.googleapis.com https://www.ecb.europa.eu https://cdnjs.cloudflare.com https://generativelanguage.googleapis.com https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://openrouter.ai"
     ].join('; '),
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'SAMEORIGIN'
@@ -20,7 +20,7 @@ export const csp = {
       "style-src 'self' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: https:",
-      "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://sheets.googleapis.com https://drive.googleapis.com https://mail.googleapis.com https://www.ecb.europa.eu https://cdnjs.cloudflare.com"
+      "connect-src 'self' https://accounts.google.com https://oauth2.googleapis.com https://www.googleapis.com https://sheets.googleapis.com https://drive.googleapis.com https://mail.googleapis.com https://gmail.googleapis.com https://www.ecb.europa.eu https://cdnjs.cloudflare.com https://generativelanguage.googleapis.com https://api.anthropic.com https://api.openai.com https://api.deepseek.com https://openrouter.ai"
     ].join('; '),
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'SAMEORIGIN',

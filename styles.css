@@ -24,6 +24,43 @@
     --rule: rgba(0,0,0,0.08);
   }
 
+  /* Outline theme — no fills, borders only. Ink-saving for print. */
+  body.theme-outline {
+    --red:  #14202e;
+    --row:  transparent;
+    --rule: rgba(20,32,46,0.2);
+  }
+  body.theme-outline .invoice-table th {
+    background: transparent;
+    color: var(--ink);
+    border: 1.5px solid var(--ink);
+  }
+  body.theme-outline .invoice-table td {
+    background: transparent;
+    color: var(--ink);
+    border: 1.5px solid rgba(20,32,46,0.18);
+  }
+  body.theme-outline .rate-tag {
+    color: var(--muted);
+  }
+  body.theme-outline .cost-amt {
+    color: var(--ink);
+  }
+  body.theme-outline .total-card {
+    background: transparent;
+    color: var(--ink);
+    border: 2px solid var(--ink);
+  }
+  body.theme-outline .total-card .total-amount,
+  body.theme-outline .total-card .qualifier,
+  body.theme-outline .total-card .qualifier span {
+    color: var(--ink);
+  }
+  body.theme-outline .thank-you {
+    color: var(--ink);
+    opacity: 0.15;
+  }
+
   html, body {
     background: #cecece;
     font-family: 'Roboto', sans-serif;
@@ -121,7 +158,8 @@
     background: #14202e;
     color: #fff;
   }
-  body.editing #font-selector, body.editing #theme-selector { display: block; }
+  body.editing #font-selector { display: block; }
+  #theme-selector { display: block; }
 
   /* editable fields highlight in edit mode */
   body.editing [data-field] {
@@ -1166,6 +1204,11 @@
     overflow: hidden;
   }
   #chat-settings-panel.open { display: flex; }
+  #settings-scroll {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
 
   #settings-header {
     display: flex;
@@ -1199,9 +1242,9 @@
   #btn-add-provider:hover { opacity: 0.85; }
 
   #provider-list {
-    flex: 1;
+    max-height: 60vh;
     overflow-y: auto;
-    padding: 0 10px 10px;
+    padding: 0 0 10px;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1691,6 +1734,15 @@
   #claim-modal-title { font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px; }
   #btn-submit-claim { flex:1; padding:10px; background:#155724; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer; }
   #templates-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
+  #providers-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
+  #providers-overlay #provider-list { max-height:none; overflow-y:visible; flex-shrink:1; padding:0; }
+  .prov-mini-empty { font-size:11px; color:#9aa2ac; text-align:center; padding:10px 14px; }
+  .prov-mini-row { display:flex; align-items:center; gap:8px; padding:7px 14px; cursor:pointer; border-radius:8px; transition:background 0.1s; }
+  .prov-mini-row:hover { background:rgba(20,32,46,0.06); }
+  .prov-mini-active { background:rgba(91,79,207,0.08); }
+  .prov-mini-badge { width:22px; height:22px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:11px; color:#fff; flex-shrink:0; }
+  .prov-mini-name { flex:1; font-size:12px; font-weight:500; color:#14202e; }
+  .prov-mini-check { font-size:11px; color:#5b4fcf; font-weight:700; }
   #templates-list { display:flex; flex-direction:column; gap:8px; }
   #profile-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
   #profile-signin-note { font-size:12px; color:#2a8c55; margin-bottom:12px; }

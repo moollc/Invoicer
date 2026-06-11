@@ -22,7 +22,7 @@ function restoreTitleFont() {
 }
 
 function changeTheme(themeName) {
-  document.body.classList.remove('theme-modern', 'theme-minimal');
+  document.body.classList.remove('theme-modern', 'theme-minimal', 'theme-outline');
   if (themeName !== 'classic') {
     document.body.classList.add(`theme-${themeName}`);
   }
@@ -1124,10 +1124,16 @@ function saveLedgerRows(rows) {
 function loadInvoiceArchive() {
   try { return JSON.parse(localStorage.getItem('invoice-archive') || '{}'); } catch { return {}; }
 }
+const ARCHIVE_CAP = 50;
 function archiveInvoice(receipt, data) {
   if (!receipt) return;
   const arc = loadInvoiceArchive();
+  // Delete-then-reinsert keeps this receipt at the end (most recent) in insertion order.
+  delete arc[receipt];
   arc[receipt] = JSON.parse(JSON.stringify(data));
+  // Evict oldest entries when over cap.
+  const keys = Object.keys(arc);
+  if (keys.length > ARCHIVE_CAP) keys.slice(0, keys.length - ARCHIVE_CAP).forEach(k => delete arc[k]);
   try { localStorage.setItem('invoice-archive', JSON.stringify(arc)); } catch(e) { console.warn('[Archive] save failed:', e); }
 }
 function getArchivedInvoice(receipt) {
@@ -1231,7 +1237,6 @@ async function confirmPrint() {
 
   await renderLedgerHistory();
   renderFilenamePresets();
-  renderTemplateSelect();
   refreshGmailIdStatus();
   refreshSheetsIdStatus();
 
@@ -1947,74 +1952,6 @@ function duplicateInvoiceFromLedger(row) {
   showToast(`Duplicated ${row.receipt} (summary only) as ${newReceipt}`, 'info');
 }
 
-// ── Invoice Templates ──────────────────────────────────────────────────────────
-const TEMPLATE_KEY = 'invoice-templates';
-const TEMPLATE_FIELDS = ['lineItems','paymentNote','payPeriod','currency','projectTotal','totalAmount','totalLabelTop','totalLabelBottom'];
-
-function loadTemplates() {
-  try { return JSON.parse(localStorage.getItem(TEMPLATE_KEY) || '[]'); } catch { return []; }
-}
-function saveTemplates(list) { localStorage.setItem(TEMPLATE_KEY, JSON.stringify(list)); }
-
-function renderTemplateSelect() {
-  const sel = document.getElementById('template-select');
-  if (!sel) return;
-  const list = loadTemplates();
-  sel.innerHTML = '<option value="">— select a template —</option>';
-  list.forEach(t => {
-    const opt = document.createElement('option');
-    opt.value = t.id;
-    opt.textContent = t.name;
-    sel.appendChild(opt);
-  });
-}
-
-function saveInvoiceTemplate() {
-  const nameInput = document.getElementById('template-name-input');
-  const name = (nameInput?.value || '').trim();
-  if (!name) { showToast('Enter a template name first', 'info'); nameInput?.focus(); return; }
-  const data = getData();
-  const snapshot = {};
-  TEMPLATE_FIELDS.forEach(k => { if (data[k] !== undefined) snapshot[k] = data[k]; });
-  const list = loadTemplates();
-  const existing = list.findIndex(t => t.name.toLowerCase() === name.toLowerCase());
-  const entry = { id: Date.now().toString(36), name, data: snapshot };
-  if (existing >= 0) { list[existing] = entry; } else { list.push(entry); }
-  saveTemplates(list);
-  renderTemplateSelect();
-  document.getElementById('template-select').value = entry.id;
-  if (nameInput) nameInput.value = '';
-  showToast(`Template "${name}" saved`, 'success');
-}
-
-function loadInvoiceTemplate() {
-  const sel = document.getElementById('template-select');
-  const id = sel?.value;
-  if (!id) { showToast('Select a template first', 'info'); return; }
-  const list = loadTemplates();
-  const tpl = list.find(t => t.id === id);
-  if (!tpl) { showToast('Template not found', 'info'); return; }
-  const current = getData();
-  TEMPLATE_FIELDS.forEach(k => { if (tpl.data[k] !== undefined) current[k] = tpl.data[k]; });
-  document.getElementById('invoice-data').textContent = JSON.stringify(current, null, 2);
-  closeDialog();
-  render(current);
-  showToast(`Template "${tpl.name}" loaded`, 'success');
-  startEdit();
-}
-
-function deleteInvoiceTemplate() {
-  const sel = document.getElementById('template-select');
-  const id = sel?.value;
-  if (!id) { showToast('Select a template to delete', 'info'); return; }
-  const list = loadTemplates();
-  const tpl = list.find(t => t.id === id);
-  if (!tpl) return;
-  if (!confirm(`Delete template "${tpl.name}"?`)) return;
-  saveTemplates(list.filter(t => t.id !== id));
-  renderTemplateSelect();
-  showToast(`Template "${tpl.name}" deleted`, 'info');
-}
 
 function getExportRows() {
   const filter = (document.getElementById('ledger-export-filter')?.value || '').trim();
@@ -2408,6 +2345,36 @@ function updateActiveProviderPill() {
   }
 }
 
+function openProvidersModal() {
+  renderProviderList();
+  document.getElementById('providers-overlay').style.display = 'flex';
+}
+function closeProvidersModal() {
+  document.getElementById('providers-overlay').style.display = 'none';
+  renderProviderListMini();
+  updateActiveProviderPill();
+}
+
+function renderProviderListMini() {
+  const el = document.getElementById('provider-list-mini');
+  if (!el) return;
+  const list = loadChatProviders();
+  const selIdx = getSelectedIdx();
+  if (!list.length) {
+    el.innerHTML = '<div class="prov-mini-empty">No providers yet — tap Manage to add one.</div>';
+    return;
+  }
+  el.innerHTML = list.map((p, i) => {
+    const prov = PROVIDERS[p.type] || { color: '#aaa', emoji: '●', label: p.type };
+    const isActive = i === selIdx;
+    return `<div class="prov-mini-row${isActive ? ' prov-mini-active' : ''}" onclick="setSelectedIdx(${i});renderProviderListMini();updateActiveProviderPill();">
+      <span class="prov-mini-badge" style="background:${prov.color}">${prov.emoji}</span>
+      <span class="prov-mini-name">${p.name}</span>
+      ${isActive ? '<span class="prov-mini-check">✓</span>' : ''}
+    </div>`;
+  }).join('');
+}
+
 function renderProviderList() {
   const list    = loadChatProviders();
   const selIdx  = getSelectedIdx();
@@ -2587,7 +2554,7 @@ function addProvider() {
   const list = loadChatProviders();
   list.push({ name: 'New Provider', type: 'openai', key: '', model: 'gpt-4o' });
   saveChatProviders(list);
-  renderProviderList();
+  openProvidersModal();
   updateActiveProviderPill();
   // Auto-expand the new card
   setTimeout(() => toggleProviderExpand(list.length - 1), 50);
@@ -2616,7 +2583,7 @@ function toggleChatSettings() {
   const isOpen = s.classList.toggle('open');
   msgs.style.display = isOpen ? 'none' : 'flex';
   if (isOpen) {
-    renderProviderList();
+    renderProviderListMini();
     const selPay = document.getElementById('default-pay-period-select');
     if (selPay) {
       selPay.value = localStorage.getItem('invoicer-default-pay-period') || '0';
@@ -2966,6 +2933,7 @@ To update an existing goal, include "_updateGoal": { "name": "...", "changes": {
 To delete a goal, include "_deleteGoal": { "name": "..." } — name must match an existing goal (case-insensitive); only use this if the user explicitly asks to remove or delete a goal.
 To add expense line items to the current invoice, include "_addExpense": [{ "desc": "...", "amount": 120 }] — array, amount is a number, these belong to the current invoice only.
 To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "📤 Sent", "✅ Paid".
+Date format rule: whenever you emit a "date" field, use MM/DD/YYYY (e.g. 06/11/2026). Never use DD/MM/YYYY or ISO 8601 for the date field.
 Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}
 Current invoice data:
 ${currentData}`;
@@ -3962,6 +3930,7 @@ const INVOICE_TEMPLATES = [
   { id: 'default',        label: 'General Invoice',  description: 'Blank starting point',                              category: 'General'    },
   { id: 'film-quote',     label: 'Film Quote',        description: 'Pre-production estimate — day rates, crew, gear',  category: 'Film'       },
   { id: 'film-invoice',   label: 'Film Invoice',      description: 'Post-production billing — shoot days, edit, deliverables', category: 'Film' },
+  { id: 'dit-job',        label: 'DIT / Camera Op',   description: 'Single-job flat rate — DIT, camera op, or similar crew', category: 'Film' },
   { id: 'music-session',  label: 'Music Session',     description: 'Studio session, mixing, or performance',           category: 'Music'      },
   { id: 'design-project', label: 'Design Project',    description: 'Branding, UI, or print design',                   category: 'Design'     },
   { id: 'consulting',     label: 'Consulting',        description: 'Hourly or project-based consulting',              category: 'Consulting' },
@@ -3971,6 +3940,7 @@ function getTemplateData(id) {
   switch (id) {
     case 'film-quote':       return TMPL_FILM_QUOTE;
     case 'film-invoice':     return TMPL_FILM_INVOICE;
+    case 'dit-job':          return TMPL_DIT_JOB;
     case 'music-session':    return TMPL_MUSIC_SESSION;
     case 'design-project':   return TMPL_DESIGN_PROJECT;
     case 'consulting':       return TMPL_CONSULTING;
@@ -3984,6 +3954,17 @@ const TMPL_DEFAULT = {
   lineItems: [{ service: 'Service Name', details: '', rates: ['Rate'], costs: ['0'] }],
   projectTotal: '0', totalLabelTop: 'Total', totalLabelBottom: 'Due', totalAmount: '$0',
   paymentNote: 'Thank you for your business.', paid: false,
+};
+
+const TMPL_DIT_JOB = {
+  receiptOverride: '', dateOverride: '', payPeriod: 'Due on Receipt', currency: 'JMD',
+  to: { name: '', address: '', email: '', phone: '' },
+  lineItems: [
+    { service: 'DIT', details: 'Project / Campaign Name', rates: ['Job'], costs: ['0'] },
+  ],
+  projectTotal: '0', totalLabelTop: 'TOTAL', totalLabelBottom: 'PAY PERIOD', totalAmount: '$0',
+  paymentNote: 'Payment can be made to Scotiabank, New Kingston Branch 50575, Account 000942822. For other payment options, please contact me.',
+  paid: false,
 };
 
 const TMPL_FILM_QUOTE = {
@@ -4589,6 +4570,13 @@ async function ensureAllTabs(spreadsheetId) {
   }
   if (!existing.includes('Goals')) {
     await sheetsWrite(spreadsheetId, 'Goals!A1:L1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created', 'Amount Reached', 'Last Contribution', 'Status', 'Claim Date', 'Receipt #', 'Receipt File', 'Allocation %']]);
+  } else {
+    // Upgrade existing Goals header if missing Allocation % (col L)
+    const goalsMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Goals!A1:L1`);
+    const goalsHeaders = goalsMeta.values ? goalsMeta.values[0] : [];
+    if (goalsHeaders.length === 0 || !goalsHeaders.includes('Allocation %')) {
+      await sheetsWrite(spreadsheetId, 'Goals!A1:L1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created', 'Amount Reached', 'Last Contribution', 'Status', 'Claim Date', 'Receipt #', 'Receipt File', 'Allocation %']]);
+    }
   }
   if (!existing.includes('Profiles')) {
     await sheetsWrite(spreadsheetId, 'Profiles!A1:F1', [['Profile ID', 'Name', 'Address', 'Email', 'Phone', 'LogoData']]);
@@ -5359,52 +5347,54 @@ async function submitClaimModal() {
   btn.textContent = 'Processing...';
   
   try {
-    let filename = '';
+    let driveFileUrl = '';
     if (file) {
       if (!_driveFolderId) await ensureDriveFolder();
-      const query = `name = 'receipts' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const query = `name = 'Receipts' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
       const search = await driveRequest('GET', `/files?q=${encodeURIComponent(query)}&fields=files(id,name)`);
       let receiptsFolderId;
       if (search && search.files && search.files.length > 0) {
         receiptsFolderId = search.files[0].id;
       } else {
-        const folder = await driveRequest('POST', '/files', { name: 'receipts', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
-        receiptsFolderId = folder.id;
+        const createRes = await driveRequest('POST', '/files', { name: 'Receipts', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
+        if (!createRes.id) throw new Error('Failed to create Receipts folder in Drive.');
+        receiptsFolderId = createRes.id;
       }
-      
-      // Step 1: Create metadata to get a File ID
-      const metaRes = await driveRequest('POST', '/files', { 
-        name: file.name, 
-        parents: [receiptsFolderId] 
-      });
-      if (!metaRes.id) throw new Error("Failed to create receipt metadata in Drive.");
-      
-      // Step 2: Upload file media to the newly created File ID
+
+      // Build a clean filename: GoalName-ShortDesc-Date.ext
+      const ext = file.name.includes('.') ? file.name.split('.').pop() : '';
+      const shortDesc = receipt.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 20);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const goalSlug = _claimingGoal.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      const renamedFile = `${goalSlug}-${shortDesc}-${dateStr}${ext ? '.' + ext : ''}`;
+
+      // Step 1: Create metadata entry to get a File ID
+      const metaRes = await driveRequest('POST', '/files', { name: renamedFile, parents: [receiptsFolderId] });
+      if (!metaRes.id) throw new Error('Failed to create receipt metadata in Drive.');
+
+      // Step 2: Upload file content
       const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
         method: 'PATCH',
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${_gmailToken}`,
           'Content-Type': file.type || 'application/octet-stream'
         },
         body: file
       });
-      
-      if (!uploadRes.ok) throw new Error("Failed to upload receipt image data to Drive.");
-      const uploaded = await uploadRes.json();
-      filename = uploaded.name || metaRes.name || file.name;
+      if (!uploadRes.ok) throw new Error('Failed to upload receipt to Drive.');
+      driveFileUrl = `https://drive.google.com/file/d/${metaRes.id}/view`;
     }
-    
+
     const goals = loadGoals();
     const idx = goals.findIndex(g => g.name === _claimingGoal.name);
-    if (idx !== -1) {
-      goals[idx].status = "Claimed";
-      goals[idx].claimDate = new Date().toISOString().split('T')[0];
-      goals[idx].receiptNumber = receipt;
-      goals[idx].receiptFilename = filename;
-      saveGoals(goals);
-      await syncGoalsToSheet();
-      renderGoalsList();
-    }
+    if (idx === -1) throw new Error('Goal not found — please reload and try again.');
+    goals[idx].status = 'Claimed';
+    goals[idx].claimDate = new Date().toISOString().split('T')[0];
+    goals[idx].receiptNumber = receipt;
+    goals[idx].receiptFilename = driveFileUrl;
+    saveGoals(goals);
+    await syncGoalsToSheet();
+    renderGoalsList();
     closeClaimModal();
     showToast('Goal claimed successfully!', 'success');
   } catch (err) {

@@ -143,6 +143,7 @@
       <option value="classic">Classic</option>
       <option value="modern">Modern</option>
       <option value="minimal">Minimal</option>
+      <option value="outline">Outline</option>
     </select>
     <button id="btn-print" onclick="confirmPrint()" title="Publish / Print / PDF" aria-label="Publish invoice">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
@@ -218,7 +219,7 @@
 
   <!-- Settings overlay -->
   <div id="chat-settings-panel">
-    
+    <div id="settings-scroll">
     <div class="settings-header">
       <span class="settings-caption-label">Default Invoice Settings</span>
     </div>
@@ -251,7 +252,7 @@
     <!-- Google Account -->
     <div class="sp-section-divider-mt">
       <div class="settings-caption-label">Google Account</div>
-      <div class="sp-hint">Sign in once to unlock Gmail, Sheets sync, and Gemini AI — no API keys needed.</div>
+      <div class="sp-hint">Sign in once to unlock Gmail and Sheets sync. To use AI, add a provider below with your API key.</div>
       <span id="google-signin-status"></span>
     </div>
 
@@ -311,11 +312,12 @@
       </div>
     </div>
 
+    </div><!-- end #settings-scroll -->
     <div id="settings-header">
       <span>Providers</span>
-      <button id="btn-add-provider" onclick="addProvider()">+ Add</button>
+      <button id="btn-add-provider" onclick="openProvidersModal()">⚙ Manage</button>
     </div>
-    <div id="provider-list"></div>
+    <div id="provider-list-mini"></div>
   </div>
 
   <!-- Address book panel (swaps with messages like settings) -->
@@ -841,6 +843,16 @@
   <span class="publish-bar-label-sm">Editing invoice</span>
   <button onclick="cancelEdit()" class="publish-btn-ghost">Cancel</button>
   <button id="btn-save-changes" onclick="saveEdit()">Save Changes</button>
+</div>
+
+<div id="providers-overlay" role="dialog" aria-modal="true" aria-label="AI Providers" onclick="if(event.target.id==='providers-overlay') closeProvidersModal()">
+  <div class="modal-box modal-box--540">
+    <button onclick="closeProvidersModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
+    <div class="modal-label">Assistant</div>
+    <div class="modal-title">AI Providers</div>
+    <div id="provider-list"></div>
+    <button onclick="addProvider()" class="modal-btn-full-eee" style="margin-top:8px;">+ Add Provider</button>
+  </div>
 </div>
 </body>
 </html>
