@@ -62,6 +62,26 @@ function todayFormatted() {
   return { dd, mm, yy, yyyy: d.getFullYear() };
 }
 
+// Canonical ledger date is MM/DD/YYYY with no spaces. The invoice DISPLAY uses
+// "DD / MM / YYYY" (with spaces); other paths (AI, ISO) vary. Normalize any of
+// those to the ledger form so a row's date is never the spaced/odd-one-out.
+function normalizeLedgerDate(raw) {
+  if (!raw) return raw;
+  const s = String(raw).trim();
+  // ISO: YYYY-MM-DD -> MM/DD/YYYY
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return `${iso[2]}/${iso[3]}/${iso[1]}`;
+  const spaced = s.includes(' ');
+  const parts = s.split('/').map(p => p.trim());
+  if (parts.length !== 3) return s.replace(/\s*\/\s*/g, '/'); // unknown shape: just de-space
+  let [a, b, y] = parts;
+  // Spaced form comes from the invoice display, which is DD / MM / YYYY -> swap to MM/DD.
+  // Spaceless form is already the ledger's MM/DD/YYYY, leave order as-is.
+  const [mm, dd] = spaced ? [b, a] : [a, b];
+  const pad = v => String(v).padStart(2, '0');
+  return `${pad(mm)}/${pad(dd)}/${y}`;
+}
+
 // Receipt format: YYMMDD + suffix letter (A, B, C…)
 // Suffix is stored in sessionStorage so refreshing the same day keeps it stable.
 // To get B on the same day, change receiptOverride in the JSON.
@@ -1090,7 +1110,7 @@ function markReceiptAsSent() {
     const services = data.lineItems.map(l => l.service).join(', ');
     rows.push({
       receipt:      receipt,
-      date:         data.date,
+      date:         normalizeLedgerDate(data.date),
       client:       data.to.name,
       service:      services,
       projectTotal: `${data.currency} ${data.projectTotal}`,
@@ -1110,7 +1130,7 @@ async function confirmPrint() {
   const services = data.lineItems.map(l => l.service).join(', ');
   _pendingRow = {
     receipt:      data.receiptNumber,
-    date:         data.date,
+    date:         normalizeLedgerDate(data.date),
     client:       data.to.name,
     service:      services,
     projectTotal: `${data.currency} ${data.projectTotal}`,
