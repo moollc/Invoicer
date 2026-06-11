@@ -2134,7 +2134,7 @@ async function proceedPrint() {
         // Strip edit-mode controls + draft watermark so the PDF backup is clean
         sanitizePrintClone(clone);
         document.body.appendChild(clone);
-        const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, width: 816, windowWidth: 816, scrollX: 0, scrollY: 0 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
         document.body.removeChild(clone);
         savePdfToDrive(pdfBlob, filename);
@@ -2219,7 +2219,7 @@ async function downloadPdfFromPreview() {
   document.body.appendChild(clone);
   
   showToast('Generating PDF...', 'info');
-  const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, width: 816, windowWidth: 816, scrollX: 0, scrollY: 0 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+  const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
   
   try {
     await html2pdf().set(opt).from(clone).save();
@@ -4204,10 +4204,10 @@ async function openEmail() {
 
       const pdfBlob = await new Promise((resolve, reject) => {
         const opt = {
-          margin: 0, filename,
+          margin: [10, 0], filename,
           pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] },
           image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 2, width: 816, windowWidth: 816, scrollX: 0, scrollY: 0 },
+          html2canvas: { scale: 2 },
           jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
         };
         html2pdf().set(opt).from(clone).toPdf().output('blob').then(resolve).catch(reject);
