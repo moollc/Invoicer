@@ -201,7 +201,9 @@
     margin-top: 4px;
   }
   body.editing #title-size-wrap { display: flex; }
+  .edit-only { display: none; }
   body.editing .edit-only { display: inline-block !important; }
+  @media print { .edit-only { display: none !important; } }
   #title-size-slider {
     -webkit-appearance: none;
     appearance: none;
@@ -670,7 +672,7 @@
      (which renders at the live viewport) never inherits the mobile reflow. */
   .print-clone .header { display: grid !important; grid-template-columns: 1fr 360px !important; gap: 0 !important; }
   .print-clone .title-block { border-right: 1.5px solid var(--rule); padding-right: 32px; margin-bottom: 0 !important; }
-  .print-clone .status-badge, .print-clone #status-picker, .print-clone .overdue-badge { display: none !important; }
+  .print-clone .status-badge, .print-clone #status-picker, .print-clone .overdue-badge, .print-clone .edit-only { display: none !important; }
 
   @media screen and (max-width: 900px) {
     html, body {
