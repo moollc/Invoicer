@@ -1256,8 +1256,6 @@ async function renderLedgerHistory() {
   // Fallback to localStorage if sheet unavailable
   if (!rows) {
     rows = loadLedgerRows();
-  } else {
-    saveLedgerRows(rows); // warm localStorage cache so dashboard works on new devices
   }
 
   const histEl = document.getElementById('ledger-history');
@@ -4729,8 +4727,7 @@ async function setupDrive() {
       if (res.status === 'rejected') console.error(`[Drive] Sync task ${i} failed:`, res.reason);
     });
 
-    const [sheetRows] = results[0].status === 'fulfilled' ? [results[0].value] : [null];
-    if (sheetRows) saveLedgerRows(sheetRows);
+    // loadLedgerFromSheet already merges + saves to localStorage internally
 
     seedClientsFromLedger();
     renderClientChips();
@@ -4893,10 +4890,10 @@ async function openDashboard() {
       loadGoalsFromSheet(),
     ]);
     
-    if (rows) saveLedgerRows(rows);
-    
+    // loadLedgerFromSheet already merges + saves to localStorage internally
     if (emptyEl) {
-      if (rows && rows.length > 0) {
+      const currentRows = loadLedgerRows();
+      if (currentRows.length > 0) {
         emptyEl.style.display = 'none';
       } else {
         emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
@@ -5593,9 +5590,7 @@ async function loadLedgerFromSheet() {
   try {
     const res = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:H`,
-      {
-        headers: { Authorization: `Bearer ${_gmailToken}` }
-      }
+      { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
 
     if (!res.ok) {
@@ -5605,21 +5600,48 @@ async function loadLedgerFromSheet() {
     }
 
     const data = await res.json();
-    const rows = data.values || [];
+    const allRows = data.values || [];
+    console.log('Loaded', allRows.length, 'rows from sheet (incl. header)');
 
-    console.log('Loaded', rows.length, 'rows from sheet');
+    const sheetRows = allRows.slice(1)
+      .filter(row => row[0] && row[0].trim())
+      .map(row => ({
+        receipt: row[0] || '',
+        date: row[1] || '',
+        client: row[2] || '',
+        service: row[3] || '',
+        projectTotal: row[4] || '',
+        amountDue: row[5] || '',
+        status: row[6] || '⬜ Unpaid',
+        company: row[7] || ''
+      }));
 
-    // Skip header row and convert to ledger format
-    return rows.slice(1).map(row => ({
-      receipt: row[0] || '',
-      date: row[1] || '',
-      client: row[2] || '',
-      service: row[3] || '',
-      projectTotal: row[4] || '',
-      amountDue: row[5] || '',
-      status: row[6] || '⬜ Unpaid',
-      company: row[7] || ''
-    }));
+    // Non-destructive merge: sheet wins on conflicts, local-only rows are kept and pushed up
+    const local = loadLedgerRows();
+    const sheetReceipts = new Set(sheetRows.map(r => r.receipt));
+    const localOnly = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt));
+
+    if (localOnly.length) {
+      console.log(`[Ledger] ${localOnly.length} local-only row(s) not in sheet — pushing up`);
+      for (const row of localOnly) {
+        const sheetRow = [
+          row.receipt, row.date, row.client, row.service,
+          row.projectTotal, row.amountDue, row.status, row.company || ''
+        ];
+        await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ values: [sheetRow] })
+          }
+        );
+      }
+    }
+
+    const merged = [...sheetRows, ...localOnly];
+    saveLedgerRows(merged);
+    return merged;
   } catch (e) {
     console.error('Ledger load error:', e.message);
     return null;
