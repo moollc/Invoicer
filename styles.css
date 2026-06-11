@@ -666,6 +666,12 @@
   }
 
   /* ── MOBILE RESPONSIVE ── */
+  /* Print/PDF clones force desktop layout regardless of viewport, so html2pdf
+     (which renders at the live viewport) never inherits the mobile reflow. */
+  .print-clone .header { display: grid !important; grid-template-columns: 1fr 360px !important; gap: 0 !important; }
+  .print-clone .title-block { border-right: 1.5px solid var(--rule); padding-right: 32px; margin-bottom: 0 !important; }
+  .print-clone .status-badge, .print-clone #status-picker, .print-clone .overdue-badge { display: none !important; }
+
   @media screen and (max-width: 900px) {
     html, body {
       background: #fff;
