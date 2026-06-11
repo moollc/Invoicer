@@ -3483,33 +3483,52 @@ async function syncProfilesToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   const profiles = loadBusinessProfiles();
   if (!profiles.length) return;
-  
+
   const rows = profiles.map(p => [
     p.id, p.name, p.address || '', p.email || '', p.phone || '', p.logo || ''
   ]);
-  
-  // Overwrite the Profiles sheet (simple sync for now)
+
+  // Clear + rewrite so deleted profiles don't linger as ghost rows
   await sheetsWrite(_sheetsSpreadsheetId, `Profiles!A2:F${rows.length + 1}`, rows);
+  // Blank any rows beyond the current set (handles profile deletion)
+  const clearStart = rows.length + 2;
+  await sheetsWrite(_sheetsSpreadsheetId, `Profiles!A${clearStart}:F${clearStart + 20}`,
+    Array(21).fill(['', '', '', '', '', '']));
 }
 
 async function loadProfilesFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   const rows = await sheetsRead(_sheetsSpreadsheetId, 'Profiles!A2:F');
-  if (!rows.length) return;
-  
-  const sheetProfiles = rows.map(r => ({
-    id: r[0], name: r[1], address: r[2], email: r[3], phone: r[4], logo: r[5]
-  }));
-  
-  saveBusinessProfiles(sheetProfiles);
-  
-  // If the active profile was deleted or doesn't exist, reset to the first one
-  const activeId = getActiveProfileId();
-  if (!sheetProfiles.find(p => p.id === activeId)) {
-    setActiveProfileId(sheetProfiles[0].id);
+  if (rows === null) return;
+
+  const sheetProfiles = rows
+    .filter(r => r[0] && r[0].trim())
+    .map(r => ({ id: r[0], name: r[1] || '', address: r[2] || '', email: r[3] || '', phone: r[4] || '', logo: r[5] || '' }));
+
+  if (!sheetProfiles.length) {
+    // Sheet tab exists but is empty — push local profiles up so they don't vanish
+    const local = loadBusinessProfiles();
+    if (local.length) await syncProfilesToSheet();
+    return;
   }
-  
-  // Refresh logo if active profile changed
+
+  // Non-destructive merge: sheet wins on conflicts, local-only profiles are kept
+  const local = loadBusinessProfiles();
+  const sheetIds = new Set(sheetProfiles.map(p => p.id));
+  const localOnly = local.filter(p => !sheetIds.has(p.id));
+  const merged = [...sheetProfiles, ...localOnly];
+  saveBusinessProfiles(merged);
+
+  // Push local-only profiles up to the sheet
+  if (localOnly.length) await syncProfilesToSheet();
+
+  // If the active profile no longer exists, fall back to first
+  const activeId = getActiveProfileId();
+  if (!merged.find(p => p.id === activeId) && merged.length) {
+    setActiveProfileId(merged[0].id);
+  }
+
+  // Refresh logo from the active profile
   const active = getActiveProfile();
   if (active && active.logo) {
     localStorage.setItem('invoice-logo', active.logo);
@@ -5686,7 +5705,7 @@ async function openSyncDiagnostics() {
     { name: 'Ledger',   range: 'Ledger!A1:H',   local: () => loadLedgerRows(),   label: 'Ledger rows' },
     { name: 'Goals',    range: 'Goals!A1:L',     local: () => loadGoals(),        label: 'Goals' },
     { name: 'Clients',  range: 'Clients!A1:D',   local: () => loadClients(),      label: 'Clients' },
-    { name: 'Profiles', range: 'Profiles!A1:F',  local: () => { try { return JSON.parse(localStorage.getItem('business-profiles') || '[]'); } catch(e){ return []; } }, label: 'Profiles' },
+    { name: 'Profiles', range: 'Profiles!A1:F',  local: () => { try { return JSON.parse(localStorage.getItem('invoice-business-profiles') || '[]'); } catch(e){ return []; } }, label: 'Profiles' },
     { name: 'Settings', range: 'Settings!A1:B',  local: () => { try { return JSON.parse(localStorage.getItem('invoice-settings') || '[]'); } catch(e){ return []; } }, label: 'Settings rows' },
     { name: '_AppData', range: '_AppData!A1:C',  local: () => [], label: 'AppData rows' },
   ];
