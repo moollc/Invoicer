@@ -62,6 +62,23 @@ function todayFormatted() {
   return { dd, mm, yy, yyyy: d.getFullYear() };
 }
 
+// Single source of truth for stripping edit-only chrome from any invoice clone
+// before it goes to html2pdf (which renders in screen mode, ignoring @media print).
+// Every PDF/print clone path MUST run this so edit UI never leaks into output.
+const PRINT_STRIP_SELECTOR = 'button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle, .logo-placeholder, .logo-remove, [contenteditable]';
+function sanitizePrintClone(clone) {
+  if (!clone) return clone;
+  clone.querySelectorAll(PRINT_STRIP_SELECTOR).forEach(el => {
+    // For contenteditable, keep the text but drop the editable behavior/styling
+    if (el.hasAttribute && el.hasAttribute('contenteditable') && el.tagName !== 'BUTTON') {
+      el.removeAttribute('contenteditable');
+    } else {
+      el.remove();
+    }
+  });
+  return clone;
+}
+
 // Canonical ledger date is MM/DD/YYYY with no spaces. The invoice DISPLAY uses
 // "DD / MM / YYYY" (with spaces); other paths (AI, ISO) vary. Normalize any of
 // those to the ledger form so a row's date is never the spaced/odd-one-out.
@@ -2113,9 +2130,9 @@ async function proceedPrint() {
         clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
         clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
         // Strip edit-mode controls + draft watermark so the PDF backup is clean
-        clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle, .logo-placeholder, .logo-remove').forEach(el => el.remove());
+        sanitizePrintClone(clone);
         document.body.appendChild(clone);
-        const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, windowWidth: 1100 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
         document.body.removeChild(clone);
         savePdfToDrive(pdfBlob, filename);
@@ -2148,7 +2165,7 @@ function openPrintPreview() {
     clone.style.setProperty(v, cs.getPropertyValue(v).trim())
   );
   // Strip edit-mode controls from clone
-  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle, .logo-placeholder, .logo-remove').forEach(el => el.remove());
+  sanitizePrintClone(clone);
   frame.innerHTML = '';
   frame.appendChild(clone);
   overlay.style.display = 'flex';
@@ -2195,12 +2212,12 @@ async function downloadPdfFromPreview() {
   clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
   
   // Strip edit-mode controls from clone so it renders cleanly
-  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle, .logo-placeholder, .logo-remove').forEach(el => el.remove());
+  sanitizePrintClone(clone);
 
   document.body.appendChild(clone);
   
   showToast('Generating PDF...', 'info');
-  const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+  const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, windowWidth: 1100 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
   
   try {
     await html2pdf().set(opt).from(clone).save();
@@ -3216,7 +3233,7 @@ async function generateStatement(clientName) {
 
   try {
     const filename = `Statement-${clientName.replace(/\s+/g, '-')}-${dateStr.replace(/\//g, '')}.pdf`;
-    const opt = { margin: [10, 10], filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+    const opt = { margin: [10, 10], filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, windowWidth: 1100 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
     await html2pdf().set(opt).from(container).save();
     showToast(`✓ Statement downloaded for ${clientName}`, 'success');
   } catch(e) {
@@ -4180,14 +4197,15 @@ async function openEmail() {
       const cs = getComputedStyle(document.body);
       clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
       clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
+      sanitizePrintClone(clone);
       document.body.appendChild(clone);
 
       const pdfBlob = await new Promise((resolve, reject) => {
         const opt = {
-          margin: [10, 0], filename,
+          margin: 0, filename,
           pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] },
           image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 2 },
+          html2canvas: { scale: 2, windowWidth: 1100 },
           jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
         };
         html2pdf().set(opt).from(clone).toPdf().output('blob').then(resolve).catch(reject);
