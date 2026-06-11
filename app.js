@@ -2093,7 +2093,7 @@ async function proceedPrint() {
         clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
         clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
         // Strip edit-mode controls + draft watermark so the PDF backup is clean
-        clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle').forEach(el => el.remove());
+        clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle, .logo-placeholder, .logo-remove').forEach(el => el.remove());
         document.body.appendChild(clone);
         const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
@@ -2128,7 +2128,7 @@ function openPrintPreview() {
     clone.style.setProperty(v, cs.getPropertyValue(v).trim())
   );
   // Strip edit-mode controls from clone
-  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle').forEach(el => el.remove());
+  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle, .logo-placeholder, .logo-remove').forEach(el => el.remove());
   frame.innerHTML = '';
   frame.appendChild(clone);
   overlay.style.display = 'flex';
@@ -2175,7 +2175,7 @@ async function downloadPdfFromPreview() {
   clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
   
   // Strip edit-mode controls from clone so it renders cleanly
-  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle').forEach(el => el.remove());
+  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle, .logo-placeholder, .logo-remove').forEach(el => el.remove());
 
   document.body.appendChild(clone);
   
