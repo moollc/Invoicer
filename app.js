@@ -65,9 +65,32 @@ function todayFormatted() {
 // Single source of truth for stripping edit-only chrome from any invoice clone
 // before it goes to html2pdf (which renders in screen mode, ignoring @media print).
 // Every PDF/print clone path MUST run this so edit UI never leaks into output.
-const PRINT_STRIP_SELECTOR = 'button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle, .logo-placeholder, .logo-remove, [contenteditable]';
+const PRINT_STRIP_SELECTOR = 'button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle, .logo-placeholder, .logo-remove, .status-badge, #status-picker, [contenteditable]';
 function sanitizePrintClone(clone) {
   if (!clone) return clone;
+  clone.classList.add('print-clone');
+  // Edit-mode form controls must become their VALUES, not vanish — removing a
+  // rate/cost <textarea> or the date <input> would print empty cells. Selects
+  // become their selected value (never the concatenated option list).
+  clone.querySelectorAll('select').forEach(sel => {
+    const val = sel.value || (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent) || '';
+    sel.replaceWith(document.createTextNode(val));
+  });
+  clone.querySelectorAll('textarea').forEach(ta => {
+    const span = document.createElement('span');
+    span.style.whiteSpace = 'pre-line';
+    span.textContent = ta.value || '';
+    ta.replaceWith(span);
+  });
+  clone.querySelectorAll('input').forEach(inp => {
+    if (inp.type === 'checkbox' || inp.type === 'radio' || inp.type === 'file' || inp.type === 'range') { inp.remove(); return; }
+    inp.replaceWith(document.createTextNode(inp.value || ''));
+  });
+  // Remove edit-only chrome that leaks into print.
+  ['#title-size-wrap', '#autosum-hint', '#notes-char-counter', '#status-picker'].forEach(id => {
+    const el = clone.querySelector(id);
+    if (el) el.remove();
+  });
   clone.querySelectorAll(PRINT_STRIP_SELECTOR).forEach(el => {
     // For contenteditable, keep the text but drop the editable behavior/styling
     if (el.hasAttribute && el.hasAttribute('contenteditable') && el.tagName !== 'BUTTON') {
@@ -76,6 +99,16 @@ function sanitizePrintClone(clone) {
       el.remove();
     }
   });
+  // Re-apply every simple data-field from the source of truth, so the print
+  // always shows data-true values (date, currency, totals, names) no matter
+  // what state the live editor DOM was in when the clone was taken.
+  try {
+    const data = getData();
+    clone.querySelectorAll('[data-field]').forEach(el => {
+      const val = get(data, el.dataset.field);
+      if (val !== undefined && typeof val !== 'object') el.textContent = val;
+    });
+  } catch(e) {}
   return clone;
 }
 
@@ -254,6 +287,20 @@ function getData() {
     if (party && looksLikePhone(party.email) && looksLikeEmail(party.phone)) {
       [party.email, party.phone] = [party.phone, party.email];
     }
+  }
+  // Heal currency-picker poisoning — a past bug wrote the concatenated option
+  // list ("USDJMDEURGBPCADAUDTTD") into currency/totals via the autosum hint.
+  // Strip it from any field it reached so old invoices print clean again.
+  for (const k of ['currency', 'projectTotal', 'totalAmount']) {
+    if (typeof raw[k] === 'string' && raw[k].includes('USDJMDEURGBPCADAUDTTD')) {
+      raw[k] = raw[k].replace(/USDJMDEURGBPCADAUDTTD\s*/g, '').trim();
+    }
+  }
+  // Related heal: projectTotal saved with a duplicate leading currency code
+  // (e.g. "JMD 35,000.00" when currency is already JMD) renders "JMD JMD ...".
+  if (typeof raw.projectTotal === 'string' && raw.currency &&
+      raw.projectTotal.startsWith(raw.currency + ' ')) {
+    raw.projectTotal = raw.projectTotal.slice(raw.currency.length + 1).trim();
   }
   return raw;
 }
@@ -1008,14 +1055,21 @@ function updateAutoSumHint() {
     });
   });
   const currencyEl = document.querySelector('[data-field="currency"]');
-  const currencyCode = currencyEl ? currencyEl.textContent.trim() : 'USD';
+  // In edit mode this span holds a <select>; read its value, not the concatenated
+  // option-list text (which would be "USDJMDEURGBPCADAUDTTD").
+  const currencySel = currencyEl && currencyEl.querySelector('select');
+  const currencyCode = currencySel ? currencySel.value : (currencyEl ? currencyEl.textContent.trim() : 'USD');
   const formattedTotal = formatCurrencyNative(total, currencyCode);
   hint.textContent = `Line items sum to ${formattedTotal}`;
   hint.style.display = 'block';
 
+  // Write the NUMBER only — the .ptv display already prefixes the currency
+  // span, so a currency-prefixed string here would render "JMD JMD 35,000.00"
+  // and poison data.projectTotal on save.
+  const numberOnly = total.toLocaleString('en-US');
   const ptEl = document.querySelector('[data-field="projectTotal"]');
-  if (ptEl && ptEl.textContent !== formattedTotal && document.body.classList.contains('editing')) {
-    ptEl.textContent = formattedTotal;
+  if (ptEl && ptEl.textContent !== numberOnly && document.body.classList.contains('editing')) {
+    ptEl.textContent = numberOnly;
     ptEl.classList.remove('flash-success');
     void ptEl.offsetWidth; // trigger reflow
     ptEl.classList.add('flash-success');
@@ -2132,7 +2186,7 @@ async function proceedPrint() {
         // Strip edit-mode controls + draft watermark so the PDF backup is clean
         sanitizePrintClone(clone);
         document.body.appendChild(clone);
-        const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, windowWidth: 1100 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
         document.body.removeChild(clone);
         savePdfToDrive(pdfBlob, filename);
@@ -2159,17 +2213,29 @@ function openPrintPreview() {
   const frame = document.getElementById('preview-frame');
   const overlay = document.getElementById('preview-overlay');
   const clone = document.getElementById('invoice').cloneNode(true);
-  clone.style.cssText = 'margin:0; box-shadow:none; border-radius:0; width:100%;';
+  // Render at the true print width (816px) so the .print-clone layout is exact,
+  // then scale the whole thing to fit the preview frame — this previews the
+  // actual PDF, not a squeezed mobile reflow.
+  clone.style.cssText = 'margin:0; box-shadow:none; border-radius:0; width:816px;';
   const cs = getComputedStyle(document.body);
   ['--red','--row','--ink','--rule'].forEach(v =>
     clone.style.setProperty(v, cs.getPropertyValue(v).trim())
   );
-  // Strip edit-mode controls from clone
   sanitizePrintClone(clone);
   frame.innerHTML = '';
   frame.appendChild(clone);
   overlay.style.display = 'flex';
   overlay.scrollTop = 0;
+  // Scale the 816px clone down to the frame width (so it fits narrow screens
+  // while keeping the desktop print layout). Wrap height so layout doesn't clip.
+  const fit = () => {
+    const avail = frame.clientWidth || 816;
+    const scale = Math.min(1, avail / 816);
+    clone.style.transformOrigin = 'top left';
+    clone.style.transform = `scale(${scale})`;
+    frame.style.height = (clone.getBoundingClientRect().height) + 'px';
+  };
+  requestAnimationFrame(fit);
 }
 function sendInvoiceViaEmail() {
   const data = getData();
@@ -2217,7 +2283,7 @@ async function downloadPdfFromPreview() {
   document.body.appendChild(clone);
   
   showToast('Generating PDF...', 'info');
-  const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, windowWidth: 1100 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+  const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
   
   try {
     await html2pdf().set(opt).from(clone).save();
@@ -3233,7 +3299,7 @@ async function generateStatement(clientName) {
 
   try {
     const filename = `Statement-${clientName.replace(/\s+/g, '-')}-${dateStr.replace(/\//g, '')}.pdf`;
-    const opt = { margin: [10, 10], filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, windowWidth: 1100 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+    const opt = { margin: [10, 10], filename, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
     await html2pdf().set(opt).from(container).save();
     showToast(`✓ Statement downloaded for ${clientName}`, 'success');
   } catch(e) {
@@ -4205,7 +4271,7 @@ async function openEmail() {
           margin: 0, filename,
           pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] },
           image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: { scale: 2, windowWidth: 1100 },
+          html2canvas: { scale: 2 },
           jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' }
         };
         html2pdf().set(opt).from(clone).toPdf().output('blob').then(resolve).catch(reject);

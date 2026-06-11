@@ -201,7 +201,9 @@
     margin-top: 4px;
   }
   body.editing #title-size-wrap { display: flex; }
+  .edit-only { display: none; }
   body.editing .edit-only { display: inline-block !important; }
+  @media print { .edit-only { display: none !important; } }
   #title-size-slider {
     -webkit-appearance: none;
     appearance: none;
@@ -1600,6 +1602,39 @@
   .status-paid { background: #2a8c55; }
   @media print { .status-badge { display: none !important; } }
   body.editing .status-badge { display: none !important; }
+
+  /* ── PRINT CLONE (html2pdf / PDF / email) ──
+     html2pdf renders the clone in SCREEN mode, so @media print above never
+     applies to it. This mirrors the @media print invoice-layout rules onto the
+     .print-clone class (added by sanitizePrintClone) so PDFs match the printed
+     page — including on mobile, where the clone would otherwise stack FROM/TO. */
+  .print-clone .header {
+    display: grid !important;
+    grid-template-columns: 1fr 360px !important;
+    gap: 0 !important;
+    align-items: stretch !important;
+    padding-bottom: 22px !important;
+    border-bottom: 1.5px solid var(--rule) !important;
+  }
+  .print-clone .title-block {
+    border-right: 1.5px solid var(--rule) !important;
+    padding-right: 32px !important;
+    margin-bottom: 0 !important;
+  }
+  .print-clone .invoice-word { font-size: clamp(48px, 13cqw, 82px) !important; line-height: 0.88 !important; white-space: nowrap !important; }
+  .print-clone .this-is-your { font-size: 11px !important; }
+  .print-clone .meta { font-size: 11px !important; gap: 7px 20px !important; }
+  .print-clone .right-col { text-align: right !important; padding-left: 32px !important; gap: 20px !important; }
+  .print-clone .party .name { font-size: 18px !important; display: block !important; }
+  .print-clone .party.from .name { font-size: 20px !important; }
+  .print-clone .party .sub { font-size: 11.5px !important; display: block !important; }
+  .print-clone .total-block { min-width: 320px !important; }
+  .print-clone .footer { flex-direction: row !important; gap: 32px !important; margin-top: 22px !important; align-items: center !important; }
+  .print-clone .footer-divider { display: block !important; }
+  .print-clone .thank-you { font-size: 38px !important; }
+  .print-clone .payment-note { font-size: 12px !important; width: auto !important; }
+  .print-clone .total-wrap { position: static !important; box-shadow: none !important; border-top: none !important; padding: 0 !important; }
+  .print-clone .status-badge, .print-clone #status-picker, .print-clone .logo-placeholder, .print-clone .logo-remove, .print-clone .edit-only { display: none !important; }
   
   @keyframes flashSuccess {
     0% { background-color: rgba(42, 140, 85, 0.5); }
