@@ -2073,6 +2073,10 @@ function updateFilenamePreview() {
 async function proceedPrint() {
   updateFilenamePreview();
   closeDialog();
+  // Leave edit mode before printing so edit chrome (field outlines, add/delete
+  // buttons, drag handles, the DRAFT watermark's editable state) is gone from
+  // the printed page. Without this, printing mid-edit leaks edit UI into output.
+  if (document.body.classList.contains('editing')) stopEdit();
   window.print();
   setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
 
@@ -2088,6 +2092,8 @@ async function proceedPrint() {
         const cs = getComputedStyle(document.body);
         clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
         clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
+        // Strip edit-mode controls + draft watermark so the PDF backup is clean
+        clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .delete-row-btn, .drag-handle').forEach(el => el.remove());
         document.body.appendChild(clone);
         const opt = { margin: [10, 0], filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
@@ -2122,7 +2128,7 @@ function openPrintPreview() {
     clone.style.setProperty(v, cs.getPropertyValue(v).trim())
   );
   // Strip edit-mode controls from clone
-  clone.querySelectorAll('button, input, select, textarea, .watermark-draft').forEach(el => el.remove());
+  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle').forEach(el => el.remove());
   frame.innerHTML = '';
   frame.appendChild(clone);
   overlay.style.display = 'flex';
@@ -2169,8 +2175,8 @@ async function downloadPdfFromPreview() {
   clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
   
   // Strip edit-mode controls from clone so it renders cleanly
-  clone.querySelectorAll('button, input, select, textarea, .watermark-draft').forEach(el => el.remove());
-  
+  clone.querySelectorAll('button, input, select, textarea, .watermark-draft, .drag-handle').forEach(el => el.remove());
+
   document.body.appendChild(clone);
   
   showToast('Generating PDF...', 'info');

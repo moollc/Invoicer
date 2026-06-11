@@ -1,4 +1,4 @@
-const CACHE = 'app-mq8nshw1'; // __CACHE_VERSION__
+const CACHE = 'app-mq8stdeb'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
