@@ -635,10 +635,11 @@
 
 <!-- DASHBOARD OVERLAY -->
 <div id="dashboard-overlay" role="dialog" aria-modal="true" aria-label="Dashboard" onclick="if(event.target.id==='dashboard-overlay') closeDashboard()">
-  <div class="modal-box modal-box--600">
+  <div class="modal-box modal-box--600" id="dash-modal-box">
     <button onclick="closeDashboard()" aria-label="Close" class="modal-close-btn--32">✕</button>
     <div class="modal-label">Business</div>
     <div class="modal-title">Dashboard</div>
+    <div id="dash-scroll">
 
     <!-- Stats grid -->
     <div id="dash-stats-grid">
@@ -722,6 +723,8 @@
       <div class="dash-diag-label-sm">Sync Diagnostics</div>
       <div id="diag-details"></div>
     </div>
+
+    </div><!-- end #dash-scroll -->
   </div>
 </div>
 
