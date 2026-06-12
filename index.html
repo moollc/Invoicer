@@ -139,7 +139,19 @@
       <option value="Courier New">Courier New</option>
       <option value="Comic Sans MS">Comic Sans MS</option>
     </select>
-    <select id="theme-selector" onchange="changeTheme(this.value)" title="Invoice theme" aria-label="Invoice theme">
+    <div id="theme-picker-wrap" style="position:relative;">
+      <button id="btn-theme" onclick="toggleThemePicker()" title="Invoice theme" aria-label="Invoice theme">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="19" cy="13" r="2.5"/><circle cx="6" cy="13" r="2.5"/><circle cx="10" cy="19.5" r="2.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10"/></svg>
+        <span class="tb-label">Theme</span>
+      </button>
+      <div id="theme-picker" style="display:none;">
+        <button class="theme-dot" data-theme="classic" title="Classic" style="background:#14202e;" onclick="pickTheme('classic')"></button>
+        <button class="theme-dot" data-theme="modern"  title="Modern"  style="background:#2b5cca;" onclick="pickTheme('modern')"></button>
+        <button class="theme-dot" data-theme="minimal" title="Minimal" style="background:#2c2c2c;" onclick="pickTheme('minimal')"></button>
+        <button class="theme-dot" data-theme="outline" title="Outline" style="background:#fff; border:2px solid #14202e;" onclick="pickTheme('outline')"></button>
+      </div>
+    </div>
+    <select id="theme-selector" onchange="changeTheme(this.value)" title="Invoice theme" aria-label="Invoice theme" style="display:none;">
       <option value="classic">Classic</option>
       <option value="modern">Modern</option>
       <option value="minimal">Minimal</option>
@@ -671,7 +683,10 @@
     </div>
 
     <!-- Monthly bar chart -->
-    <div id="dash-chart-title">Last 6 Months · Invoiced</div>
+    <div id="dash-chart-header">
+      <div id="dash-chart-title">Last 6 Months · Invoiced</div>
+      <div id="dash-chart-legend"><span class="dash-legend-dot dash-legend-dot--earned"></span>Earned <span class="dash-legend-dot dash-legend-dot--spent"></span>Expenses <span class="dash-legend-dot dash-legend-dot--goals"></span>Goals</div>
+    </div>
     <div id="dash-chart"></div>
 
     <!-- Business Profile -->

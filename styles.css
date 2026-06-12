@@ -85,7 +85,7 @@
     gap: 4px;
     background: #14202e;
     border-radius: 14px;
-    padding: 10px 8px;
+    padding: 10px 6px;
     box-shadow: 0 4px 24px rgba(0,0,0,0.18);
   }
   .tb-group {
@@ -105,7 +105,7 @@
     font-size: 10px;
     font-weight: 500;
     letter-spacing: 0.3px;
-    width: 64px;
+    width: 56px;
     height: 44px;
     padding: 0;
     border: none;
@@ -141,6 +141,30 @@
   body.editing #btn-cancel { display: flex !important; }
   #btn-chat   { color: #a89cf7; }
   #btn-clear-invoice { color: #ff6b6b; }
+  #btn-theme { color: rgba(255,255,255,0.65); }
+  #theme-picker {
+    position: fixed;
+    background: #14202e;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px;
+    padding: 8px;
+    display: flex;
+    gap: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    z-index: 10000;
+  }
+  .theme-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+    padding: 0;
+  }
+  .theme-dot:hover { transform: scale(1.2); }
+  .theme-dot--active { border-color: rgba(255,255,255,0.7) !important; transform: scale(1.1); }
   #font-selector, #theme-selector {
     display: none;
     background: rgba(255,255,255,0.12);
@@ -149,9 +173,10 @@
     border-radius: 7px;
     font-family: 'Roboto', sans-serif;
     font-size: 10px;
-    padding: 4px 6px;
+    padding: 4px 4px;
     cursor: pointer;
-    width: 110px;
+    width: 56px;
+    text-align: center;
     margin-top: 2px;
   }
   #font-selector option, #theme-selector option {
@@ -725,31 +750,40 @@
       left: 50%;
       transform: translateX(-50%);
       flex-direction: row;
+      flex-wrap: nowrap;
+      align-items: center;
+      justify-content: center;
       border-radius: 40px;
-      padding: 8px 14px;
-      gap: 6px;
+      padding: 6px 12px;
+      gap: 2px;
       width: auto;
       max-width: calc(100vw - 24px);
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: none;
       box-shadow: 0 8px 32px rgba(0,0,0,0.15);
       background: rgba(20,32,46,0.95);
       backdrop-filter: blur(8px);
       z-index: 1000;
     }
-    .tb-group { flex-direction: row; gap: 6px; }
-    .tb-divider { width: 1.5px; height: 20px; margin: 0 2px; background: rgba(255,255,255,0.1); }
+    #toolbar::-webkit-scrollbar { display: none; }
+    .tb-group { flex-direction: row; gap: 2px; flex-shrink: 0; }
+    .tb-divider { width: 1.5px; height: 18px; margin: 0 2px; background: rgba(255,255,255,0.1); flex-shrink: 0; }
     #toolbar button {
-      width: 40px;
-      height: 40px;
+      width: 34px;
+      height: 34px;
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       justify-content: center;
     }
     #toolbar button .tb-label { display: none; }
     #font-selector, #theme-selector {
-      width: 80px;
-      height: 40px;
+      width: 72px;
+      height: 34px;
       padding: 2px 6px;
       font-size: 11px;
+      flex-shrink: 0;
     }
 
     .page {
@@ -759,6 +793,17 @@
       padding: 16px 12px 100px; /* Space for toolbar */
       border-radius: 0;
       box-shadow: none;
+    }
+
+    #edit-action-bar {
+      bottom: auto;
+      top: 0;
+      height: 52px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.25);
+      padding: 0 16px;
+    }
+    body.editing .page {
+      padding-top: 64px;
     }
 
     /* Modals & Overlays */
@@ -1734,6 +1779,7 @@
   #claim-modal-title { font-size:20px; font-weight:700; color:#14202e; margin-bottom:20px; }
   #btn-submit-claim { flex:1; padding:10px; background:#155724; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer; }
   #templates-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
+  #bill-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
   #providers-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
   #providers-overlay #provider-list { max-height:none; overflow-y:visible; flex-shrink:1; padding:0; }
   .prov-mini-empty { font-size:11px; color:#9aa2ac; text-align:center; padding:10px 14px; }
@@ -1755,8 +1801,8 @@
   #cal-results { display:none; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; margin-bottom:16px; }
   #cal-status { font-size:12px; color:#9aa2ac; margin-bottom:12px; }
   #dashboard-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:flex-start; justify-content:center; overflow-y:auto; padding:20px 16px; }
-  #dash-modal-box { max-height:calc(100dvh - 40px); display:flex; flex-direction:column; overflow:hidden; }
-  #dash-scroll { flex:1; overflow-y:auto; min-height:0; padding-bottom:8px; }
+  #dash-modal-box { max-height:calc(100dvh - 40px); display:flex; flex-direction:column; overflow:hidden; width:100%; }
+  #dash-scroll { flex:1; overflow-y:auto; min-height:0; padding-bottom:8px; width:100%; }
   #dash-stats-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px; }
   #dash-month { font-size:20px; font-weight:700; color:#14202e; }
   #dash-quarter { font-size:20px; font-weight:700; color:#14202e; }
@@ -1765,8 +1811,14 @@
   #dash-top-client-card { background:#f6f6f4; border-radius:8px; padding:14px 16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; }
   #dash-top-client { font-size:16px; font-weight:700; color:#14202e; }
   #dash-top-client-amt { font-size:18px; font-weight:700; color:#2a8c55; text-align:right; }
-  #dash-chart-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; margin-bottom:10px; }
-  #dash-chart { margin-bottom:24px; }
+  #dash-chart-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  #dash-chart-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; }
+  #dash-chart-legend { display:flex; align-items:center; gap:8px; font-size:10px; color:#9aa2ac; }
+  .dash-legend-dot { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:3px; }
+  .dash-legend-dot--earned { background:#14202e; }
+  .dash-legend-dot--spent { background:rgba(230,160,30,0.85); }
+  .dash-legend-dot--goals { background:rgba(42,160,120,0.85); }
+  #dash-chart { margin-bottom:24px; width:100%; }
   .goal-card { border-radius:8px; padding:12px 14px; margin-bottom:8px; position:relative; overflow:hidden; background:#f6f6f4; }
   .goal-card--claimed { background:#e2e3e5; }
   .goal-card--complete { background:#d4edda; }
@@ -1780,16 +1832,25 @@
   .goal-claimed-label { font-size:11px; color:#6c7682; font-weight:600; display:flex; align-items:center; gap:4px; }
   .goal-claim-btn { background:#155724; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer; }
   .goal-deadline { font-size:11px; color:#9aa2ac; }
+  .goal-deadline--soon { color:#e6a01e; font-weight:600; }
+  .goal-deadline--today { color:#d0241b; font-weight:700; }
+  .goal-deadline--overdue { color:#d0241b; font-weight:700; }
+  .goal-age { font-size:11px; color:#b0b8c4; }
   .goal-target { font-size:12px; color:#6c7682; }
   .goal-notes { font-size:11px; color:#9aa2ac; position:relative; z-index:2; }
   .goal-notes-link { color:#5b4fcf; word-break:break-all; }
   .goal-bar-wrap { width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2; }
   .goal-bar-fill { height:100%; width:0%; background:#14202e; transition:width 0.6s ease-out; }
-  .dash-chart-row { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
-  .dash-chart-label { font-size:10px; width:28px; color:#9aa2ac; flex-shrink:0; }
-  .dash-chart-track { flex:1; background:#eeeeec; border-radius:3px; height:14px; }
+  #dash-chart { display:flex; flex-wrap:wrap; align-items:center; gap:4px 0; margin-bottom:24px; width:100%; }
+  .dash-chart-row { display:flex; align-items:center; gap:5px; width:100%; }
+  .dash-chart-row--empty { width:auto; flex:0 0 auto; gap:2px; }
+  .dash-chart-label { font-size:10px; width:24px; color:#9aa2ac; flex-shrink:0; }
+  .dash-chart-track { flex:1; min-width:0; background:#eeeeec; border-radius:3px; height:10px; overflow:hidden; position:relative; }
   .dash-chart-fill { background:#14202e; height:100%; border-radius:3px; transition:width 0.3s; }
-  .dash-chart-amt { font-size:11px; font-weight:600; min-width:64px; text-align:right; color:#14202e; }
+  .dash-chart-fill--spent { position:absolute; top:0; left:0; height:100%; border-radius:3px; background:rgba(230,160,30,0.75); transition:width 0.3s; pointer-events:none; z-index:1; }
+  .dash-chart-fill--goals { position:absolute; top:0; left:0; height:100%; border-radius:3px; background:rgba(42,160,120,0.7); transition:width 0.3s; pointer-events:none; z-index:2; }
+  .dash-chart-amt { font-size:10px; font-weight:600; width:44px; flex-shrink:0; text-align:right; color:#14202e; white-space:nowrap; }
+  .dash-chart-amt--nil { color:#c0c4c9; width:auto; }
   #dash-profile-name { font-size:13px; font-weight:600; color:#14202e; }
   #dash-empty { display:none; font-size:12px; color:#9aa2ac; text-align:center; padding:20px 0; }
   #dash-diagnostics { display:none; margin-top:20px; padding:12px; background:#fff8f8; border:1px solid #fde7e7; border-radius:8px; }

@@ -21,6 +21,41 @@ function restoreTitleFont() {
   changeTitleFont(saved);
 }
 
+function toggleThemePicker() {
+  const picker = document.getElementById('theme-picker');
+  const btn = document.getElementById('btn-theme');
+  if (!picker || !btn) return;
+  const isOpen = picker.style.display !== 'none';
+  if (isOpen) { picker.style.display = 'none'; return; }
+  // Move picker to body so toolbar overflow can't clip it
+  if (picker.parentElement !== document.body) document.body.appendChild(picker);
+  picker.style.display = 'flex';
+  // Position above the button, right-aligned to it
+  const r = btn.getBoundingClientRect();
+  const pickerW = picker.offsetWidth || 140;
+  let left = r.right - pickerW;
+  if (left < 8) left = 8;
+  picker.style.left = left + 'px';
+  picker.style.top = (r.top - picker.offsetHeight - 10) + 'px';
+  const close = e => {
+    if (!picker.contains(e.target) && e.target !== btn) {
+      picker.style.display = 'none';
+      document.removeEventListener('click', close);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+function pickTheme(themeName) {
+  changeTheme(themeName);
+  document.getElementById('theme-picker').style.display = 'none';
+  // keep hidden select in sync for any legacy code reading it
+  const sel = document.getElementById('theme-selector');
+  if (sel) sel.value = themeName;
+  // update active dot
+  document.querySelectorAll('.theme-dot').forEach(d => d.classList.toggle('theme-dot--active', d.dataset.theme === themeName));
+}
+
 function changeTheme(themeName) {
   document.body.classList.remove('theme-modern', 'theme-minimal', 'theme-outline');
   if (themeName !== 'classic') {
@@ -32,8 +67,10 @@ function changeTheme(themeName) {
 
 function restoreTheme() {
   const saved = localStorage.getItem('invoice-theme') || 'classic';
-  document.getElementById('theme-selector').value = saved;
+  const sel = document.getElementById('theme-selector');
+  if (sel) sel.value = saved;
   changeTheme(saved);
+  document.querySelectorAll('.theme-dot').forEach(d => d.classList.toggle('theme-dot--active', d.dataset.theme === saved));
 }
 
 function applyTitleSize(px) {
@@ -1176,15 +1213,28 @@ function loadInvoiceIntoEditor(receipt) {
   }
   const row = loadLedgerRows().find(r => r.receipt === receipt);
   if (!row) { showToast(`Invoice ${receipt} not found`, 'info'); return; }
-  if (row.client)  current.to = { ...current.to, name: row.client };
+  // Try to fill client details from the client book
+  const clientMatch = loadClients().find(c => c.name === row.client);
+  current.to = {
+    name:    row.client || current.to.name,
+    address: clientMatch?.address || current.to.address || '',
+    email:   clientMatch?.email   || current.to.email   || '',
+    phone:   clientMatch?.phone   || current.to.phone   || '',
+  };
   if (row.date)    current.dateOverride = row.date;
-  if (row.service) current.lineItems = [{ service: row.service, details: '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
+  if (row.service) current.lineItems = [{ service: row.service, details: row.description || '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
   current.receiptOverride = row.receipt;
   document.getElementById('invoice-data').textContent = JSON.stringify(current, null, 2);
   if (typeof closeDialog === 'function') closeDialog();
   render(current);
   startEdit();
-  showToast(`Invoice ${receipt} loaded (summary only — re-enter address and line details)`, 'info');
+  const hasDesc = !!(row.description);
+  const msg = (clientMatch && hasDesc)
+    ? `Invoice ${receipt} loaded`
+    : clientMatch
+      ? `Invoice ${receipt} loaded — re-enter line description`
+      : `Invoice ${receipt} loaded (summary only — re-enter address and line details)`;
+  showToast(msg, 'info');
 }
 
 function markReceiptAsSent() {
@@ -1196,13 +1246,18 @@ function markReceiptAsSent() {
   const idx = rows.findIndex(r => r.receipt === receipt);
   if (idx >= 0) {
     if (rows[idx].status !== '✅ Paid') rows[idx].status = '📤 Sent';
+    if (!rows[idx].description) {
+      rows[idx].description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
+    }
   } else {
     const services = data.lineItems.map(l => l.service).join(', ');
+    const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
     rows.push({
       receipt:      receipt,
       date:         normalizeLedgerDate(data.date),
       client:       data.to.name,
       service:      services,
+      description:  description,
       projectTotal: `${data.currency} ${data.projectTotal}`,
       amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
       status:       '📤 Sent',
@@ -1218,11 +1273,13 @@ let _pendingRow = null; // the row object for the current invoice, set on dialog
 async function confirmPrint() {
   const data = getData();
   const services = data.lineItems.map(l => l.service).join(', ');
+  const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
   _pendingRow = {
     receipt:      data.receiptNumber,
     date:         normalizeLedgerDate(data.date),
     client:       data.to.name,
     service:      services,
+    description:  description,
     projectTotal: `${data.currency} ${data.projectTotal}`,
     amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
     status:       '⬜ Unpaid',
@@ -1972,10 +2029,10 @@ function exportLedger() {
 function exportLedgerCsv() {
   const rows = getExportRows();
   const escape = v => `"${String(v || '').replace(/"/g, '""')}"`;
-  const headers = ['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status', 'Note'];
+  const headers = ['Receipt #', 'Date', 'Client', 'Service', 'Project Total', 'Amount Due', 'Status', 'Note', 'Description'];
   const lines = [
     headers.map(escape).join(','),
-    ...rows.map(r => [r.receipt, r.date, r.client, r.service, r.projectTotal, r.amountDue, r.status, r.note || ''].map(escape).join(','))
+    ...rows.map(r => [r.receipt, r.date, r.client, r.service, r.projectTotal, r.amountDue, r.status, r.note || '', r.description || ''].map(escape).join(','))
   ];
   const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
   const a = document.createElement('a');
@@ -4825,6 +4882,7 @@ async function syncToGoogleSheets(invoiceData) {
 
   try {
     const services = invoiceData.lineItems.map(l => l.service).join(', ');
+    const description = invoiceData.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
     const row = [
       invoiceData.receiptNumber,
       invoiceData.date,
@@ -4833,7 +4891,8 @@ async function syncToGoogleSheets(invoiceData) {
       invoiceData.currency + ' ' + invoiceData.projectTotal,
       invoiceData.totalAmount,
       '⬜ Unpaid',
-      (invoiceData.from && invoiceData.from.name) || ''
+      (invoiceData.from && invoiceData.from.name) || '',
+      description
     ];
 
     const res = await fetch(
@@ -4993,11 +5052,14 @@ async function ensureAllTabs(spreadsheetId) {
     await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}:batchUpdate`, { requests });
   }
 
-  // Ensure Ledger has 'Company' header (Column H)
-  const ledgerMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Ledger!A1:H1`);
+  // Ensure Ledger has 'Company' (col H) and 'Description' (col I) headers
+  const ledgerMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Ledger!A1:I1`);
   const ledgerHeaders = ledgerMeta.values ? ledgerMeta.values[0] : [];
   if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Company')) {
     await sheetsWrite(spreadsheetId, 'Ledger!H1', [['Company']]);
+  }
+  if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Description')) {
+    await sheetsWrite(spreadsheetId, 'Ledger!I1', [['Description']]);
   }
 
   if (!existing.includes('Clients')) {
@@ -5169,11 +5231,19 @@ async function setupDrive() {
 async function savePdfToDrive(pdfBlob, filename) {
   if (!gmailTokenValid() || !_driveFolderId) return null;
   try {
-    const metadata = { name: filename, parents: [_driveFolderId] };
-    const form = new FormData();
-    form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    form.append('file', pdfBlob, filename);
+    // Check if a file with this name already exists in the folder
+    const q = encodeURIComponent(`name='${filename}' and '${_driveFolderId}' in parents and trashed=false`);
+    const search = await driveRequest('GET', `/files?q=${q}&fields=files(id,name)&pageSize=1`);
+    const existing = search?.files?.[0];
 
+    if (existing) {
+      showToast(`Drive already has "${filename}" — delete it manually if you need to replace it.`, 'info');
+      return existing.id;
+    }
+
+    const form = new FormData();
+    form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [_driveFolderId] })], { type: 'application/json' }));
+    form.append('file', pdfBlob, filename);
     const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'POST',
       headers: { Authorization: `Bearer ${_gmailToken}` },
@@ -5404,7 +5474,7 @@ function renderDashboard() {
   const thisQ  = now.getFullYear() + '-Q' + Math.ceil((now.getMonth() + 1) / 3);
 
   const paid = rows.filter(r => r.status === '✅ Paid');
-  const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit');
+  const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit' || r.status === '📤 Sent');
 
   let monthPaidYM = thisYM;
   let monthPaid = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
@@ -5478,29 +5548,63 @@ function renderDashboard() {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
     }
+    const bills = loadBills();
+    const billSpendByMonth = {};
+    bills.forEach(b => {
+      (b.history || []).forEach(h => {
+        const ym = h.date ? h.date.slice(0, 7) : null;
+        if (ym) billSpendByMonth[ym] = (billSpendByMonth[ym] || 0) + (parseFloat(h.amount) || 0);
+      });
+    });
+    const goalSpendByMonth = {};
+    loadGoals().forEach(g => {
+      (g.history || []).forEach(h => {
+        const ym = h.date ? h.date.slice(0, 7) : null;
+        if (ym) goalSpendByMonth[ym] = (goalSpendByMonth[ym] || 0) + (parseFloat(h.amount) || 0);
+      });
+    });
     const totals = months.map(m => {
       const [y, mo] = m.split('-').map(Number);
       const date = new Date(y, mo - 1, 1);
       return {
         label: date.toLocaleString('default', { month: 'short' }),
-        total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0)
+        total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0),
+        spent: billSpendByMonth[m] || 0,
+        goals: goalSpendByMonth[m] || 0
       };
     });
     const maxTotal = Math.max(...totals.map(t => t.total), 1);
+    const fmtChartAmt = n => {
+      if (!n) return '—';
+      if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1) + 'M';
+      if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + 'K';
+      return String(Math.round(n));
+    };
     const chart = document.getElementById('dash-chart');
     chart.innerHTML = '';
     totals.forEach(t => {
       const pct = Math.round((t.total / maxTotal) * 100);
+      const spentPct = t.total > 0 ? Math.min(Math.round((t.spent / t.total) * pct), pct) : 0;
+      const goalsPct = t.total > 0 ? Math.min(Math.round((t.goals / t.total) * pct), pct - spentPct) : 0;
       const bar = document.createElement('div');
-      bar.className = 'dash-chart-row';
-      bar.innerHTML = `
-        <span class="dash-chart-label">${t.label}</span>
-        <div class="dash-chart-track">
-          <div class="dash-chart-fill"></div>
-        </div>
-        <span class="dash-chart-amt">${t.total > 0 ? fmt(t.total) : '—'}</span>`;
+      if (t.total === 0) {
+        bar.className = 'dash-chart-row dash-chart-row--empty';
+        bar.innerHTML = `<span class="dash-chart-label">${t.label}</span><span class="dash-chart-amt dash-chart-amt--nil">—</span>`;
+      } else {
+        bar.className = 'dash-chart-row';
+        bar.innerHTML = `
+          <span class="dash-chart-label">${t.label}</span>
+          <div class="dash-chart-track">
+            <div class="dash-chart-fill"></div>
+            <div class="dash-chart-fill--spent"></div>
+            <div class="dash-chart-fill--goals"></div>
+          </div>
+          <span class="dash-chart-amt">${fmtChartAmt(t.total)}</span>`;
+        bar.querySelector('.dash-chart-fill').style.width = pct + '%';
+        bar.querySelector('.dash-chart-fill--spent').style.width = spentPct + '%';
+        bar.querySelector('.dash-chart-fill--goals').style.width = goalsPct + '%';
+      }
       chart.appendChild(bar);
-      bar.querySelector('.dash-chart-fill').style.width = pct + '%';
     });
   }
 
@@ -5534,6 +5638,7 @@ function renderGoalsList() {
     if (!b.deadline) return -1;
     return new Date(a.deadline) - new Date(b.deadline);
   });
+  const today = new Date(); today.setHours(0,0,0,0);
   goals.forEach((g) => {
     const rawIdx = rawGoals.findIndex(r => r.name === g.name);
     const div = document.createElement('div');
@@ -5541,6 +5646,40 @@ function renderGoalsList() {
     const reached = parseFloat(g.amountReached) || 0;
     const target = parseFloat(g.amount) || 0;
     let claimBtn = '';
+
+    // Age indicator
+    const firstEntry = (g.history || [])[0];
+    const startDate = firstEntry ? new Date(firstEntry.date) : null;
+    const ageDays = startDate ? Math.floor((today - startDate) / 86400000) : null;
+    let ageLabel = '';
+    if (ageDays !== null) {
+      ageLabel = ageDays === 0 ? 'Started today' : ageDays === 1 ? 'Started yesterday' : `${ageDays}d saving`;
+    }
+
+    // Deadline indicator
+    let deadlineLabel = '';
+    let deadlineClass = '';
+    if (g.deadline && g.status !== 'Claimed') {
+      const due = new Date(g.deadline); due.setHours(0,0,0,0);
+      const diff = Math.round((due - today) / 86400000);
+      if (diff < 0) {
+        deadlineLabel = `${Math.abs(diff)}d overdue`;
+        deadlineClass = 'goal-deadline--overdue';
+      } else if (diff === 0) {
+        deadlineLabel = 'Due today';
+        deadlineClass = 'goal-deadline--today';
+      } else if (diff <= 14) {
+        deadlineLabel = `${diff}d left`;
+        deadlineClass = 'goal-deadline--soon';
+      } else if (diff <= 60) {
+        deadlineLabel = `${diff}d left`;
+        deadlineClass = '';
+      } else {
+        const months = Math.round(diff / 30);
+        deadlineLabel = `${months}mo left`;
+        deadlineClass = '';
+      }
+    }
 
     if (g.status === 'Claimed') {
       div.classList.add('goal-card--claimed');
@@ -5562,7 +5701,8 @@ function renderGoalsList() {
       </div>
       <div class="goal-card-meta">
         ${claimBtn}
-        ${g.deadline ? `<span class="goal-deadline">Due ${g.deadline}</span>` : ''}
+        ${deadlineLabel ? `<span class="goal-deadline ${deadlineClass}">${deadlineLabel}</span>` : ''}
+        ${ageLabel ? `<span class="goal-age">${ageLabel}</span>` : ''}
         <span class="goal-target">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
       </div>
       <div class="goal-notes">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" class="goal-notes-link">${url}</a>`) : 'No notes provided'}</div>
@@ -6014,7 +6154,7 @@ async function loadLedgerFromSheet() {
 
   try {
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:H`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:I`,
       { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
 
@@ -6031,14 +6171,15 @@ async function loadLedgerFromSheet() {
     const sheetRows = allRows.slice(1)
       .filter(row => row[0] && row[0].trim())
       .map(row => ({
-        receipt: row[0] || '',
-        date: row[1] || '',
-        client: row[2] || '',
-        service: row[3] || '',
+        receipt:      row[0] || '',
+        date:         row[1] || '',
+        client:       row[2] || '',
+        service:      row[3] || '',
         projectTotal: row[4] || '',
-        amountDue: row[5] || '',
-        status: row[6] || '⬜ Unpaid',
-        company: row[7] || ''
+        amountDue:    row[5] || '',
+        status:       row[6] || '⬜ Unpaid',
+        company:      row[7] || '',
+        description:  row[8] || '',
       }));
 
     // Non-destructive merge: sheet wins on conflicts, local-only rows are kept and pushed up
@@ -6051,7 +6192,8 @@ async function loadLedgerFromSheet() {
       for (const row of localOnly) {
         const sheetRow = [
           row.receipt, row.date, row.client, row.service,
-          row.projectTotal, row.amountDue, row.status, row.company || ''
+          row.projectTotal, row.amountDue, row.status, row.company || '',
+          row.description || ''
         ];
         await fetch(
           `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
@@ -6357,6 +6499,8 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
     const applied = Math.min(remaining, needed);
     g.amountReached = String(Math.round((reached + applied) * 100) / 100);
     g.lastContributionDate = new Date().toISOString().slice(0, 10);
+    g.history = g.history || [];
+    g.history.push({ date: g.lastContributionDate, amount: applied });
 
     if (parseFloat(g.amountReached) >= target) {
       g.status = 'Funded';
