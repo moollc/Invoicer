@@ -3991,10 +3991,25 @@ function markBillPaid(id) {
   requestAnimationFrame(() => overlay.classList.add('modal-open'));
 }
 
-function closePayBillModal() {
+function closePayBillModal(celebrate) {
   const overlay = document.getElementById('pay-bill-overlay');
-  overlay.classList.remove('modal-open');
-  overlay.addEventListener('transitionend', () => { overlay.style.display = 'none'; }, { once: true });
+  if (celebrate) {
+    const box = overlay.querySelector('.modal-box');
+    if (box) {
+      box.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;gap:12px;">
+        <div style="font-size:48px;line-height:1;">✅</div>
+        <div style="font-size:18px;font-weight:700;color:#fff;">Paid!</div>
+      </div>`;
+    }
+    triggerConfetti();
+    setTimeout(() => {
+      overlay.classList.remove('modal-open');
+      overlay.addEventListener('transitionend', () => { overlay.style.display = 'none'; }, { once: true });
+    }, 1100);
+  } else {
+    overlay.classList.remove('modal-open');
+    overlay.addEventListener('transitionend', () => { overlay.style.display = 'none'; }, { once: true });
+  }
   _payBillId = null;
   _payBillDoc = null;
 }
@@ -4025,77 +4040,86 @@ async function confirmPayBill() {
   if (idx === -1) return;
   const bill = bills[idx];
   const amount = parseFloat(bill.amount) || 0;
+  const docSnapshot = _payBillDoc ? { ..._payBillDoc } : null;
 
   const btn = document.querySelector('#pay-bill-overlay .modal-btn-row button');
   if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
 
-  try {
-    bill.history = bill.history || [];
-    bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
-    bill.paidTotal = String((parseFloat(bill.paidTotal) || 0) + amount);
-    bill.paid = true;
-    bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
+  // Commit the paid state to localStorage immediately — Drive upload is best-effort
+  bill.history = bill.history || [];
+  bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
+  bill.paidTotal = String((parseFloat(bill.paidTotal) || 0) + amount);
+  bill.paid = true;
+  bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
 
-    if (_payBillDoc) {
-      if (gmailTokenValid() && _driveFolderId) {
-        // Upload to Drive under Bills subfolder
-        if (!_driveFolderId) await ensureDriveFolder();
-        const folderQuery = `name = 'Bills' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-        const folderSearch = await driveRequest('GET', `/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name)`);
-        let billsFolderId;
-        if (folderSearch?.files?.length > 0) {
-          billsFolderId = folderSearch.files[0].id;
-        } else {
-          const created = await driveRequest('POST', '/files', { name: 'Bills', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
-          if (!created.id) throw new Error('Failed to create Bills folder in Drive.');
-          billsFolderId = created.id;
-        }
+  // Store doc locally as fallback while Drive upload is in-flight
+  if (docSnapshot) {
+    bill.receiptDoc = docSnapshot.dataUrl;
+    bill.receiptDocName = docSnapshot.name;
+  }
 
-        const ext = _payBillDoc.name.includes('.') ? _payBillDoc.name.split('.').pop() : '';
-        const dateStr = new Date().toISOString().slice(0, 10);
-        const billSlug = bill.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-        const renamedFile = `${billSlug}-${dateStr}${ext ? '.' + ext : ''}`;
+  saveBills(bills);
+  syncBillsToSheet();
+  closePayBillModal(true);
+  renderBillsList();
+  generatePaymentReceipt(bill);
 
-        // Extract mimeType before the metadata POST so Drive can preview the file
-        const mimeType = _payBillDoc.dataUrl.split(';')[0].split(':')[1];
-        const metaRes = await driveRequest('POST', '/files', { name: renamedFile, mimeType, parents: [billsFolderId] });
-        if (!metaRes.id) throw new Error('Failed to create bill doc metadata in Drive.');
-
-        // Convert base64 dataUrl to Blob for upload
-        const base64 = _payBillDoc.dataUrl.split(',')[1];
-        const byteChars = atob(base64);
-        const byteArr = new Uint8Array(byteChars.length);
-        for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-        const blob = new Blob([byteArr], { type: mimeType });
-
-        const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
-          method: 'PATCH',
-          headers: { 'Authorization': `Bearer ${_gmailToken}`, 'Content-Type': mimeType },
-          body: blob
-        });
-        if (!uploadRes.ok) throw new Error('Failed to upload bill doc to Drive.');
-
-        bill.receiptDocUrl = `https://drive.google.com/file/d/${metaRes.id}/view`;
-        bill.receiptDocName = renamedFile;
-        delete bill.receiptDoc;
-        showToast(`Doc saved to Drive: ${renamedFile}`, 'success');
+  // Drive upload is post-save — failure never blocks the user
+  if (docSnapshot && gmailTokenValid() && _driveFolderId) {
+    try {
+      const folderQuery = `name = 'Bills' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+      const folderSearch = await driveRequest('GET', `/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name)`);
+      let billsFolderId;
+      if (folderSearch?.files?.length > 0) {
+        billsFolderId = folderSearch.files[0].id;
       } else {
-        // No Drive — store base64 locally
-        bill.receiptDoc = _payBillDoc.dataUrl;
-        bill.receiptDocName = _payBillDoc.name;
+        const created = await driveRequest('POST', '/files', { name: 'Bills', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
+        if (!created.id) throw new Error('Failed to create Bills folder in Drive.');
+        billsFolderId = created.id;
       }
-    }
 
-    saveBills(bills);
-    syncBillsToSheet();
-    closePayBillModal();
-    renderBillsList();
-    showToast(`✓ ${bill.name} marked paid`, 'success');
-    await generatePaymentReceipt(bill);
-  } catch (err) {
-    showToast(err.message, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Mark Paid'; }
+      const ext = docSnapshot.name.includes('.') ? docSnapshot.name.split('.').pop() : '';
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const billSlug = bill.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+      const renamedFile = `${billSlug}-${dateStr}${ext ? '.' + ext : ''}`;
+
+      const mimeType = docSnapshot.dataUrl.split(';')[0].split(':')[1];
+      const metaRes = await driveRequest('POST', '/files', { name: renamedFile, mimeType, parents: [billsFolderId] });
+      if (!metaRes.id) throw new Error('Drive metadata creation failed.');
+
+      const base64 = docSnapshot.dataUrl.split(',')[1];
+      const byteChars = atob(base64);
+      const byteArr = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+      const blob = new Blob([byteArr], { type: mimeType });
+
+      const controller = new AbortController();
+      const uploadTimeout = setTimeout(() => controller.abort(), 15000);
+      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${_gmailToken}`, 'Content-Type': mimeType },
+        body: blob,
+        signal: controller.signal
+      });
+      clearTimeout(uploadTimeout);
+      if (!uploadRes.ok) throw new Error('Drive upload failed.');
+
+      // Replace local fallback with Drive URL
+      const savedBills = loadBills();
+      const savedIdx = savedBills.findIndex(b => b.id === bill.id);
+      if (savedIdx !== -1) {
+        savedBills[savedIdx].receiptDocUrl = `https://drive.google.com/file/d/${metaRes.id}/view`;
+        savedBills[savedIdx].receiptDocName = renamedFile;
+        delete savedBills[savedIdx].receiptDoc;
+        saveBills(savedBills);
+      }
+      showToast(`Doc saved to Drive: ${renamedFile}`, 'success');
+      renderBillsList();
+    } catch (err) {
+      // Bill is already paid and saved — just note the doc stayed local
+      const label = err.name === 'AbortError' ? 'Upload timed out' : err.message;
+      showToast(`${label} — doc saved locally`, 'info');
+    }
   }
 }
 
