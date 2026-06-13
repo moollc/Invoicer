@@ -1780,6 +1780,7 @@
   #btn-submit-claim { flex:1; padding:10px; background:#155724; color:#fff; border:none; border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; font-weight:500; cursor:pointer; }
   #templates-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
   #bill-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
+  #pay-bill-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10001; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
   #providers-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:center; justify-content:center; overflow-y:auto; padding:20px; }
   #providers-overlay #provider-list { max-height:none; overflow-y:visible; flex-shrink:1; padding:0; }
   .prov-mini-empty { font-size:11px; color:#9aa2ac; text-align:center; padding:10px 14px; }
@@ -2095,6 +2096,9 @@
   .bill-funded-row { display:flex; justify-content:space-between; align-items:center; margin-top:6px; }
   .bill-funded-label { font-size:11px; color:#6c7682; }
   .goal-claim-btn--warn { background:#e6a817 !important; }
+  .bill-doc-btn { background:none; border:none; font-size:11px; color:#5dba7d; cursor:pointer; padding:0 0 0 6px; }
+  .pay-bill-file-label { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px dashed rgba(255,255,255,0.15); border-radius:6px; cursor:pointer; font-size:12px; color:#9aa2ac; background:rgba(255,255,255,0.03); user-select:none; }
+  .pay-bill-file-label:hover { border-color:rgba(255,255,255,0.3); color:#fff; }
   .bills-empty { font-size:12px; color:#9aa2ac; margin:0 0 8px; }
 
   .dash-flex-between { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }

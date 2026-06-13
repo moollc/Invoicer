@@ -3794,25 +3794,84 @@ function deleteBill(id) {
   renderBillsList();
 }
 
-async function markBillPaid(id) {
+let _payBillId = null;
+let _payBillDoc = null; // { dataUrl, name }
+
+function markBillPaid(id) {
+  _payBillId = id;
+  _payBillDoc = null;
+  const bill = loadBills().find(b => b.id === id);
+  if (!bill) return;
+  document.getElementById('pay-bill-name').textContent = bill.name;
+  document.getElementById('pay-bill-file-name').textContent = 'Choose file…';
+  document.getElementById('pay-bill-file').value = '';
+  document.getElementById('pay-bill-file-clear').style.display = 'none';
+  const overlay = document.getElementById('pay-bill-overlay');
+  overlay.style.display = 'flex';
+  requestAnimationFrame(() => overlay.classList.add('modal-open'));
+}
+
+function closePayBillModal() {
+  const overlay = document.getElementById('pay-bill-overlay');
+  overlay.classList.remove('modal-open');
+  overlay.addEventListener('transitionend', () => { overlay.style.display = 'none'; }, { once: true });
+  _payBillId = null;
+  _payBillDoc = null;
+}
+
+function onPayBillFileChange(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    _payBillDoc = { dataUrl: e.target.result, name: file.name };
+    document.getElementById('pay-bill-file-name').textContent = file.name;
+    document.getElementById('pay-bill-file-clear').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearPayBillFile() {
+  _payBillDoc = null;
+  document.getElementById('pay-bill-file').value = '';
+  document.getElementById('pay-bill-file-name').textContent = 'Choose file…';
+  document.getElementById('pay-bill-file-clear').style.display = 'none';
+}
+
+async function confirmPayBill() {
+  if (!_payBillId) return;
   const bills = loadBills();
-  const idx = bills.findIndex(b => b.id === id);
+  const idx = bills.findIndex(b => b.id === _payBillId);
   if (idx === -1) return;
   const bill = bills[idx];
   const amount = parseFloat(bill.amount) || 0;
 
-  // Log payment to history
   bill.history = bill.history || [];
   bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
   bill.paid = true;
   bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
+  if (_payBillDoc) {
+    bill.receiptDoc = _payBillDoc.dataUrl;
+    bill.receiptDocName = _payBillDoc.name;
+  }
   saveBills(bills);
   syncBillsToSheet();
+  closePayBillModal();
   renderBillsList();
   showToast(`✓ ${bill.name} marked paid`, 'success');
 
-  // Generate payment receipt PDF
   await generatePaymentReceipt(bill);
+}
+
+function viewBillDoc(id) {
+  const bill = loadBills().find(b => b.id === id);
+  if (!bill || !bill.receiptDoc) return;
+  const win = window.open('', '_blank');
+  if (bill.receiptDoc.startsWith('data:image/')) {
+    win.document.write(`<html><body style="margin:0;background:#111;display:flex;justify-content:center;"><img src="${bill.receiptDoc}" style="max-width:100%;height:auto;"></body></html>`);
+  } else {
+    win.location.href = bill.receiptDoc;
+  }
 }
 
 async function generatePaymentReceipt(bill) {
@@ -3998,7 +4057,7 @@ function renderBillsList() {
         <span class="bill-funded-label">Funded: ${fmt(funded)} of ${fmt(amount)}</span>
         ${status !== 'paid' ? `<button onclick="markBillPaid('${bill.id}')" class="goal-claim-btn ${pct < 100 ? 'goal-claim-btn--warn' : ''}">
           ${pct >= 100 ? 'Pay & Receipt' : 'Pay Anyway'}
-        </button>` : '<span class="goal-claimed-label">✓ Paid</span>'}
+        </button>` : `<span class="goal-claimed-label">✓ Paid</span>${bill.receiptDoc ? `<button onclick="viewBillDoc('${bill.id}')" class="bill-doc-btn">📎 Doc</button>` : ''}`}
       </div>`;
     el.appendChild(card);
     // Animate bar

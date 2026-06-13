@@ -938,5 +938,28 @@
   </div>
 </div>
 
+<!-- PAY BILL CONFIRM MODAL -->
+<div id="pay-bill-overlay" role="dialog" aria-modal="true" aria-label="Pay Bill" onclick="if(event.target.id==='pay-bill-overlay') closePayBillModal()" style="display:none;">
+  <div class="modal-box modal-box--400">
+    <button onclick="closePayBillModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
+    <div class="modal-label">Bill Payment</div>
+    <div id="pay-bill-name" class="modal-title"></div>
+    <p style="font-size:12px;color:#6c7682;margin:0 0 16px;">Optionally attach a receipt, invoice, or statement PDF/image before marking paid.</p>
+    <div class="modal-form-group">
+      <label class="modal-form-label">Attach Document (optional)</label>
+      <label id="pay-bill-file-label" class="pay-bill-file-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        <span id="pay-bill-file-name">Choose file…</span>
+        <input id="pay-bill-file" type="file" accept="application/pdf,image/*" style="display:none;" onchange="onPayBillFileChange(this)">
+      </label>
+      <button id="pay-bill-file-clear" onclick="clearPayBillFile()" style="display:none;background:none;border:none;color:#9aa2ac;font-size:11px;cursor:pointer;padding:4px 0;">✕ Remove</button>
+    </div>
+    <div class="modal-btn-row">
+      <button onclick="confirmPayBill()">Mark Paid</button>
+      <button onclick="closePayBillModal()" class="modal-btn-secondary">Cancel</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
