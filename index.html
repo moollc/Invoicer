@@ -256,6 +256,16 @@
         <option value="JPY">JPY (¥)</option>
       </select>
     </div>
+    <div class="sp-row sp-row--border">
+      <span class="sp-row-label">Default Tax Rate</span>
+      <span style="display:flex; align-items:center; gap:4px;">
+        <input id="default-tax-rate-input" type="number" min="0" max="100" step="0.5"
+          placeholder="0"
+          style="width:52px; font-family:inherit; font-size:12px; border:1.5px solid rgba(20,32,46,0.13); border-radius:4px; padding:3px 6px; outline:none; text-align:right;"
+          onchange="saveDefaultSettings()">
+        <span style="font-size:12px; color:#6c7682;">%</span>
+      </span>
+    </div>
 
     <div class="sp-section">
       <button onclick="resetAppSettings()" class="btn-reset-ui">Reset UI to Defaults</button>
@@ -698,6 +708,9 @@
       <button onclick="closeDashboard(); setTimeout(applyBusinessProfile, 100);" class="dash-add-btn-outline">⚙ My Business</button>
     </div>
 
+    <!-- Pool bar (always visible) -->
+    <div id="dash-pool-bar"></div>
+
     <!-- Tab bar -->
     <div class="dash-tab-bar">
       <div class="dash-tabs">
@@ -714,7 +727,7 @@
     <!-- Goals pane -->
     <div id="dash-goals-pane">
       <div class="dash-flex-between" style="margin-bottom:8px;">
-        <span></span>
+        <a href="#" onclick="exportGoalsCsv(); return false;" class="address-book-csv-link" title="Export goals as CSV">Export CSV</a>
         <button onclick="addGoal()" class="dash-add-btn">+ Add Goal</button>
       </div>
       <div id="dash-goals-list"></div>
@@ -723,7 +736,7 @@
     <!-- Bills pane -->
     <div id="dash-bills-pane" style="display:none;">
       <div class="dash-flex-between" style="margin-bottom:8px;">
-        <span></span>
+        <a href="#" onclick="exportBillsCsv(); return false;" class="address-book-csv-link" title="Export bills as CSV">Export CSV</a>
         <button onclick="openBillModal()" class="dash-add-btn">+ Add Bill</button>
       </div>
       <div id="dash-bills-list"></div>
@@ -761,7 +774,7 @@
         <span id="due-date-label" class="hidden">Due Date</span> <span id="due-date-value" class="v hidden"></span><span id="aging-chip" class="overdue-badge-hidden"></span>
         <span>Receipt №</span>
         <span class="inline-flex-row">
-          <span class="v" data-field="receiptNumber"></span>
+          <span class="v" data-field="receiptNumber" title="Receipt sequence: A B C per day. A2/A3 = corrected same invoice (not a new engagement). B = new invoice same day."></span>
           <span class="relative-wrap">
             <span id="status-badge" class="status-badge" onclick="toggleStatusPicker(event)" title="Change Status"></span>
             <div id="status-picker">

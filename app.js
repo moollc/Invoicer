@@ -149,24 +149,20 @@ function sanitizePrintClone(clone) {
   return clone;
 }
 
-// Canonical ledger date is MM/DD/YYYY with no spaces. The invoice DISPLAY uses
-// "DD / MM / YYYY" (with spaces); other paths (AI, ISO) vary. Normalize any of
-// those to the ledger form so a row's date is never the spaced/odd-one-out.
+// Canonical ledger date is MM/DD/YYYY with no spaces. autoDate() produces
+// "MM / DD / YYYY" (with spaces). ISO paths produce YYYY-MM-DD. Normalize all.
 function normalizeLedgerDate(raw) {
   if (!raw) return raw;
   const s = String(raw).trim();
   // ISO: YYYY-MM-DD -> MM/DD/YYYY
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (iso) return `${iso[2]}/${iso[3]}/${iso[1]}`;
-  const spaced = s.includes(' ');
+  // All slash-separated forms: just strip spaces around slashes, keep order as-is.
+  // autoDate() is MM / DD / YYYY so the order is already correct.
   const parts = s.split('/').map(p => p.trim());
-  if (parts.length !== 3) return s.replace(/\s*\/\s*/g, '/'); // unknown shape: just de-space
-  let [a, b, y] = parts;
-  // Spaced form comes from the invoice display, which is DD / MM / YYYY -> swap to MM/DD.
-  // Spaceless form is already the ledger's MM/DD/YYYY, leave order as-is.
-  const [mm, dd] = spaced ? [b, a] : [a, b];
+  if (parts.length !== 3) return s.replace(/\s*\/\s*/g, '/');
   const pad = v => String(v).padStart(2, '0');
-  return `${pad(mm)}/${pad(dd)}/${y}`;
+  return `${pad(parts[0])}/${pad(parts[1])}/${parts[2]}`;
 }
 
 // Receipt format: YYMMDD + suffix letter (A, B, C…)
@@ -189,6 +185,9 @@ function nextReceiptNumber(current) {
   return base + chars.reverse().join('');
 }
 
+// Receipt sequence: A B C per calendar day.
+// Suffix variants (A2, A3): data correction on the same invoice — not a new engagement.
+// B means a genuinely new invoice issued the same day.
 function autoReceiptNumber() {
   const { dd, mm, yy } = todayFormatted();
   const dateSegment = `${yy}${mm}${dd}`;
@@ -805,6 +804,49 @@ function startEdit() {
     metaCurrSpan.appendChild(sel);
   }
 
+  // Tax rate field — inject after the project-total-row
+  const ptRow = document.querySelector('.project-total-row');
+  if (ptRow && !document.getElementById('tax-rate-edit-row')) {
+    const taxData = getData();
+    const defaultTax = localStorage.getItem('invoicer-tax-rate') || '0';
+    const currentTax = parseFloat(taxData.taxRate) > 0
+      ? Math.round(parseFloat(taxData.taxRate) * 100)
+      : (parseFloat(defaultTax) > 0 ? Math.round(parseFloat(defaultTax) * 100) : '');
+    const taxRow = document.createElement('div');
+    taxRow.id = 'tax-rate-edit-row';
+    taxRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:3px 0; font-family:Roboto,sans-serif; font-size:11.5px; color:#6c7682;';
+    taxRow.innerHTML = `
+      <span style="color:#6c7682;">GCT / Tax Rate</span>
+      <span style="display:flex; align-items:center; gap:4px;">
+        <input id="tax-rate-input" type="number" min="0" max="100" step="0.5"
+          value="${currentTax}"
+          style="width:48px; font-family:Roboto,sans-serif; font-size:11.5px; color:#14202e; border:none; border-bottom:1.5px dashed rgba(20,32,46,0.25); background:transparent; outline:none; text-align:right; padding:0 2px;"
+          placeholder="0">
+        <span>%</span>
+        <span id="tax-hint" style="margin-left:6px; font-size:10px; color:#9aa2ac;"></span>
+      </span>`;
+    ptRow.after(taxRow);
+    const taxInput = taxRow.querySelector('#tax-rate-input');
+    const taxHint  = taxRow.querySelector('#tax-hint');
+    const updateTaxHint = () => {
+      const pct = parseFloat(taxInput.value) / 100;
+      if (pct > 0) {
+        const d = getData();
+        const total = parseFloat((d.projectTotal || '0').toString().replace(/[^0-9.]/g, '')) || 0;
+        const cur   = d.currency || 'JMD';
+        if (total > 0) {
+          taxHint.textContent = `~${formatCurrencyNative(Math.round(total * pct), cur, 0)} reserved`;
+        } else {
+          taxHint.textContent = '';
+        }
+      } else {
+        taxHint.textContent = '';
+      }
+    };
+    taxInput.addEventListener('input', updateTaxHint);
+    updateTaxHint();
+  }
+
   // Payments edit UI
   renderPaymentsEdit();
 
@@ -952,6 +994,12 @@ function extractEditData() {
   const notesEl = document.getElementById('invoice-notes-el');
   if (notesEl && notesEl.isContentEditable) {
     data.invoiceNotes = notesEl.innerText.trim();
+  }
+  // Tax rate (stored as decimal 0–1; UI input is 0–100)
+  const taxInput = document.getElementById('tax-rate-input');
+  if (taxInput) {
+    const pct = parseFloat(taxInput.value) || 0;
+    data.taxRate = pct > 0 ? pct / 100 : 0;
   }
   return data;
 }
@@ -1345,6 +1393,15 @@ async function renderLedgerHistory() {
     }
   });
 
+  let publishPoolEl = document.getElementById('ledger-pool-bar');
+  if (!publishPoolEl) {
+    publishPoolEl = document.createElement('div');
+    publishPoolEl.id = 'ledger-pool-bar';
+    listEl.before(publishPoolEl);
+  }
+  publishPoolEl.innerHTML = '';
+  publishPoolEl.appendChild(buildPoolBar(calcIncomePool()));
+
   let summaryEl = document.getElementById('ledger-summary');
   if (!summaryEl) {
     summaryEl = document.createElement('div');
@@ -1674,6 +1731,8 @@ async function renderLedgerHistory() {
       return cmp * window.ledgerSortConfig.dir;
     });
 
+  const overdueColor = d => d >= 60 ? '#b71c1c' : d >= 30 ? '#bf360c' : '#e65100';
+
   sorted.forEach(({ row, idx: realIdx }) => {
 
     const rowDate = typeof parseRowDate === 'function' ? parseRowDate(row.date) : new Date(row.date);
@@ -1719,11 +1778,13 @@ async function renderLedgerHistory() {
       const graceDays = parseInt(row.payPeriod) || 30;
       if (daysDiff > graceDays) {
         const daysOver = daysDiff - graceDays;
-        overdueFlag = `<span class="ledger-row-subtext" style="color:#d0241b; font-size:10px; font-weight:700; margin-left:6px; letter-spacing:0.3px; background:#fdecea; border-radius:3px; padding:1px 5px;">${daysOver}d overdue</span>`;
+        const bg = overdueColor(daysOver);
+        const prefix = daysOver >= 60 ? '⚠ ' : '';
+        overdueFlag = `<span class="ledger-overdue-badge" style="background:${bg}; color:#fff; font-size:10px; font-weight:700; margin-left:6px; border-radius:3px; padding:1px 5px; letter-spacing:0.2px;">${prefix}${daysOver}d overdue</span>`;
       } else if (daysDiff >= 0) {
         const daysLeft = graceDays - daysDiff;
         if (daysLeft <= 7) {
-          overdueFlag = `<span class="ledger-row-subtext" style="color:#b45309; font-size:10px; font-weight:600; margin-left:6px; background:#fff8e1; border-radius:3px; padding:1px 5px;">Due in ${daysLeft}d</span>`;
+          overdueFlag = `<span class="ledger-overdue-badge" style="color:#b45309; font-size:10px; font-weight:600; margin-left:6px; background:#fff8e1; border-radius:3px; padding:1px 5px;">Due in ${daysLeft}d</span>`;
         }
       }
     }
@@ -1802,7 +1863,9 @@ async function renderLedgerHistory() {
         const paidAmountDue = sel.value === '✅ Paid' ? rows[realIdx].amountDue : null;
         await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
         if (sel.value === '✅ Paid') {
-          renderAllocationUI(allocWrap, rows[realIdx]);
+          // Always reload from storage so goalAllocations saved by a prior allocation are visible
+          const liveRow = loadLedgerRows().find(r => r.receipt === rows[realIdx].receipt) || rows[realIdx];
+          renderAllocationUI(allocWrap, liveRow);
           allocWrap.style.display = 'flex';
         } else {
           allocWrap.style.display = 'none';
@@ -1815,7 +1878,8 @@ async function renderLedgerHistory() {
 
     // If already Paid when modal opens, show allocation UI immediately
     if (row.status === '✅ Paid') {
-      renderAllocationUI(allocWrap, rows[realIdx]);
+      const liveRow = loadLedgerRows().find(r => r.receipt === row.receipt) || rows[realIdx];
+      renderAllocationUI(allocWrap, liveRow);
       allocWrap.style.display = 'flex';
     }
 
@@ -2647,6 +2711,11 @@ function toggleChatSettings() {
     if (selCur) {
       selCur.value = localStorage.getItem('invoicer-default-currency') || 'USD';
     }
+    const taxRateEl = document.getElementById('default-tax-rate-input');
+    if (taxRateEl) {
+      const stored = parseFloat(localStorage.getItem('invoicer-tax-rate') || '0');
+      taxRateEl.value = stored > 0 ? Math.round(stored * 100) : '';
+    }
   }
 }
 
@@ -2700,6 +2769,12 @@ window.saveDefaultSettings = function() {
 
   const selCur = document.getElementById('default-currency-select');
   if (selCur) localStorage.setItem('invoicer-default-currency', selCur.value);
+
+  const taxRateEl = document.getElementById('default-tax-rate-input');
+  if (taxRateEl) {
+    const pct = parseFloat(taxRateEl.value) || 0;
+    localStorage.setItem('invoicer-tax-rate', pct > 0 ? String(pct / 100) : '0');
+  }
 
   syncSettingsToSheet();
   showToast('Default settings saved and synced', 'success');
@@ -3200,6 +3275,42 @@ function saveClients(list) {
   localStorage.setItem('invoice-clients', JSON.stringify(list));
 }
 
+function exportBillsCsv() {
+  const bills = loadBills();
+  if (!bills.length) { showToast('No bills to export.', 'info'); return; }
+  const escape = v => `"${String(v || '').replace(/"/g, '""')}"`;
+  const headers = ['Name', 'Amount', 'Recurrence', 'Due Day', 'Funded', 'Paid Total', 'Paid'];
+  const lines = [
+    headers.map(escape).join(','),
+    ...bills.map(b => [b.name, b.amount, b.recurrence, b.dueDay, b.funded || '0', b.paidTotal || '0', b.paid ? 'Yes' : 'No'].map(escape).join(','))
+  ];
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `invoicer-bills-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Bills exported as CSV', 'success');
+}
+
+function exportGoalsCsv() {
+  const goals = loadGoals();
+  if (!goals.length) { showToast('No goals to export.', 'info'); return; }
+  const escape = v => `"${String(v || '').replace(/"/g, '""')}"`;
+  const headers = ['Name', 'Target', 'Deadline', 'Status', 'Amount Reached', 'Claim Date', 'Receipt'];
+  const lines = [
+    headers.map(escape).join(','),
+    ...goals.map(g => [g.name, g.amount, g.deadline || '', g.status || '', g.amountReached || '0', g.claimDate || '', g.receiptNumber || ''].map(escape).join(','))
+  ];
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `invoicer-goals-${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showToast('Goals exported as CSV', 'success');
+}
+
 function exportAddressBookCsv() {
   const clients = loadClients();
   if (!clients.length) {
@@ -3662,47 +3773,94 @@ function allocateToBills(incomeUSD) {
   if (changed) { saveBills(bills); syncBillsToSheet(); }
 }
 
+function buildPoolBar(pool, currencyCode) {
+  const fmt = n => formatCurrencyNative(Math.round(n), currencyCode || window.currentDashCurrency || 'USD', 0);
+  const goalsPct = pool.totalIncome > 0 ? Math.round((pool.goalsUsed  / pool.totalIncome) * 100) : 0;
+  const billsPct = pool.totalIncome > 0 ? Math.round((pool.billsFunded / pool.totalIncome) * 100) : 0;
+  const taxPct   = pool.totalIncome > 0 && pool.taxReserved > 0 ? Math.round((pool.taxReserved / pool.totalIncome) * 100) : 0;
+  const taxFill  = taxPct > 0 ? `<div class="pool-fill pool-fill--tax" style="width:${taxPct}%"></div>` : '';
+  const taxLegend = pool.taxReserved > 0 ? `<span class="pool-legend-item pool-legend--tax">Tax ${fmt(pool.taxReserved)}</span>` : '';
+  const el = document.createElement('div');
+  el.className = 'pool-summary';
+  el.innerHTML = `
+    <div class="pool-row">
+      <span class="pool-label">Income Pool</span>
+      <span class="pool-total">${fmt(pool.totalIncome)}</span>
+    </div>
+    <div class="pool-track">
+      <div class="pool-fill pool-fill--goals" style="width:${goalsPct}%"></div>
+      <div class="pool-fill pool-fill--bills" style="width:${billsPct}%"></div>
+      ${taxFill}
+    </div>
+    <div class="pool-legend">
+      <span class="pool-legend-item pool-legend--goals">Goals ${fmt(pool.goalsUsed)}</span>
+      <span class="pool-legend-item pool-legend--bills">Bills ${fmt(pool.billsPaid)}${pool.billsReserved > 0 ? ` <span style="opacity:0.6">(+${fmt(pool.billsReserved)} reserved)</span>` : ''}</span>
+      ${taxLegend}
+      <span class="pool-legend-item pool-legend--free">Liquid ${fmt(pool.free)}</span>
+    </div>`;
+  return el;
+}
+
 // Pool calculation — shared across goals and bills
 function calcIncomePool() {
   const rows = loadLedgerRows();
   const parseAmt = s => parseFloat((s || '').replace(/[^0-9.]/g, '')) || 0;
   const totalIncome   = rows.filter(r => r.status === '✅ Paid').reduce((s, r) => s + parseAmt(r.amountDue), 0);
   const goalsUsed     = loadGoals().reduce((s, g) => s + (parseFloat(g.amountReached) || 0), 0);
-  const billsFunded   = loadBills().reduce((s, b) => s + (parseFloat(b.funded) || 0), 0);
-  return { totalIncome, goalsUsed, billsFunded, free: Math.max(0, totalIncome - goalsUsed - billsFunded) };
+  // billsPaid = actual money spent on paid bills; billsFunded = money reserved for unpaid bills
+  const allBills = loadBills();
+  const billsPaid = allBills.reduce((s, b) => {
+    // prefer explicit paidTotal; fall back to summing history for pre-migration bills
+    if (parseFloat(b.paidTotal) > 0) return s + parseFloat(b.paidTotal);
+    if (b.paid && b.history?.length) return s + b.history.reduce((hs, h) => hs + (parseFloat(h.amount) || 0), 0);
+    return s;
+  }, 0);
+  const billsFunded   = allBills.reduce((s, b) => b.paid ? s : s + (parseFloat(b.funded) || 0), 0);
+  const billsUsed     = billsPaid + billsFunded;
+  const taxReserved = rows
+    .filter(r => r.status === '✅ Paid' && parseFloat(r.taxRate) > 0)
+    .reduce((s, r) => s + parseAmt(r.amountDue) * parseFloat(r.taxRate), 0);
+  const free = Math.max(0, totalIncome - goalsUsed - billsUsed - taxReserved);
+  return { totalIncome, goalsUsed, billsFunded: billsUsed, billsPaid, billsReserved: billsFunded, taxReserved, free };
 }
 
 async function syncBillsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   const bills = loadBills();
-  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:J');
+  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:K');
   if (existing === null) return;
   for (const bill of bills) {
     const newRow = [
       bill.id, bill.name, bill.amount, bill.recurrence,
       bill.customDays || '', bill.dueDay || '', bill.allocationPct || '0',
       bill.funded || '0', bill.paid ? '1' : '0',
-      JSON.stringify(bill.history || [])
+      JSON.stringify(bill.history || []),
+      bill.paidTotal || '0'
     ];
     const rowIdx = existing.findIndex(r => r[0] === bill.id);
-    if (rowIdx === -1) {
-      await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
-    } else {
-      await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:J${rowIdx + 2}`, [newRow]);
+    try {
+      if (rowIdx === -1) {
+        await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
+      } else {
+        await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:K${rowIdx + 2}`, [newRow]);
+      }
+    } catch (e) {
+      console.warn(`[Bills] Sheet write failed for "${bill.name}":`, e.message);
     }
   }
 }
 
 async function loadBillsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:J');
+  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:K');
   if (rows === null) return;
   const sheetBills = rows.filter(r => r[0] && r[0].trim()).map(r => ({
     id: r[0], name: r[1] || '', amount: r[2] || '0',
     recurrence: r[3] || 'monthly', customDays: r[4] || '',
     dueDay: r[5] || '1', allocationPct: r[6] || '0',
     funded: r[7] || '0', paid: r[8] === '1',
-    history: (() => { try { return JSON.parse(r[9] || '[]'); } catch(e) { return []; } })()
+    history: (() => { try { return JSON.parse(r[9] || '[]'); } catch(e) { return []; } })(),
+    paidTotal: r[10] || '0'
   }));
   if (!sheetBills.length) {
     const local = loadBills();
@@ -3712,8 +3870,30 @@ async function loadBillsFromSheet() {
   const local = loadBills();
   const sheetIds = new Set(sheetBills.map(b => b.id));
   const localOnly = local.filter(b => !sheetIds.has(b.id));
-  saveBills([...sheetBills, ...localOnly]);
-  if (localOnly.length) await syncBillsToSheet();
+  // Preserve local paid/paidTotal when the sheet has stale data (e.g. prior write failed)
+  const merged = sheetBills.map(sb => {
+    const lb = local.find(b => b.id === sb.id);
+    if (!lb) return sb;
+    let result = { ...sb };
+    // Never un-pay a bill that is paid locally — sheet write may have failed
+    if (lb.paid && !sb.paid) {
+      result.paid = true;
+      result.history = lb.history?.length ? lb.history : sb.history;
+    }
+    // Preserve paidTotal when sheet col K is missing or zero
+    if ((!sb.paidTotal || sb.paidTotal === '0') && lb.paidTotal && lb.paidTotal !== '0') {
+      result.paidTotal = lb.paidTotal;
+    }
+    return result;
+  });
+  const finalBills = [...merged, ...localOnly];
+  saveBills(finalBills);
+  // Push back if sheet was missing local-only rows OR had stale paid/paidTotal data
+  const needsRepair = merged.some((mb, i) => {
+    const sb = sheetBills[i];
+    return (mb.paid && !sb.paid) || (mb.paidTotal !== '0' && (!sb.paidTotal || sb.paidTotal === '0'));
+  });
+  if (localOnly.length || needsRepair) await syncBillsToSheet();
 }
 
 // Reset a bill for its next cycle (called after marking paid or on overdue rollover)
@@ -3846,31 +4026,91 @@ async function confirmPayBill() {
   const bill = bills[idx];
   const amount = parseFloat(bill.amount) || 0;
 
-  bill.history = bill.history || [];
-  bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
-  bill.paid = true;
-  bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
-  if (_payBillDoc) {
-    bill.receiptDoc = _payBillDoc.dataUrl;
-    bill.receiptDocName = _payBillDoc.name;
-  }
-  saveBills(bills);
-  syncBillsToSheet();
-  closePayBillModal();
-  renderBillsList();
-  showToast(`✓ ${bill.name} marked paid`, 'success');
+  const btn = document.querySelector('#pay-bill-overlay .modal-btn-row button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
 
-  await generatePaymentReceipt(bill);
+  try {
+    bill.history = bill.history || [];
+    bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
+    bill.paidTotal = String((parseFloat(bill.paidTotal) || 0) + amount);
+    bill.paid = true;
+    bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
+
+    if (_payBillDoc) {
+      if (gmailTokenValid() && _driveFolderId) {
+        // Upload to Drive under Bills subfolder
+        if (!_driveFolderId) await ensureDriveFolder();
+        const folderQuery = `name = 'Bills' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+        const folderSearch = await driveRequest('GET', `/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name)`);
+        let billsFolderId;
+        if (folderSearch?.files?.length > 0) {
+          billsFolderId = folderSearch.files[0].id;
+        } else {
+          const created = await driveRequest('POST', '/files', { name: 'Bills', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
+          if (!created.id) throw new Error('Failed to create Bills folder in Drive.');
+          billsFolderId = created.id;
+        }
+
+        const ext = _payBillDoc.name.includes('.') ? _payBillDoc.name.split('.').pop() : '';
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const billSlug = bill.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        const renamedFile = `${billSlug}-${dateStr}${ext ? '.' + ext : ''}`;
+
+        // Extract mimeType before the metadata POST so Drive can preview the file
+        const mimeType = _payBillDoc.dataUrl.split(';')[0].split(':')[1];
+        const metaRes = await driveRequest('POST', '/files', { name: renamedFile, mimeType, parents: [billsFolderId] });
+        if (!metaRes.id) throw new Error('Failed to create bill doc metadata in Drive.');
+
+        // Convert base64 dataUrl to Blob for upload
+        const base64 = _payBillDoc.dataUrl.split(',')[1];
+        const byteChars = atob(base64);
+        const byteArr = new Uint8Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+        const blob = new Blob([byteArr], { type: mimeType });
+
+        const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+          method: 'PATCH',
+          headers: { 'Authorization': `Bearer ${_gmailToken}`, 'Content-Type': mimeType },
+          body: blob
+        });
+        if (!uploadRes.ok) throw new Error('Failed to upload bill doc to Drive.');
+
+        bill.receiptDocUrl = `https://drive.google.com/file/d/${metaRes.id}/view`;
+        bill.receiptDocName = renamedFile;
+        delete bill.receiptDoc;
+        showToast(`Doc saved to Drive: ${renamedFile}`, 'success');
+      } else {
+        // No Drive — store base64 locally
+        bill.receiptDoc = _payBillDoc.dataUrl;
+        bill.receiptDocName = _payBillDoc.name;
+      }
+    }
+
+    saveBills(bills);
+    syncBillsToSheet();
+    closePayBillModal();
+    renderBillsList();
+    showToast(`✓ ${bill.name} marked paid`, 'success');
+    await generatePaymentReceipt(bill);
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Mark Paid'; }
+  }
 }
 
 function viewBillDoc(id) {
   const bill = loadBills().find(b => b.id === id);
-  if (!bill || !bill.receiptDoc) return;
-  const win = window.open('', '_blank');
-  if (bill.receiptDoc.startsWith('data:image/')) {
-    win.document.write(`<html><body style="margin:0;background:#111;display:flex;justify-content:center;"><img src="${bill.receiptDoc}" style="max-width:100%;height:auto;"></body></html>`);
-  } else {
-    win.location.href = bill.receiptDoc;
+  if (!bill) return;
+  if (bill.receiptDocUrl) {
+    window.open(bill.receiptDocUrl, '_blank');
+  } else if (bill.receiptDoc) {
+    const win = window.open('', '_blank');
+    if (bill.receiptDoc.startsWith('data:image/')) {
+      win.document.write(`<html><body style="margin:0;background:#111;display:flex;justify-content:center;"><img src="${bill.receiptDoc}" style="max-width:100%;height:auto;"></body></html>`);
+    } else {
+      win.location.href = bill.receiptDoc;
+    }
   }
 }
 
@@ -3974,32 +4214,7 @@ function renderBillsList() {
   if (!el) return;
   el.innerHTML = '';
 
-  // Pool summary
-  const pool = calcIncomePool();
-  const fmt = n => {
-    const code = window.currentDashCurrency || 'USD';
-    return formatCurrencyNative(Math.round(n), code, 0);
-  };
-  const poolBar = document.createElement('div');
-  poolBar.className = 'pool-summary';
-  const poolPct = pool.totalIncome > 0 ? Math.round(((pool.goalsUsed + pool.billsFunded) / pool.totalIncome) * 100) : 0;
-  const freePct = 100 - Math.min(poolPct, 100);
-  poolBar.innerHTML = `
-    <div class="pool-row">
-      <span class="pool-label">Income Pool</span>
-      <span class="pool-total">${fmt(pool.totalIncome)}</span>
-    </div>
-    <div class="pool-track">
-      <div class="pool-fill pool-fill--goals" style="width:${pool.totalIncome > 0 ? Math.round((pool.goalsUsed/pool.totalIncome)*100) : 0}%"></div>
-      <div class="pool-fill pool-fill--bills" style="width:${pool.totalIncome > 0 ? Math.round((pool.billsFunded/pool.totalIncome)*100) : 0}%"></div>
-    </div>
-    <div class="pool-legend">
-      <span class="pool-legend-item pool-legend--goals">Goals ${fmt(pool.goalsUsed)}</span>
-      <span class="pool-legend-item pool-legend--bills">Bills ${fmt(pool.billsFunded)}</span>
-      <span class="pool-legend-item pool-legend--free">Free ${fmt(pool.free)}</span>
-    </div>`;
-  el.appendChild(poolBar);
-
+  const fmt = n => formatCurrencyNative(Math.round(n), window.currentDashCurrency || 'JMD', 0);
   const bills = loadBills();
   if (!bills.length) {
     const empty = document.createElement('p');
@@ -4057,7 +4272,7 @@ function renderBillsList() {
         <span class="bill-funded-label">Funded: ${fmt(funded)} of ${fmt(amount)}</span>
         ${status !== 'paid' ? `<button onclick="markBillPaid('${bill.id}')" class="goal-claim-btn ${pct < 100 ? 'goal-claim-btn--warn' : ''}">
           ${pct >= 100 ? 'Pay & Receipt' : 'Pay Anyway'}
-        </button>` : `<span class="goal-claimed-label">✓ Paid</span>${bill.receiptDoc ? `<button onclick="viewBillDoc('${bill.id}')" class="bill-doc-btn">📎 Doc</button>` : ''}`}
+        </button>` : `<span class="goal-claimed-label">✓ Paid</span>${(bill.receiptDocUrl || bill.receiptDoc) ? `<button onclick="viewBillDoc('${bill.id}')" class="bill-doc-btn">📎 Doc</button>` : ''}`}
       </div>`;
     el.appendChild(card);
     // Animate bar
@@ -4074,6 +4289,7 @@ async function syncSettingsToSheet() {
   const keys = [
     'invoicer-default-currency',
     'invoicer-default-pay-period',
+    'invoicer-tax-rate',
     'invoice-theme',
     'invoice-title-font',
     'invoice-filename-preset',
@@ -4944,14 +5160,16 @@ async function syncToGoogleSheets(invoiceData) {
     const description = invoiceData.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
     const row = [
       invoiceData.receiptNumber,
-      invoiceData.date,
+      normalizeLedgerDate(invoiceData.date),
       invoiceData.to.name,
       services,
       invoiceData.currency + ' ' + invoiceData.projectTotal,
-      invoiceData.totalAmount,
+      invoiceData.currency + ' ' + String(invoiceData.totalAmount).replace(/[^0-9.,]/g, '').trim(),
       '⬜ Unpaid',
       (invoiceData.from && invoiceData.from.name) || '',
-      description
+      description,
+      '', // Goal Alloc (col J) — written separately when allocation fires
+      parseFloat(invoiceData.taxRate) > 0 ? parseFloat(invoiceData.taxRate) : '' // Tax Rate (col K)
     ];
 
     const res = await fetch(
@@ -5112,13 +5330,19 @@ async function ensureAllTabs(spreadsheetId) {
   }
 
   // Ensure Ledger has 'Company' (col H) and 'Description' (col I) headers
-  const ledgerMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Ledger!A1:I1`);
+  const ledgerMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Ledger!A1:K1`);
   const ledgerHeaders = ledgerMeta.values ? ledgerMeta.values[0] : [];
   if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Company')) {
     await sheetsWrite(spreadsheetId, 'Ledger!H1', [['Company']]);
   }
   if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Description')) {
     await sheetsWrite(spreadsheetId, 'Ledger!I1', [['Description']]);
+  }
+  if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Goal Alloc')) {
+    await sheetsWrite(spreadsheetId, 'Ledger!J1', [['Goal Alloc']]);
+  }
+  if (ledgerHeaders.length > 0 && !ledgerHeaders.includes('Tax Rate')) {
+    await sheetsWrite(spreadsheetId, 'Ledger!K1', [['Tax Rate']]);
   }
 
   if (!existing.includes('Clients')) {
@@ -5135,7 +5359,13 @@ async function ensureAllTabs(spreadsheetId) {
     }
   }
   if (!existing.includes('Bills')) {
-    await sheetsWrite(spreadsheetId, 'Bills!A1:J1', [['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History']]);
+    await sheetsWrite(spreadsheetId, 'Bills!A1:K1', [['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History', 'Paid Total']]);
+  } else {
+    const billsMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Bills!A1:K1`);
+    const billsHeaders = billsMeta.values ? billsMeta.values[0] : [];
+    if (billsHeaders.length > 0 && !billsHeaders.includes('Paid Total')) {
+      await sheetsWrite(spreadsheetId, 'Bills!K1', [['Paid Total']]);
+    }
   }
   if (!existing.includes('Profiles')) {
     await sheetsWrite(spreadsheetId, 'Profiles!A1:F1', [['Profile ID', 'Name', 'Address', 'Email', 'Phone', 'LogoData']]);
@@ -5439,7 +5669,7 @@ async function openDashboard() {
     const [rows, goalRes] = await Promise.all([
       loadLedgerFromSheet(),
       loadGoalsFromSheet(),
-      loadBillsFromSheet(),
+      loadBillsFromSheet().catch(e => { console.warn('[Bills] Sheet sync failed:', e.message); }),
     ]);
     
     // loadLedgerFromSheet already merges + saves to localStorage internally
@@ -5668,6 +5898,13 @@ function renderDashboard() {
   }
 
   tickBillCycles();
+
+  const dashPoolEl = document.getElementById('dash-pool-bar');
+  if (dashPoolEl) {
+    dashPoolEl.innerHTML = '';
+    dashPoolEl.appendChild(buildPoolBar(calcIncomePool()));
+  }
+
   renderGoalsList();
   renderBillsList();
 
@@ -5875,6 +6112,23 @@ function renderAllocationUI(container, row) {
     } catch(e) {}
   }
 
+  // Already allocated — show lock state with undo
+  if (row.goalAllocations && row.goalAllocations.length) {
+    const pool = calcIncomePool();
+    const currency = window.currentDashCurrency || localStorage.getItem('invoicer-default-currency') || 'USD';
+    const fmtLiquid = n => formatCurrencyNative(Math.round(n), currency, 0);
+    const lines = row.goalAllocations.map(a => `<span style="display:inline-block;background:#d4edda;color:#155724;border-radius:4px;padding:2px 7px;font-size:11px;margin:2px 2px 0 0;">✓ $${a.applied.toFixed(2)} → ${a.name}</span>`).join('');
+    container.innerHTML = `
+      <div style="font-size:11px;font-weight:600;color:#14202e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Goal Allocation</div>
+      <div style="margin-bottom:8px;">${lines}</div>
+      <div style="font-size:12px;color:#6c7682;background:#f6f6f4;border-radius:6px;padding:8px 10px;margin-bottom:8px;">
+        <strong style="color:#14202e;">Liquid balance: ${fmtLiquid(pool.free)}</strong><span style="margin-left:8px;opacity:0.7;">total income after goals &amp; bills</span>
+      </div>
+      <button id="btn-undo-alloc" style="font-size:11px;padding:5px 12px;background:none;border:1.5px solid #d0241b;color:#d0241b;border-radius:4px;cursor:pointer;">↩ Undo Allocation</button>`;
+    container.querySelector('#btn-undo-alloc').onclick = () => undoGoalAllocation(row, container);
+    return;
+  }
+
   const goals = loadGoals().filter(g => g.status !== 'Claimed' && !(g.status === 'Funded' && g.receiptNumber));
   if (!goals.length) {
     container.innerHTML = '<div style="font-size:11px; color:#6c7682;">No active goals. Create one in the dashboard to allocate funds.</div>';
@@ -5902,18 +6156,27 @@ function renderAllocationUI(container, row) {
   let selectedGoal = null;
 
   const doAllocate = async (goal, pct, btn) => {
+    const savedHTML = btn.innerHTML;
     btn.disabled = true;
     btn.textContent = '…';
     try {
       await window.allocateToGoal(row, goal, pct);
-      container.innerHTML = `<div style="font-size:11px; color:#155724; background:#d4edda; padding:6px 10px; border-radius:4px;">✓ ${pct}% allocated to "${goal.name}"</div>`;
+      // Reload the row from storage so goalAllocations is populated, then re-render lock state
+      const freshRows = loadLedgerRows();
+      const freshRow = freshRows.find(r => r.receipt === row.receipt);
+      if (freshRow && freshRow.goalAllocations) {
+        renderAllocationUI(container, freshRow);
+      } else {
+        // allocation wrote nothing (e.g. no receipt) — restore button
+        btn.innerHTML = savedHTML;
+        btn.disabled = false;
+      }
     } catch (err) {
+      btn.innerHTML = savedHTML;
       btn.disabled = false;
-      btn.textContent = 'Apply';
       // If FX rate unavailable, show inline hint and open Developer Settings
       if (err.message.includes('FX rate')) {
         container.insertAdjacentHTML('beforeend', `<div style="font-size:11px; color:#d0241b; background:#fde8e8; padding:6px 10px; border-radius:4px; margin-top:6px;">⚠ No FX rate for ${row.projectTotal?.split(' ')[0] || 'this currency'}. Sign in with Google or set a manual rate in Developer Settings below.</div>`);
-        // Open Developer Settings panel in print modal
         const devPanel = document.querySelector('#print-overlay .dev-chevron')?.closest('button');
         if (devPanel) { const panel = devPanel.nextElementSibling; if (panel) panel.style.display = 'block'; devPanel.querySelector('.dev-chevron').style.transform = 'rotate(180deg)'; }
       } else {
@@ -5970,6 +6233,59 @@ function renderAllocationUI(container, row) {
   });
 
   container.append(title, grid, inputWrap);
+}
+
+async function undoGoalAllocation(row, container) {
+  const btn = container.querySelector('#btn-undo-alloc');
+  if (btn) { btn.disabled = true; btn.textContent = 'Reversing…'; }
+  try {
+    const allocations = row.goalAllocations;
+    if (!allocations || !allocations.length) return;
+
+    const goals = loadGoals();
+    for (const a of allocations) {
+      const g = goals.find(g => g.name === a.name);
+      if (!g) continue;
+      // Roll back the applied amount
+      const nowReached = parseFloat(g.amountReached) || 0;
+      g.amountReached = String(Math.max(0, Math.round((nowReached - a.applied) * 100) / 100));
+      // Roll back status if we funded it
+      if (g.status === 'Funded' && parseFloat(g.amountReached) < (parseFloat(g.amount) || 0)) {
+        g.status = a.prevStatus || 'Active';
+      }
+      // Remove the history entry matching this specific allocation (by date+amount)
+      if (g.history && g.history.length) {
+        const hi = g.history.map((h, i) => ({ h, i })).reverse()
+          .find(x => Math.abs(x.h.amount - a.applied) < 0.01 && x.h.date === a.date);
+        // fall back to amount-only match if date wasn't stored (legacy entries)
+        const fallback = !hi ? g.history.map((h, i) => ({ h, i })).reverse().find(x => Math.abs(x.h.amount - a.applied) < 0.01) : null;
+        const target = hi || fallback;
+        if (target) g.history.splice(target.i, 1);
+        g.lastContributionDate = g.history.length ? g.history[g.history.length - 1].date : '';
+      }
+    }
+    saveGoals(goals);
+    await syncGoalsToSheet();
+
+    // Clear allocation from ledger row
+    const rows = loadLedgerRows();
+    const idx = rows.findIndex(r => r.receipt === row.receipt);
+    if (idx !== -1) {
+      rows[idx].goalAllocations = null;
+      row.goalAllocations = null;
+      saveLedgerRows(rows);
+      await updateGoalAllocOnSheet(row.receipt, null);
+    }
+
+    renderGoalsList();
+    renderBillsList();
+    renderDashboard();
+    renderAllocationUI(container, row);
+    showToast('Goal allocation reversed', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '↩ Undo Allocation'; }
+  }
 }
 
 let _claimingGoal = null;
@@ -6213,7 +6529,7 @@ async function loadLedgerFromSheet() {
 
   try {
     const res = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:I`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:K`,
       { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
 
@@ -6230,15 +6546,17 @@ async function loadLedgerFromSheet() {
     const sheetRows = allRows.slice(1)
       .filter(row => row[0] && row[0].trim())
       .map(row => ({
-        receipt:      row[0] || '',
-        date:         row[1] || '',
-        client:       row[2] || '',
-        service:      row[3] || '',
-        projectTotal: row[4] || '',
-        amountDue:    row[5] || '',
-        status:       row[6] || '⬜ Unpaid',
-        company:      row[7] || '',
-        description:  row[8] || '',
+        receipt:          row[0] || '',
+        date:             row[1] || '',
+        client:           row[2] || '',
+        service:          row[3] || '',
+        projectTotal:     row[4] || '',
+        amountDue:        row[5] || '',
+        status:           row[6] || '⬜ Unpaid',
+        company:          row[7] || '',
+        description:      row[8] || '',
+        goalAllocations:  (() => { try { return JSON.parse(row[9] || 'null'); } catch(e) { return null; } })(),
+        taxRate:          parseFloat(row[10] || '0') || 0,
       }));
 
     // Non-destructive merge: sheet wins on conflicts, local-only rows are kept and pushed up
@@ -6252,7 +6570,9 @@ async function loadLedgerFromSheet() {
         const sheetRow = [
           row.receipt, row.date, row.client, row.service,
           row.projectTotal, row.amountDue, row.status, row.company || '',
-          row.description || ''
+          row.description || '',
+          row.goalAllocations ? JSON.stringify(row.goalAllocations) : '',
+          parseFloat(row.taxRate) > 0 ? parseFloat(row.taxRate) : ''
         ];
         await fetch(
           `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
@@ -6265,9 +6585,38 @@ async function loadLedgerFromSheet() {
       }
     }
 
-    const merged = [...sheetRows, ...localOnly];
-    saveLedgerRows(merged);
-    return merged;
+    // Prefer local paid status and goalAllocations — sheet writes can fail silently
+    // when the token is expired, so we must never let a stale sheet un-pay an invoice
+    // or erase an allocation that was already saved locally.
+    const merged = sheetRows.map(sr => {
+      const lr = local.find(r => r.receipt === sr.receipt);
+      if (!lr) return sr;
+      return {
+        ...sr,
+        status: (lr.status === '✅ Paid' && sr.status !== '✅ Paid') ? '✅ Paid' : sr.status,
+        goalAllocations: sr.goalAllocations ?? lr.goalAllocations ?? null,
+        taxRate: sr.taxRate > 0 ? sr.taxRate : (lr.taxRate || 0),
+      };
+    });
+
+    // If any row needed repair, push corrected statuses back to the sheet
+    const repairRows = merged.filter((mr, i) => {
+      const sr = sheetRows[i];
+      return sr && (mr.status !== sr.status || (mr.goalAllocations && !sr.goalAllocations));
+    });
+    if (repairRows.length) {
+      console.log(`[Ledger] Repairing ${repairRows.length} stale sheet row(s)...`);
+      for (const row of repairRows) {
+        try { await updateLedgerStatusOnSheet(row.receipt, row.status); } catch(e) {}
+        if (row.goalAllocations) {
+          try { await updateGoalAllocOnSheet(row.receipt, row.goalAllocations); } catch(e) {}
+        }
+      }
+    }
+
+    const finalRows = [...merged, ...localOnly];
+    saveLedgerRows(finalRows);
+    return finalRows;
   } catch (e) {
     console.error('Ledger load error:', e.message);
     return null;
@@ -6313,6 +6662,32 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
     console.log('✓ Status updated on sheet row', sheetRowIdx + 1);
   } catch (e) {
     console.error('Status update error:', e.message);
+  }
+}
+
+async function updateGoalAllocOnSheet(receiptNumber, allocations) {
+  if (!_sheetsSpreadsheetId || !_gmailToken) return;
+  try {
+    const readRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:A`,
+      { headers: { Authorization: `Bearer ${_gmailToken}` } }
+    );
+    if (!readRes.ok) return;
+    const colA = (await readRes.json()).values || [];
+    const sheetRowIdx = colA.findIndex((r, i) => i > 0 && r[0] === receiptNumber);
+    if (sheetRowIdx === -1) return;
+    const cell = `Ledger!J${sheetRowIdx + 1}`;
+    const value = allocations ? JSON.stringify(allocations) : '';
+    await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ values: [[value]] })
+      }
+    );
+  } catch (e) {
+    console.error('Goal alloc sheet update error:', e.message);
   }
 }
 
@@ -6544,6 +6919,7 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
 
   let remaining = contributionUSD;
   const messages = [];
+  const appliedAllocations = []; // track exactly what changed for undo
   let startIdx = goals.findIndex(g => g.name === selectedGoal.name);
   if (startIdx === -1) startIdx = 0;
 
@@ -6560,6 +6936,7 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
     g.lastContributionDate = new Date().toISOString().slice(0, 10);
     g.history = g.history || [];
     g.history.push({ date: g.lastContributionDate, amount: applied });
+    appliedAllocations.push({ name: g.name, applied, date: g.lastContributionDate, prevReached: reached, prevStatus: g.status });
 
     if (parseFloat(g.amountReached) >= target) {
       g.status = 'Funded';
@@ -6576,7 +6953,18 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
   }
 
   saveGoals(goals);
-  await syncGoalsToSheet();
+  try { await syncGoalsToSheet(); } catch(e) { console.warn('Goal sheet sync failed (will retry on next open):', e.message); }
+
+  // Record allocations on the ledger row so undo is precise and cross-device
+  if (appliedAllocations.length && invoiceRow.receipt) {
+    const rows = loadLedgerRows();
+    const idx = rows.findIndex(r => r.receipt === invoiceRow.receipt);
+    if (idx !== -1) {
+      rows[idx].goalAllocations = appliedAllocations;
+      saveLedgerRows(rows);
+      try { await updateGoalAllocOnSheet(invoiceRow.receipt, appliedAllocations); } catch(e) { console.warn('Goal alloc sheet write failed:', e.message); }
+    }
+  }
 
   // Also fund bills from the same income allocation
   allocateToBills(contributionUSD);
