@@ -6633,25 +6633,76 @@ async function _doLoadLedgerFromSheet() {
         taxRate:         parseFloat(row[10] || '0') || 0,
       }));
 
-    const local = loadLedgerRows();
     const sheetReceipts = new Set(sheetRows.map(r => r.receipt));
-    const deletedTombstones = new Set(JSON.parse(localStorage.getItem('invoice-ledger-deleted') || '[]'));
+    const local = loadLedgerRows();
+    const migrated = localStorage.getItem('invoice-sync-migrated');
 
-    // Migration guard: existing rows with no _dirty flag that aren't in the sheet
-    // were either created offline (treat as dirty) or are ghosts from another browser
-    // (no _dirty = clean = skip). Skip tombstoned receipts — they were intentionally deleted.
-    local.forEach(r => {
-      if (r.receipt && !sheetReceipts.has(r.receipt) && !deletedTombstones.has(r.receipt) && r._dirty === undefined) {
-        r._dirty = true;
+    // One-time migration: first run after this update — sheet is authoritative.
+    // Drop all local rows that exist in the sheet. For any local rows NOT in the
+    // sheet, back them up to a _Recovered sheet tab then drop them too.
+    // This clears ghosts from all browsers on their first sync after the update.
+    if (!migrated) {
+      const orphans = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt) && r.receipt.trim());
+      if (orphans.length) {
+        console.log(`[Ledger] Migration: backing up ${orphans.length} orphan row(s) to _Recovered tab`);
+        try {
+          // Ensure _Recovered tab exists
+          const metaRes = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}?fields=sheets.properties`,
+            { headers: { Authorization: `Bearer ${_gmailToken}` } }
+          );
+          const meta = await metaRes.json();
+          const hasRecovered = (meta.sheets || []).some(s => s.properties.title === '_Recovered');
+          if (!hasRecovered) {
+            await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}:batchUpdate`,
+              { method: 'POST', headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ requests: [{ addSheet: { properties: { title: '_Recovered', hidden: true } } }] }) }
+            );
+          }
+          const recoveryRows = orphans.map(r => [
+            r.receipt, r.date, r.client, r.service, r.projectTotal,
+            r.amountDue, r.status, r.company || '', r.description || '',
+            r.goalAllocations ? JSON.stringify(r.goalAllocations) : '',
+            parseFloat(r.taxRate) > 0 ? parseFloat(r.taxRate) : ''
+          ]);
+          await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/_Recovered!A1:append?valueInputOption=USER_ENTERED`,
+            { method: 'POST', headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ values: recoveryRows }) }
+          );
+        } catch (e) {
+          console.warn('[Ledger] Migration backup failed:', e.message);
+        }
       }
+      // Flush local entirely — sheet is now the source of truth
+      saveLedgerRows([]);
+      localStorage.setItem('invoice-sync-migrated', '1');
+      console.log('[Ledger] Migration complete — local buffer cleared, sheet is authoritative');
+    }
+
+    // FLUSH FIRST: read latest local buffer, keep only explicitly dirty rows
+    // that are not already in the sheet. Sheet rows are never stored locally.
+    const freshLocal = loadLedgerRows();
+    const buffer = freshLocal.filter(r => r._dirty === true && !sheetReceipts.has(r.receipt));
+
+    // Field-level merge for dirty buffer rows that happen to overlap sheet
+    // (e.g. status changed locally while sheet pull was in-flight)
+    const merged = sheetRows.map(sr => {
+      const lr = freshLocal.find(r => r.receipt === sr.receipt);
+      if (!lr) return sr;
+      return {
+        ...sr,
+        status: (lr.status === '✅ Paid' && sr.status !== '✅ Paid') ? '✅ Paid' : sr.status,
+        goalAllocations: sr.goalAllocations ?? lr.goalAllocations ?? null,
+        taxRate: sr.taxRate > 0 ? sr.taxRate : (lr.taxRate || 0),
+      };
     });
 
-    // Only push rows that are explicitly dirty and not tombstoned
-    const localOnly = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt) && r._dirty && !deletedTombstones.has(r.receipt));
-
-    if (localOnly.length) {
-      console.log(`[Ledger] ${localOnly.length} dirty local-only row(s) — pushing up`);
-      for (const row of localOnly) {
+    // PUSH SECOND: only push what's left in the dirty buffer after flush
+    if (buffer.length) {
+      console.log(`[Ledger] Pushing ${buffer.length} unsynced row(s) to sheet`);
+      for (const row of buffer) {
         const sheetRow = [
           row.receipt, row.date, row.client, row.service,
           row.projectTotal, row.amountDue, row.status, row.company || '',
@@ -6662,17 +6713,14 @@ async function _doLoadLedgerFromSheet() {
         try {
           const pushRes = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
-            {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ values: [sheetRow] })
-            }
+            { method: 'POST', headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ values: [sheetRow] }) }
           );
-          if (!pushRes.ok) {
-            console.warn(`[Ledger] Push failed for ${row.receipt}:`, pushRes.status);
-          } else {
-            // Successfully pushed — mark as no longer dirty (will be cleared on final save)
+          if (pushRes.ok) {
             row._dirty = false;
+            console.log(`[Ledger] Pushed ${row.receipt}`);
+          } else {
+            console.warn(`[Ledger] Push failed for ${row.receipt}:`, pushRes.status);
           }
         } catch (e) {
           console.warn(`[Ledger] Push error for ${row.receipt}:`, e.message);
@@ -6680,19 +6728,7 @@ async function _doLoadLedgerFromSheet() {
       }
     }
 
-    // Field-level merge: sheet wins structurally, local wins on paid status, goalAllocations, taxRate
-    const merged = sheetRows.map(sr => {
-      const lr = local.find(r => r.receipt === sr.receipt);
-      if (!lr) return sr;
-      return {
-        ...sr,
-        status: (lr.status === '✅ Paid' && sr.status !== '✅ Paid') ? '✅ Paid' : sr.status,
-        goalAllocations: sr.goalAllocations ?? lr.goalAllocations ?? null,
-        taxRate: sr.taxRate > 0 ? sr.taxRate : (lr.taxRate || 0),
-      };
-    });
-
-    // Repair stale sheet rows
+    // Repair stale sheet rows (paid status, goal allocations)
     const repairRows = merged.filter((mr, i) => {
       const sr = sheetRows[i];
       return sr && (mr.status !== sr.status || (mr.goalAllocations && !sr.goalAllocations));
@@ -6707,19 +6743,13 @@ async function _doLoadLedgerFromSheet() {
       }
     }
 
-    // Re-read localStorage at the last possible moment to catch concurrent mutations
-    const latestLocal = loadLedgerRows();
+    // Save only the unsynced buffer (rows still dirty after push attempts)
+    const remainingBuffer = buffer.filter(r => r._dirty === true);
+    saveLedgerRows(remainingBuffer);
 
-    // localStorage is a write buffer only — clear anything already confirmed in the sheet.
-    // Only keep rows that are still dirty (not yet synced) and not tombstoned.
-    const buffer = latestLocal.filter(r =>
-      r._dirty && !deletedTombstones.has(r.receipt) && !sheetReceipts.has(r.receipt)
-    );
-    saveLedgerRows(buffer);
+    // Return sheet rows + any still-pending buffer rows for rendering
+    return [...merged, ...remainingBuffer];
 
-    // Return the full merged view (sheet rows + unsynced buffer) for rendering
-    const finalRows = [...merged, ...buffer].filter(r => !deletedTombstones.has(r.receipt));
-    return finalRows;
   } catch (e) {
     console.error('Ledger load error:', e.message);
     return null;
