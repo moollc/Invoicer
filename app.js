@@ -1309,6 +1309,7 @@ function markReceiptAsSent() {
       projectTotal: `${data.currency} ${data.projectTotal}`,
       amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
       status:       '📤 Sent',
+      _dirty:       true,
     });
   }
   saveLedgerRows(rows);
@@ -1503,16 +1504,29 @@ async function renderLedgerHistory() {
     const batchPaidBtn = document.createElement('button');
     batchPaidBtn.textContent = '✅ Mark as Paid';
     batchPaidBtn.style.cssText = 'padding:4px 12px; background:#14202e; color:#fff; border:none; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; font-family:Roboto,sans-serif;';
-    batchPaidBtn.onclick = () => {
+    batchPaidBtn.onclick = async () => {
       const checked = document.querySelectorAll('.ledger-row-check:checked');
       if (!checked.length) return;
       const lrows = loadLedgerRows();
+      const toUpdate = [];
       checked.forEach(cb => {
         const idx = parseInt(cb.dataset.idx);
-        if (!isNaN(idx) && lrows[idx]) lrows[idx].status = '✅ Paid';
+        if (!isNaN(idx) && lrows[idx]) {
+          lrows[idx].status = '✅ Paid';
+          lrows[idx]._dirty = true;
+          toUpdate.push(lrows[idx]);
+        }
       });
       saveLedgerRows(lrows);
       renderLedgerHistory();
+      for (const row of toUpdate) {
+        const ok = await updateLedgerStatusOnSheet(row.receipt, '✅ Paid', row.amountDue || null);
+        if (ok) {
+          const current = loadLedgerRows();
+          const i = current.findIndex(r => r.receipt === row.receipt);
+          if (i !== -1) { delete current[i]._dirty; saveLedgerRows(current); }
+        }
+      }
     };
     const batchClearBtn = document.createElement('button');
     batchClearBtn.textContent = 'Clear';
@@ -1806,6 +1820,7 @@ async function renderLedgerHistory() {
       const commit = () => {
         const val = input.value.trim() || row.amountDue;
         rows[realIdx].amountDue = val;
+        rows[realIdx]._dirty = true;
         saveLedgerRows(rows);
         amountSpan.textContent = val;
         row.amountDue = val;
@@ -1858,10 +1873,15 @@ async function renderLedgerHistory() {
           rows[realIdx].amountDue = rows[realIdx].projectTotal;
           amountSpan.textContent = rows[realIdx].amountDue;
         }
+        rows[realIdx]._dirty = true;
         wrap.style.background = rowBg(rows[realIdx], false);
         saveLedgerRows(rows);
         const paidAmountDue = sel.value === '✅ Paid' ? rows[realIdx].amountDue : null;
-        await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
+        const _statusOk = await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
+        if (_statusOk) {
+          const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === rows[realIdx].receipt);
+          if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+        }
         if (sel.value === '✅ Paid') {
           // Always reload from storage so goalAllocations saved by a prior allocation are visible
           const liveRow = loadLedgerRows().find(r => r.receipt === rows[realIdx].receipt) || rows[realIdx];
@@ -1917,6 +1937,7 @@ async function renderLedgerHistory() {
     const commitNote = () => {
       const val = noteInput.value.trim();
       rows[realIdx].note = val || '';
+      rows[realIdx]._dirty = true;
       row.note = val || '';
       saveLedgerRows(rows);
       noteDisplay.textContent = val;
@@ -2004,7 +2025,7 @@ async function updateLedger() {
 
   // Add new row if not already present
   if (!rows.find(r => r.receipt === _pendingRow.receipt)) {
-    rows.push({ ..._pendingRow });
+    rows.push({ ..._pendingRow, _dirty: true });
     saveLedgerRows(rows);
   }
 
@@ -4330,8 +4351,9 @@ async function loadSettingsFromSheet() {
   const rows = await sheetsRead(_sheetsSpreadsheetId, 'Settings!A2:B');
   if (!rows.length) return;
   
+  const _settingsBlocklist = new Set(['invoice-ledger-rows', 'invoice-bills', 'invoice-goals', 'invoice-clients', 'invoice-business-profiles']);
   rows.forEach(r => {
-    if (r[0] && r[1] !== undefined) {
+    if (r[0] && r[1] !== undefined && !_settingsBlocklist.has(r[0])) {
       localStorage.setItem(r[0], r[1]);
     }
   });
@@ -5211,11 +5233,17 @@ async function syncToGoogleSheets(invoiceData) {
     if (!res.ok) {
       const err = await res.json();
       console.error('Sheets sync error:', err);
+      showToast('Invoice saved locally — sheet sync failed. Will retry on next open.', 'info');
     } else {
       console.log('✓ Invoice synced to Google Sheets');
+      // Row is now in the sheet — remove it from local write buffer
+      const stored = loadLedgerRows();
+      const filtered = stored.filter(r => r.receipt !== invoiceData.receiptNumber);
+      if (filtered.length !== stored.length) saveLedgerRows(filtered);
     }
   } catch (e) {
     console.error('Sheets sync failed:', e.message);
+    showToast('Invoice saved locally — sheet sync failed. Will retry on next open.', 'info');
   }
 }
 
@@ -6296,9 +6324,14 @@ async function undoGoalAllocation(row, container) {
     const idx = rows.findIndex(r => r.receipt === row.receipt);
     if (idx !== -1) {
       rows[idx].goalAllocations = null;
+      rows[idx]._dirty = true;
       row.goalAllocations = null;
       saveLedgerRows(rows);
-      await updateGoalAllocOnSheet(row.receipt, null);
+      const _allocOk = await updateGoalAllocOnSheet(row.receipt, null);
+      if (_allocOk) {
+        const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === row.receipt);
+        if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+      }
     }
 
     renderGoalsList();
@@ -6457,15 +6490,23 @@ function applyAddExpense(items, data, actionNotes) {
 
 const VALID_STATUSES = ['⬜ Unpaid', '💰 Deposit', '📤 Sent', '✅ Paid'];
 
-function applyUpdateStatus(statusData, data, actionNotes) {
+async function applyUpdateStatus(statusData, data, actionNotes) {
   if (!statusData || !statusData.receipt || !statusData.status) { console.warn('[applyUpdateStatus] Missing receipt or status.', statusData); return; }
   if (statusData.receipt !== data.receiptNumber) { console.warn('[applyUpdateStatus] Receipt mismatch — AI returned', statusData.receipt, ', current is', data.receiptNumber); return; }
   if (!VALID_STATUSES.includes(statusData.status)) { console.warn('[applyUpdateStatus] Invalid status:', statusData.status); return; }
-  updateLedgerStatusOnSheet(statusData.receipt, statusData.status);
   const rows = loadLedgerRows();
   const rowIdx = rows.findIndex(r => r.receipt === statusData.receipt);
-  if (rowIdx >= 0) { rows[rowIdx].status = statusData.status; saveLedgerRows(rows); }
-  else { console.warn('[applyUpdateStatus] Receipt not found in localStorage:', statusData.receipt); }
+  if (rowIdx >= 0) {
+    rows[rowIdx].status = statusData.status;
+    rows[rowIdx]._dirty = true;
+    saveLedgerRows(rows);
+    const ok = await updateLedgerStatusOnSheet(statusData.receipt, statusData.status);
+    if (ok) {
+      const current = loadLedgerRows();
+      const i = current.findIndex(r => r.receipt === statusData.receipt);
+      if (i !== -1) { delete current[i]._dirty; saveLedgerRows(current); }
+    }
+  } else { console.warn('[applyUpdateStatus] Receipt not found in localStorage:', statusData.receipt); }
   actionNotes.push(`Status → ${statusData.status}`);
 }
 
@@ -6545,7 +6586,16 @@ function applyCalendarEvent(event) {
   closeCalendarModal();
 }
 
+let _syncLedgerInFlight = null;
+
 async function loadLedgerFromSheet() {
+  if (_syncLedgerInFlight) return _syncLedgerInFlight;
+  _syncLedgerInFlight = _doLoadLedgerFromSheet();
+  try { return await _syncLedgerInFlight; }
+  finally { _syncLedgerInFlight = null; }
+}
+
+async function _doLoadLedgerFromSheet() {
   if (!_sheetsSpreadsheetId || !_gmailToken) {
     console.log('Sheet sync not available: missing ID or token');
     return null;
@@ -6570,26 +6620,37 @@ async function loadLedgerFromSheet() {
     const sheetRows = allRows.slice(1)
       .filter(row => row[0] && row[0].trim())
       .map(row => ({
-        receipt:          row[0] || '',
-        date:             row[1] || '',
-        client:           row[2] || '',
-        service:          row[3] || '',
-        projectTotal:     row[4] || '',
-        amountDue:        row[5] || '',
-        status:           row[6] || '⬜ Unpaid',
-        company:          row[7] || '',
-        description:      row[8] || '',
-        goalAllocations:  (() => { try { return JSON.parse(row[9] || 'null'); } catch(e) { return null; } })(),
-        taxRate:          parseFloat(row[10] || '0') || 0,
+        receipt:         row[0] || '',
+        date:            row[1] || '',
+        client:          row[2] || '',
+        service:         row[3] || '',
+        projectTotal:    row[4] || '',
+        amountDue:       row[5] || '',
+        status:          row[6] || '⬜ Unpaid',
+        company:         row[7] || '',
+        description:     row[8] || '',
+        goalAllocations: (() => { try { return JSON.parse(row[9] || 'null'); } catch(e) { return null; } })(),
+        taxRate:         parseFloat(row[10] || '0') || 0,
       }));
 
-    // Non-destructive merge: sheet wins on conflicts, local-only rows are kept and pushed up
     const local = loadLedgerRows();
     const sheetReceipts = new Set(sheetRows.map(r => r.receipt));
-    const localOnly = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt));
+
+    // Migration guard: existing rows with no _dirty flag that aren't in the sheet
+    // were either created offline (treat as dirty) or are ghosts from another browser
+    // (no _dirty = clean = skip). We can't tell the difference on first run, so we
+    // stamp _dirty on any local row not in the sheet that has actual data fields set.
+    local.forEach(r => {
+      if (r.receipt && !sheetReceipts.has(r.receipt) && r._dirty === undefined) {
+        r._dirty = true;
+      }
+    });
+
+    // Only push rows that are explicitly dirty — rows without _dirty are stale ghosts
+    const localOnly = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt) && r._dirty);
 
     if (localOnly.length) {
-      console.log(`[Ledger] ${localOnly.length} local-only row(s) not in sheet — pushing up`);
+      console.log(`[Ledger] ${localOnly.length} dirty local-only row(s) — pushing up`);
       for (const row of localOnly) {
         const sheetRow = [
           row.receipt, row.date, row.client, row.service,
@@ -6598,20 +6659,28 @@ async function loadLedgerFromSheet() {
           row.goalAllocations ? JSON.stringify(row.goalAllocations) : '',
           parseFloat(row.taxRate) > 0 ? parseFloat(row.taxRate) : ''
         ];
-        await fetch(
-          `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ values: [sheetRow] })
+        try {
+          const pushRes = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
+            {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ values: [sheetRow] })
+            }
+          );
+          if (!pushRes.ok) {
+            console.warn(`[Ledger] Push failed for ${row.receipt}:`, pushRes.status);
+          } else {
+            // Successfully pushed — mark as no longer dirty (will be cleared on final save)
+            row._dirty = false;
           }
-        );
+        } catch (e) {
+          console.warn(`[Ledger] Push error for ${row.receipt}:`, e.message);
+        }
       }
     }
 
-    // Prefer local paid status and goalAllocations — sheet writes can fail silently
-    // when the token is expired, so we must never let a stale sheet un-pay an invoice
-    // or erase an allocation that was already saved locally.
+    // Field-level merge: sheet wins structurally, local wins on paid status, goalAllocations, taxRate
     const merged = sheetRows.map(sr => {
       const lr = local.find(r => r.receipt === sr.receipt);
       if (!lr) return sr;
@@ -6623,7 +6692,7 @@ async function loadLedgerFromSheet() {
       };
     });
 
-    // If any row needed repair, push corrected statuses back to the sheet
+    // Repair stale sheet rows
     const repairRows = merged.filter((mr, i) => {
       const sr = sheetRows[i];
       return sr && (mr.status !== sr.status || (mr.goalAllocations && !sr.goalAllocations));
@@ -6638,7 +6707,15 @@ async function loadLedgerFromSheet() {
       }
     }
 
-    const finalRows = [...merged, ...localOnly];
+    // Keep dirty flags from any mutations that happened while this async fetch was in-flight
+    // Re-read localStorage at the last possible moment before writing
+    const latestLocal = loadLedgerRows();
+    const finalRows = [...merged, ...localOnly.filter(r => r._dirty !== false)];
+    // Preserve _dirty flags set by concurrent mutations
+    finalRows.forEach(r => {
+      const live = latestLocal.find(l => l.receipt === r.receipt);
+      if (live && live._dirty) r._dirty = true;
+    });
     saveLedgerRows(finalRows);
     return finalRows;
   } catch (e) {
@@ -6661,10 +6738,10 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
     const sheetRowIdx = colA.findIndex(function(r, i) { return i > 0 && r[0] === receiptNumber; });
     if (sheetRowIdx === -1) { console.warn('Receipt not found in sheet:', receiptNumber); return; }
 
+    let putRes;
     if (amountDue !== null) {
-      // Update both F (amountDue) and G (status) in one batchUpdate
       const range = `Ledger!F${sheetRowIdx + 1}:G${sheetRowIdx + 1}`;
-      await fetch(
+      putRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
         {
           method: 'PUT',
@@ -6674,7 +6751,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
       );
     } else {
       const cell = `Ledger!G${sheetRowIdx + 1}`;
-      await fetch(
+      putRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
         {
           method: 'PUT',
@@ -6683,9 +6760,15 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
         }
       );
     }
+    if (!putRes.ok) {
+      console.error('Status update failed on sheet row', sheetRowIdx + 1, putRes.status);
+      return false;
+    }
     console.log('✓ Status updated on sheet row', sheetRowIdx + 1);
+    return true;
   } catch (e) {
     console.error('Status update error:', e.message);
+    return false;
   }
 }
 
@@ -6702,7 +6785,7 @@ async function updateGoalAllocOnSheet(receiptNumber, allocations) {
     if (sheetRowIdx === -1) return;
     const cell = `Ledger!J${sheetRowIdx + 1}`;
     const value = allocations ? JSON.stringify(allocations) : '';
-    await fetch(
+    const putRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
       {
         method: 'PUT',
@@ -6710,8 +6793,14 @@ async function updateGoalAllocOnSheet(receiptNumber, allocations) {
         body: JSON.stringify({ values: [[value]] })
       }
     );
+    if (!putRes.ok) {
+      console.error('Goal alloc update failed on sheet row', sheetRowIdx + 1, putRes.status);
+      return false;
+    }
+    return true;
   } catch (e) {
     console.error('Goal alloc sheet update error:', e.message);
+    return false;
   }
 }
 
@@ -6985,8 +7074,15 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
     const idx = rows.findIndex(r => r.receipt === invoiceRow.receipt);
     if (idx !== -1) {
       rows[idx].goalAllocations = appliedAllocations;
+      rows[idx]._dirty = true;
       saveLedgerRows(rows);
-      try { await updateGoalAllocOnSheet(invoiceRow.receipt, appliedAllocations); } catch(e) { console.warn('Goal alloc sheet write failed:', e.message); }
+      try {
+        const _aok = await updateGoalAllocOnSheet(invoiceRow.receipt, appliedAllocations);
+        if (_aok) {
+          const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === invoiceRow.receipt);
+          if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+        }
+      } catch(e) { console.warn('Goal alloc sheet write failed:', e.message); }
     }
   }
 
@@ -7433,13 +7529,22 @@ renderClientChips();
 restoreTitleFont();
 restoreTheme();
 
-// ── Offline indicator ─────────────────────────────────────────
+// ── Offline indicator + sync queue ────────────────────────────
 (function() {
   const pill = document.getElementById('offline-pill');
   const show = () => { if (pill) pill.style.display = 'flex'; };
   const hide = () => { if (pill) pill.style.display = 'none'; };
-  window.addEventListener('online', hide);
-  window.addEventListener('offline', show);
+  window.addEventListener('offline', () => {
+    show();
+    window._syncPending = true;
+  });
+  window.addEventListener('online', () => {
+    hide();
+    if (window._syncPending) {
+      window._syncPending = false;
+      if (gmailTokenValid()) setupDrive();
+    }
+  });
   if (pill) pill.style.display = navigator.onLine ? 'none' : 'flex';
 })();
 restoreTitleSize();
@@ -7706,8 +7811,16 @@ function quickSetStatus(status) {
     rows[idx].amountDue = rows[idx].projectTotal;
   }
   rows[idx].status = status;
+  rows[idx]._dirty = true;
   saveLedgerRows(rows);
-  updateLedgerStatusOnSheet(rows[idx].receipt, status, status === '✅ Paid' ? rows[idx].amountDue : null);
+  const _receipt = rows[idx].receipt;
+  const _amtDue = status === '✅ Paid' ? rows[idx].amountDue : null;
+  updateLedgerStatusOnSheet(_receipt, status, _amtDue).then(ok => {
+    if (ok) {
+      const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === _receipt);
+      if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+    }
+  });
   document.getElementById('status-picker').style.display = 'none';
   render(data);
 }
