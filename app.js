@@ -6635,19 +6635,19 @@ async function _doLoadLedgerFromSheet() {
 
     const local = loadLedgerRows();
     const sheetReceipts = new Set(sheetRows.map(r => r.receipt));
+    const deletedTombstones = new Set(JSON.parse(localStorage.getItem('invoice-ledger-deleted') || '[]'));
 
     // Migration guard: existing rows with no _dirty flag that aren't in the sheet
     // were either created offline (treat as dirty) or are ghosts from another browser
-    // (no _dirty = clean = skip). We can't tell the difference on first run, so we
-    // stamp _dirty on any local row not in the sheet that has actual data fields set.
+    // (no _dirty = clean = skip). Skip tombstoned receipts — they were intentionally deleted.
     local.forEach(r => {
-      if (r.receipt && !sheetReceipts.has(r.receipt) && r._dirty === undefined) {
+      if (r.receipt && !sheetReceipts.has(r.receipt) && !deletedTombstones.has(r.receipt) && r._dirty === undefined) {
         r._dirty = true;
       }
     });
 
-    // Only push rows that are explicitly dirty — rows without _dirty are stale ghosts
-    const localOnly = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt) && r._dirty);
+    // Only push rows that are explicitly dirty and not tombstoned
+    const localOnly = local.filter(r => r.receipt && !sheetReceipts.has(r.receipt) && r._dirty && !deletedTombstones.has(r.receipt));
 
     if (localOnly.length) {
       console.log(`[Ledger] ${localOnly.length} dirty local-only row(s) — pushing up`);
@@ -6710,7 +6710,8 @@ async function _doLoadLedgerFromSheet() {
     // Keep dirty flags from any mutations that happened while this async fetch was in-flight
     // Re-read localStorage at the last possible moment before writing
     const latestLocal = loadLedgerRows();
-    const finalRows = [...merged, ...localOnly.filter(r => r._dirty !== false)];
+    const finalRows = [...merged, ...localOnly.filter(r => r._dirty !== false)]
+      .filter(r => !deletedTombstones.has(r.receipt));
     // Preserve _dirty flags set by concurrent mutations
     finalRows.forEach(r => {
       const live = latestLocal.find(l => l.receipt === r.receipt);
