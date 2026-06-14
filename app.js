@@ -1401,7 +1401,7 @@ async function renderLedgerHistory() {
     listEl.before(publishPoolEl);
   }
   publishPoolEl.innerHTML = '';
-  publishPoolEl.appendChild(buildPoolBar(calcIncomePool()));
+  publishPoolEl.appendChild(buildPoolBar(calcIncomePool(rows)));
 
   let summaryEl = document.getElementById('ledger-summary');
   if (!summaryEl) {
@@ -5954,7 +5954,7 @@ function renderDashboard() {
   const dashPoolEl = document.getElementById('dash-pool-bar');
   if (dashPoolEl) {
     dashPoolEl.innerHTML = '';
-    dashPoolEl.appendChild(buildPoolBar(calcIncomePool()));
+    dashPoolEl.appendChild(buildPoolBar(calcIncomePool(rows)));
   }
 
   renderGoalsList();
@@ -6643,7 +6643,7 @@ async function _doLoadLedgerFromSheet() {
     // Field-level merge for dirty buffer rows that happen to overlap sheet
     // (e.g. status changed locally while sheet pull was in-flight)
     const merged = sheetRows.map(sr => {
-      const lr = freshLocal.find(r => r.receipt === sr.receipt);
+      const lr = local.find(r => r.receipt === sr.receipt);
       if (!lr) return sr;
       return {
         ...sr,
