@@ -6707,17 +6707,18 @@ async function _doLoadLedgerFromSheet() {
       }
     }
 
-    // Keep dirty flags from any mutations that happened while this async fetch was in-flight
-    // Re-read localStorage at the last possible moment before writing
+    // Re-read localStorage at the last possible moment to catch concurrent mutations
     const latestLocal = loadLedgerRows();
-    const finalRows = [...merged, ...localOnly.filter(r => r._dirty !== false)]
-      .filter(r => !deletedTombstones.has(r.receipt));
-    // Preserve _dirty flags set by concurrent mutations
-    finalRows.forEach(r => {
-      const live = latestLocal.find(l => l.receipt === r.receipt);
-      if (live && live._dirty) r._dirty = true;
-    });
-    saveLedgerRows(finalRows);
+
+    // localStorage is a write buffer only — clear anything already confirmed in the sheet.
+    // Only keep rows that are still dirty (not yet synced) and not tombstoned.
+    const buffer = latestLocal.filter(r =>
+      r._dirty && !deletedTombstones.has(r.receipt) && !sheetReceipts.has(r.receipt)
+    );
+    saveLedgerRows(buffer);
+
+    // Return the full merged view (sheet rows + unsynced buffer) for rendering
+    const finalRows = [...merged, ...buffer].filter(r => !deletedTombstones.has(r.receipt));
     return finalRows;
   } catch (e) {
     console.error('Ledger load error:', e.message);
