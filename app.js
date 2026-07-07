@@ -3947,44 +3947,98 @@ function calcIncomePool(rows) {
   return { totalIncome, goalsUsed, billsFunded: billsUsed, billsPaid, billsReserved: billsFunded, taxReserved, free };
 }
 
-async function syncBillsToSheet() {
-  if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const bills = loadBills();
-  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:K');
-  if (existing === null) return;
-  for (const bill of bills) {
-    const newRow = [
-      bill.id, bill.name, bill.amount, bill.recurrence,
-      bill.customDays || '', bill.dueDay || '', bill.allocationPct || '0',
-      bill.funded || '0', bill.paid ? '1' : '0',
-      JSON.stringify(bill.history || []),
-      bill.paidTotal || '0'
-    ];
-    const rowIdx = existing.findIndex(r => r[0] === bill.id);
-    try {
-      if (rowIdx === -1) {
-        await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
-      } else {
-        await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:K${rowIdx + 2}`, [newRow]);
-      }
-    } catch (e) {
-      console.warn(`[Bills] Sheet write failed for "${bill.name}":`, e.message);
-    }
-  }
+function billToSheetRow(bill) {
+  return [
+    bill.id, bill.name, bill.amount, bill.recurrence,
+    bill.customDays || '', bill.dueDay || '', bill.allocationPct || '0',
+    bill.funded || '0', bill.paid ? '1' : '0',
+    JSON.stringify(bill.history || []),
+    bill.paidTotal || '0',
+    bill.recipient || '',
+    bill.cycleStart || '',
+    bill.receiptDocUrl || '',
+    bill.receiptDocName || ''
+  ];
 }
 
-async function loadBillsFromSheet() {
-  if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:K');
-  if (rows === null) return;
-  const sheetBills = rows.filter(r => r[0] && r[0].trim()).map(r => ({
+function billFromSheetRow(r) {
+  return {
     id: r[0], name: r[1] || '', amount: r[2] || '0',
     recurrence: r[3] || 'monthly', customDays: r[4] || '',
     dueDay: r[5] || '1', allocationPct: r[6] || '0',
     funded: r[7] || '0', paid: r[8] === '1',
     history: (() => { try { return JSON.parse(r[9] || '[]'); } catch(e) { return []; } })(),
-    paidTotal: r[10] || '0'
-  }));
+    paidTotal: r[10] || '0',
+    recipient: r[11] || '',
+    cycleStart: r[12] || '',
+    receiptDocUrl: r[13] || '',
+    receiptDocName: r[14] || ''
+  };
+}
+
+function mergeBillFromLocal(sheetBill, localBill) {
+  if (!localBill) return sheetBill;
+  const result = { ...sheetBill };
+  // Never un-pay a bill that is paid locally — sheet write may have failed
+  if (localBill.paid && !sheetBill.paid) {
+    result.paid = true;
+    result.history = localBill.history?.length ? localBill.history : sheetBill.history;
+  }
+  if ((!sheetBill.paidTotal || sheetBill.paidTotal === '0') && localBill.paidTotal && localBill.paidTotal !== '0') {
+    result.paidTotal = localBill.paidTotal;
+  }
+  if (!sheetBill.receiptDocUrl && localBill.receiptDocUrl) result.receiptDocUrl = localBill.receiptDocUrl;
+  if (!sheetBill.receiptDocName && localBill.receiptDocName) result.receiptDocName = localBill.receiptDocName;
+  if (!sheetBill.recipient && localBill.recipient) result.recipient = localBill.recipient;
+  if (!sheetBill.cycleStart && localBill.cycleStart) result.cycleStart = localBill.cycleStart;
+  return result;
+}
+
+function billNeedsSheetRepair(merged, sheetBill) {
+  return (merged.paid && !sheetBill.paid)
+    || (merged.paidTotal !== '0' && (!sheetBill.paidTotal || sheetBill.paidTotal === '0'))
+    || (merged.receiptDocUrl && merged.receiptDocUrl !== (sheetBill.receiptDocUrl || ''))
+    || (merged.recipient && merged.recipient !== (sheetBill.recipient || ''))
+    || (merged.cycleStart && merged.cycleStart !== (sheetBill.cycleStart || ''));
+}
+
+async function syncBillsToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
+  const bills = loadBills();
+  let existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+  if (existing === null) {
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Bills] ensureAllTabs failed:', e.message); }
+    existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+  }
+  if (existing === null) return { success: false, error: 'Bills tab read failed' };
+  let failures = 0;
+  for (const bill of bills) {
+    const newRow = billToSheetRow(bill);
+    const rowIdx = existing.findIndex(r => r[0] === bill.id);
+    try {
+      if (rowIdx === -1) {
+        await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
+        existing.push(newRow);
+      } else {
+        await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:O${rowIdx + 2}`, [newRow]);
+      }
+    } catch (e) {
+      failures++;
+      console.warn(`[Bills] Sheet write failed for "${bill.name}":`, e.message);
+    }
+  }
+  return failures ? { success: false, error: `${failures} bill(s) failed to sync` } : { success: true };
+}
+
+async function loadBillsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  let rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+  if (rows === null) {
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Bills] ensureAllTabs failed:', e.message); }
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+  }
+  if (rows === null) return;
+  const sheetBills = rows.filter(r => r[0] && r[0].trim()).map(billFromSheetRow);
   if (!sheetBills.length) {
     const local = loadBills();
     if (local.length) await syncBillsToSheet();
@@ -3993,29 +4047,10 @@ async function loadBillsFromSheet() {
   const local = loadBills();
   const sheetIds = new Set(sheetBills.map(b => b.id));
   const localOnly = local.filter(b => !sheetIds.has(b.id));
-  // Preserve local paid/paidTotal when the sheet has stale data (e.g. prior write failed)
-  const merged = sheetBills.map(sb => {
-    const lb = local.find(b => b.id === sb.id);
-    if (!lb) return sb;
-    let result = { ...sb };
-    // Never un-pay a bill that is paid locally — sheet write may have failed
-    if (lb.paid && !sb.paid) {
-      result.paid = true;
-      result.history = lb.history?.length ? lb.history : sb.history;
-    }
-    // Preserve paidTotal when sheet col K is missing or zero
-    if ((!sb.paidTotal || sb.paidTotal === '0') && lb.paidTotal && lb.paidTotal !== '0') {
-      result.paidTotal = lb.paidTotal;
-    }
-    return result;
-  });
+  const merged = sheetBills.map(sb => mergeBillFromLocal(sb, local.find(b => b.id === sb.id)));
   const finalBills = [...merged, ...localOnly];
   saveBills(finalBills);
-  // Push back if sheet was missing local-only rows OR had stale paid/paidTotal data
-  const needsRepair = merged.some((mb, i) => {
-    const sb = sheetBills[i];
-    return (mb.paid && !sb.paid) || (mb.paidTotal !== '0' && (!sb.paidTotal || sb.paidTotal === '0'));
-  });
+  const needsRepair = merged.some((mb, i) => billNeedsSheetRepair(mb, sheetBills[i]));
   if (localOnly.length || needsRepair) await syncBillsToSheet();
 }
 
@@ -4059,7 +4094,7 @@ function toggleBillRecurrenceFields() {
   document.getElementById('bill-dueday-row').style.display    = rec === 'monthly' ? 'block' : 'none';
   document.getElementById('bill-customdays-row').style.display = rec === 'custom'  ? 'block' : 'none';
 }
-function saveBillModal() {
+async function saveBillModal() {
   const name      = document.getElementById('bill-input-name').value.trim();
   const amount    = document.getElementById('bill-input-amount').value.trim();
   const recurrence = document.getElementById('bill-input-recurrence').value;
@@ -4086,14 +4121,15 @@ function saveBillModal() {
       cycleStart: new Date().toISOString().slice(0, 10), history: [] });
     saveBills(bills);
   }
-  syncBillsToSheet();
+  const syncRes = await syncBillsToSheet();
+  if (syncRes && !syncRes.success) showToast('Bill saved locally — sheet sync failed. Open dashboard and sync again.', 'info');
   closeBillModal();
   renderBillsList();
 }
-function deleteBill(id) {
+async function deleteBill(id) {
   const bills = loadBills().filter(b => b.id !== id);
   saveBills(bills);
-  syncBillsToSheet();
+  await syncBillsToSheet();
   renderBillsList();
 }
 
@@ -4182,7 +4218,7 @@ async function confirmPayBill() {
   }
 
   saveBills(bills);
-  syncBillsToSheet();
+  await syncBillsToSheet();
   closePayBillModal(true);
   renderBillsList();
   generatePaymentReceipt(bill);
@@ -4235,6 +4271,7 @@ async function confirmPayBill() {
         savedBills[savedIdx].receiptDocName = renamedFile;
         delete savedBills[savedIdx].receiptDoc;
         saveBills(savedBills);
+        await syncBillsToSheet();
       }
       showToast(`Doc saved to Drive: ${renamedFile}`, 'success');
       renderBillsList();
@@ -5513,13 +5550,18 @@ async function ensureAllTabs(spreadsheetId) {
       await sheetsWrite(spreadsheetId, 'Goals!A1:L1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created', 'Amount Reached', 'Last Contribution', 'Status', 'Claim Date', 'Receipt #', 'Receipt File', 'Allocation %']]);
     }
   }
+  const billsHeaderRow = ['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History', 'Paid Total', 'Recipient', 'Cycle Start', 'Receipt Doc URL', 'Receipt Doc Name'];
   if (!existing.includes('Bills')) {
-    await sheetsWrite(spreadsheetId, 'Bills!A1:K1', [['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History', 'Paid Total']]);
+    await sheetsWrite(spreadsheetId, 'Bills!A1:O1', [billsHeaderRow]);
   } else {
-    const billsMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Bills!A1:K1`);
+    const billsMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Bills!A1:O1`);
     const billsHeaders = billsMeta.values ? billsMeta.values[0] : [];
-    if (billsHeaders.length > 0 && !billsHeaders.includes('Paid Total')) {
-      await sheetsWrite(spreadsheetId, 'Bills!K1', [['Paid Total']]);
+    if (billsHeaders.length > 0) {
+      if (!billsHeaders.includes('Paid Total')) await sheetsWrite(spreadsheetId, 'Bills!K1', [['Paid Total']]);
+      if (!billsHeaders.includes('Recipient')) await sheetsWrite(spreadsheetId, 'Bills!L1', [['Recipient']]);
+      if (!billsHeaders.includes('Cycle Start')) await sheetsWrite(spreadsheetId, 'Bills!M1', [['Cycle Start']]);
+      if (!billsHeaders.includes('Receipt Doc URL')) await sheetsWrite(spreadsheetId, 'Bills!N1', [['Receipt Doc URL']]);
+      if (!billsHeaders.includes('Receipt Doc Name')) await sheetsWrite(spreadsheetId, 'Bills!O1', [['Receipt Doc Name']]);
     }
   }
   if (!existing.includes('Profiles')) {
