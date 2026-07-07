@@ -2481,7 +2481,7 @@ function updateActiveProviderPill() {
     title.style.color       = 'var(--muted)';
     title.style.cursor      = 'pointer';
     title.title             = 'Click to connect an AI provider';
-    title.onclick           = () => toggleChatSettings();
+    title.onclick           = () => openConnectionsModal();
   }
 }
 
@@ -2493,6 +2493,64 @@ function closeProvidersModal() {
   document.getElementById('providers-overlay').style.display = 'none';
   renderProviderListMini();
   updateActiveProviderPill();
+  renderConnectionsStatus();
+}
+
+function openConnectionsModal() {
+  renderConnectionsStatus();
+  document.getElementById('connections-overlay').style.display = 'flex';
+}
+function closeConnectionsModal() {
+  document.getElementById('connections-overlay').style.display = 'none';
+}
+
+function renderConnectionsStatus() {
+  if (!document.getElementById('connections-overlay')) return;
+  const signedIn = gmailTokenValid();
+
+  const gStatus = document.getElementById('conn-google-status');
+  if (gStatus) {
+    if (signedIn) {
+      const exp = parseInt(localStorage.getItem('gmail-token-exp') || '0');
+      const expiresIn = Math.round((exp - Date.now()) / 60000);
+      gStatus.textContent = `✓ Signed in · token expires in ${expiresIn} min`;
+      gStatus.className = 'conn-status conn-status--ok';
+    } else {
+      gStatus.textContent = 'Signed out';
+      gStatus.className = 'conn-status';
+    }
+  }
+  const gLabel = document.getElementById('conn-google-btn-label');
+  if (gLabel) gLabel.textContent = signedIn ? 'Sign out of Google' : 'Sign in with Google';
+
+  refreshSheetsIdStatus();
+  const pin = document.getElementById('conn-sheet-pin');
+  if (pin) pin.textContent = localStorage.getItem('sheets-id-pinned') === '1' ? '📌 pinned' : '';
+  const drv = document.getElementById('drive-setup-status');
+  if (drv) {
+    if (!signedIn) {
+      drv.textContent = 'Sign in with Google to activate.';
+      drv.className = '';
+      drv.style.color = '';
+    } else if (localStorage.getItem('drive-folder-id') && localStorage.getItem('sheets-spreadsheet-id') && drv.textContent.startsWith('Sign in')) {
+      drv.innerHTML = '✓ <strong class="text-success">mooInvoicer/</strong> folder ready : Ledger connected';
+      drv.className = 'text-success';
+    }
+  }
+
+  const ai = document.getElementById('conn-ai-status');
+  if (ai) {
+    const list = loadChatProviders();
+    const cfg  = list[getSelectedIdx()];
+    if (cfg) {
+      const prov = PROVIDERS[cfg.type] || { label: cfg.type, defaultModel: '' };
+      ai.textContent = `✓ ${cfg.name} · ${cfg.model || prov.defaultModel}${cfg.key ? '' : ' · no key'}`;
+      ai.className = cfg.key ? 'conn-status conn-status--ok' : 'conn-status';
+    } else {
+      ai.textContent = 'None';
+      ai.className = 'conn-status';
+    }
+  }
 }
 
 function renderProviderListMini() {
@@ -2659,7 +2717,31 @@ function renderProviderList() {
     // API Key
     const keyRow = document.createElement('div');
     keyRow.className = 'field-row';
-    keyRow.innerHTML = '<label>API Key</label>';
+    const keyLabel = document.createElement('label');
+    keyLabel.style.cssText = 'display:flex; align-items:center; justify-content:space-between;';
+    keyLabel.innerHTML = '<span>API Key</span>';
+    const testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.textContent = '⚡ test';
+    testBtn.style.cssText = 'font-size:10px; font-family:Roboto,sans-serif; background:none; border:none; color:#5b4fcf; cursor:pointer; padding:0; font-weight:600; letter-spacing:0.5px;';
+    testBtn.onclick = async e => {
+      e.stopPropagation();
+      if (!list[i].key) { testBtn.textContent = '⚠ no key'; setTimeout(() => { testBtn.textContent = '⚡ test'; }, 2000); return; }
+      testBtn.textContent = '…';
+      testBtn.disabled = true;
+      try {
+        await PROVIDERS[list[i].type].listModels(list[i].key);
+        testBtn.textContent = '✓ key ok';
+      } catch (err) {
+        testBtn.textContent = '✗ invalid';
+        showToast(`Key test failed: ${err.message}`, 'error');
+      } finally {
+        testBtn.disabled = false;
+        setTimeout(() => { testBtn.textContent = '⚡ test'; }, 2500);
+      }
+    };
+    keyLabel.appendChild(testBtn);
+    keyRow.appendChild(keyLabel);
     const keyIn = document.createElement('input');
     keyIn.type = 'password';
     keyIn.value = p.key;
@@ -4328,21 +4410,21 @@ function renderBillsList() {
   });
 }
 
+const SYNCED_SETTINGS_KEYS = [
+  'invoicer-default-currency',
+  'invoicer-default-pay-period',
+  'invoicer-tax-rate',
+  'invoice-theme',
+  'invoice-title-font',
+  'invoice-filename-preset',
+  'invoice-company-prefix',
+  'invoice-receipt-prefix'
+];
+
 async function syncSettingsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  
-  const keys = [
-    'invoicer-default-currency',
-    'invoicer-default-pay-period',
-    'invoicer-tax-rate',
-    'invoice-theme',
-    'invoice-title-font',
-    'invoice-filename-preset',
-    'invoice-company-prefix',
-    'invoice-receipt-prefix'
-  ];
-  
-  const rows = keys.map(k => [k, localStorage.getItem(k) || '']);
+
+  const rows = SYNCED_SETTINGS_KEYS.map(k => [k, localStorage.getItem(k) || '']);
   await sheetsWrite(_sheetsSpreadsheetId, `Settings!A2:B${rows.length + 1}`, rows);
 }
 
@@ -5028,6 +5110,7 @@ function updateEmailBtn() {
   }
   const calBtn = document.getElementById('btn-calendar');
   if (calBtn) calBtn.classList.toggle('hidden', !gmailTokenValid());
+  if (typeof renderConnectionsStatus === 'function') renderConnectionsStatus();
 }
 
 function googleSignIn() {
@@ -5698,7 +5781,7 @@ async function openDashboard() {
       });
     }
     if (!gmailTokenValid()) {
-      if (emptyEl) emptyEl.textContent = 'Not signed in — your goals are stored in Google Sheets. Tap the profile icon to sign in and sync.';
+      if (emptyEl) emptyEl.innerHTML = 'Not signed in — your data syncs with Google Sheets. <a href="#" onclick="closeDashboard();openConnectionsModal();return false;" class="address-book-csv-link">Open Connections</a> to sign in and sync.';
       showToast('Sign in with Google to load your goals from the sheet.', 'info');
       renderDashboard();
       return;
@@ -5730,7 +5813,7 @@ async function openDashboard() {
       if (currentRows.length > 0) {
         emptyEl.style.display = 'none';
       } else {
-        emptyEl.textContent = 'Sign in with Google and save an invoice to see your stats here.';
+        emptyEl.textContent = '✓ Synced — save an invoice to see your stats here.';
       }
     }
     
@@ -6841,7 +6924,7 @@ async function openSyncDiagnostics() {
     { name: 'Goals',    range: 'Goals!A1:L',     local: () => loadGoals(),        label: 'Goals' },
     { name: 'Clients',  range: 'Clients!A1:D',   local: () => loadClients(),      label: 'Clients' },
     { name: 'Profiles', range: 'Profiles!A1:F',  local: () => { try { return JSON.parse(localStorage.getItem('invoice-business-profiles') || '[]'); } catch(e){ return []; } }, label: 'Profiles' },
-    { name: 'Settings', range: 'Settings!A1:B',  local: () => { try { return JSON.parse(localStorage.getItem('invoice-settings') || '[]'); } catch(e){ return []; } }, label: 'Settings rows' },
+    { name: 'Settings', range: 'Settings!A1:B',  local: () => SYNCED_SETTINGS_KEYS.filter(k => localStorage.getItem(k) !== null), label: 'Settings rows' },
     { name: '_AppData', range: '_AppData!A1:C',  local: () => [], label: 'AppData rows' },
   ];
 
@@ -7211,8 +7294,16 @@ function googleSignOut() {
   localStorage.removeItem('gmail-token');
   localStorage.removeItem('gmail-token-exp');
   localStorage.removeItem('gmail-token-scopes');
+  // Clear the in-memory token too, or gmailTokenValid() keeps returning true
+  // until reload and every signed-in/out UI state stays stale.
+  _gmailToken = null;
+  _gmailTokenExp = 0;
+  // Sheet/folder ids and the pin stay: they are not credentials, and clearing
+  // the pin would let Drive auto-resolve recreate a duplicate ledger on the
+  // next sign-in (see promptForSheetsId).
   closeProfileModal();
   updateEmailBtn();
+  refreshSheetsIdStatus();
   showToast('Signed out of Google.', 'info');
 }
 

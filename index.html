@@ -221,7 +221,8 @@
         <button onclick="clearChatHistory();toggleChatMenu()" class="chat-menu-item">🗑 Clear History</button>
         <button onclick="exportChat();toggleChatMenu()" class="chat-menu-item">↓ Export Chat</button>
         <div class="chat-menu-divider"></div>
-        <button onclick="toggleChatMenu();toggleChatSettings()" class="chat-menu-item">⚙ Providers</button>
+        <button onclick="toggleChatMenu();openConnectionsModal()" class="chat-menu-item">🔌 Connections</button>
+        <button onclick="toggleChatMenu();toggleChatSettings()" class="chat-menu-item">⚙ Settings</button>
       </div>
     </div>
   </div>
@@ -271,18 +272,12 @@
       <button onclick="resetAppSettings()" class="btn-reset-ui">Reset UI to Defaults</button>
       <button onclick="forceUpdateApp()" class="btn-force-update">⟳ Force Pull Latest Update</button>
     </div>
-    <!-- Google Account -->
+    <!-- Connections -->
     <div class="sp-section-divider-mt">
-      <div class="settings-caption-label">Google Account</div>
-      <div class="sp-hint">Sign in once to unlock Gmail and Sheets sync. To use AI, add a provider below with your API key.</div>
+      <div class="settings-caption-label">Connections</div>
+      <div class="sp-hint">Google sign-in, Drive &amp; Sheets sync, and AI providers are managed together in Connections.</div>
       <span id="google-signin-status"></span>
-    </div>
-
-    <!-- Google Drive & Sheets -->
-    <div class="sp-section-divider-plain">
-      <div class="settings-caption-label">Google Drive & Sheets</div>
-      <div class="sp-hint">After signing in, a <strong class="sp-strong">mooInvoicer/</strong> folder is created in your Drive automatically. PDFs save there and the ledger spreadsheet is created for you.</div>
-      <div id="drive-setup-status">Sign in with Google above to activate.</div>
+      <button onclick="openConnectionsModal()" class="sp-btn-secondary sp-btn-full">🔌 Manage Connections</button>
     </div>
 
     <!-- Developer Settings (collapsible) -->
@@ -581,7 +576,7 @@
 <div id="profile-overlay" role="dialog" aria-modal="true" aria-label="Profile & Account" onclick="if(event.target.id==='profile-overlay') closeProfileModal()">
   <div class="modal-box modal-box--md">
     <button onclick="closeProfileModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
-    <div class="modal-label">Account</div>
+    <div class="modal-label">Business</div>
     <div class="modal-title modal-title--tight">Business Profiles</div>
     <div id="profile-signin-note">✓ Signed in with Google</div>
 
@@ -626,6 +621,7 @@
         <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
         <span id="btn-google-auth-label">Sign in with Google</span>
       </button>
+      <a href="#" onclick="closeProfileModal();openConnectionsModal();return false;" class="address-book-csv-link conn-link">Manage Connections →</a>
     </div>
 
   </div>
@@ -743,7 +739,7 @@
     </div>
 
     <div id="dash-empty">
-      Sign in with Google and save an invoice to see your stats here.
+      Save an invoice to see your stats here.
     </div>
 
     <!-- Connection Diagnostics (Hidden by default, shown on error) -->
@@ -901,6 +897,53 @@
     <div class="modal-title">AI Providers</div>
     <div id="provider-list"></div>
     <button onclick="addProvider()" class="modal-btn-full-eee" style="margin-top:8px;">+ Add Provider</button>
+  </div>
+</div>
+
+<div id="connections-overlay" role="dialog" aria-modal="true" aria-label="Connections" onclick="if(event.target.id==='connections-overlay') closeConnectionsModal()">
+  <div class="modal-box modal-box--540">
+    <button onclick="closeConnectionsModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
+    <div class="modal-label">Setup</div>
+    <div class="modal-title">Connections</div>
+
+    <!-- Google card -->
+    <div class="conn-card">
+      <div class="conn-card-head">
+        <div class="settings-caption-label">1 · Google Account</div>
+        <span id="conn-google-status" class="conn-status">Signed out</span>
+      </div>
+      <div class="sp-hint">Sign in once to unlock Gmail sending, Drive PDF backup and Sheets sync.</div>
+      <button id="conn-google-btn" onclick="gmailTokenValid() ? googleSignOut() : googleSignIn()" class="google-signout-btn">
+        <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+        <span id="conn-google-btn-label">Sign in with Google</span>
+      </button>
+    </div>
+
+    <!-- Sheet & Drive card -->
+    <div class="conn-card">
+      <div class="conn-card-head">
+        <div class="settings-caption-label">2 · Sheet &amp; Drive</div>
+        <span id="conn-sheet-pin" class="conn-status"></span>
+      </div>
+      <div class="sp-hint">A <strong class="sp-strong">mooInvoicer/</strong> folder and ledger spreadsheet are created in your Drive automatically. On a new device, pin your existing Sheet ID so invoices keep syncing to the same ledger.</div>
+      <div id="drive-setup-status">Sign in with Google to activate.</div>
+      <div class="conn-status-row">Sheet ID: <span id="sheets-id-status">not set</span></div>
+      <div class="sp-btn-row conn-btn-row">
+        <button onclick="gmailTokenValid() ? setupDrive() : showToast('Sign in with Google first.', 'info')" class="sp-btn-secondary">⟳ Auto-Setup</button>
+        <button onclick="promptForSheetsId()" class="sp-btn-secondary" title="Set or change the Google Sheet this device syncs to">⚙ Pin Sheet ID</button>
+        <button onclick="copySheetLink()" class="sp-btn-secondary">⧉ Copy Link</button>
+      </div>
+    </div>
+
+    <!-- AI Provider card -->
+    <div class="conn-card">
+      <div class="conn-card-head">
+        <div class="settings-caption-label">3 · AI Provider</div>
+        <span id="conn-ai-status" class="conn-status">None</span>
+      </div>
+      <div class="sp-hint">Optional — powers the chat assistant. Add a provider with your own API key.</div>
+      <button onclick="openProvidersModal()" class="sp-btn-secondary sp-btn-full">⚙ Manage Providers</button>
+    </div>
   </div>
 </div>
 
