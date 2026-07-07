@@ -316,6 +316,16 @@ function getData() {
     raw.totalLabelBottom = parts.slice(1).join(' ') || 'Due';
     delete raw.totalLabel;
   }
+  // Strip Sheets formula-error strings (#ERROR!, #REF!, …) that synced into
+  // contact fields before the fix in loadClientsFromSheet — old saved invoices
+  // may still carry them. Must run before the swap heal (#DIV/0! passes the
+  // phone-shape test).
+  for (const party of [raw.from, raw.to]) {
+    if (!party) continue;
+    for (const k of ['name', 'address', 'email', 'phone']) {
+      if (typeof party[k] === 'string') party[k] = sanitizeSheetValue(party[k]);
+    }
+  }
   // Heal swapped email/phone — if email field looks like a phone, swap them back
   const looksLikeEmail = v => v && v.includes('@');
   const looksLikePhone = v => v && !v.includes('@') && /[\d\s\(\)\+\-\/]/.test(v);
@@ -3562,6 +3572,14 @@ async function generateStatement(clientName) {
   }
 }
 
+// Sheets renders failed formulas as literal error strings (a phone like
+// (876) 555-1234 typed without a leading ' becomes a formula → #ERROR!).
+// Treat them as empty so they never reach invoices.
+function sanitizeSheetValue(v) {
+  if (typeof v !== 'string') return v;
+  return /^#(ERROR!|N\/A|REF!|DIV\/0!|VALUE!|NAME\?|NUM!|NULL!)$/i.test(v.trim()) ? '' : v;
+}
+
 async function loadClientsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
   let rows = [];
@@ -3572,6 +3590,7 @@ async function loadClientsFromSheet() {
   }
   if (!rows.length) return;
   const sheetClients = rows
+    .map(r => r.map(sanitizeSheetValue))
     .filter(r => r[0])
     .map(r => ({ name: r[0], address: r[1] || '', email: r[2] || '', phone: r[3] || '' }));
     
@@ -3771,6 +3790,7 @@ async function loadProfilesFromSheet() {
   if (rows === null) return;
 
   const sheetProfiles = rows
+    .map(r => r.map(sanitizeSheetValue))
     .filter(r => r[0] && r[0].trim())
     .map(r => ({ id: r[0], name: r[1] || '', address: r[2] || '', email: r[3] || '', phone: r[4] || '', logo: r[5] || '' }));
 
