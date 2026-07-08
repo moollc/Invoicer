@@ -1029,6 +1029,10 @@ function saveEdit() {
   data.receiptOverride = data.receiptNumber;
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
   localStorage.removeItem('invoicer-autosave');
+  // If this receipt was archived (i.e. a loaded past invoice), keep the archive
+  // in sync so re-loading it later shows the edit, not the stale copy. New
+  // drafts still only archive on print/send.
+  if (getArchivedInvoice(data.receiptNumber)) archiveInvoice(data.receiptNumber, data);
   // "Saved!" feedback on sticky bar before closing
   const saveBtn = document.getElementById('btn-save-changes');
   if (saveBtn) {
@@ -1252,46 +1256,73 @@ function normalizeInvoiceShape(inv) {
   return safe;
 }
 
-// Load a past invoice into the editor. Full restore from the archive when
-// available; otherwise restore the known summary fields and tell the user the
-// rest weren't recorded — never silently leave wrong data behind.
+// Build a viewable draft from a ledger summary row (no archive). Uses only
+// ledger + client-book fields — does not merge the current editor draft.
+function draftFromLedgerRow(row) {
+  const clientMatch = loadClients().find(c => c.name === row.client);
+  const cur = (String(row.projectTotal || row.amountDue || '').trim().match(/^([A-Z]{2,4})\s/) || [])[1] || 'USD';
+  const parseAmt = s => String(s || '').replace(/^[A-Z]{2,4}\s*/i, '').replace(/[^0-9.,]/g, '').trim() || '0';
+  const due = parseAmt(row.amountDue);
+  const total = parseAmt(row.projectTotal) || due;
+  return normalizeInvoiceShape({
+    from: getData().from,
+    to: {
+      name:    row.client || '',
+      address: clientMatch?.address || '',
+      email:   clientMatch?.email   || '',
+      phone:   clientMatch?.phone   || '',
+    },
+    dateOverride:    row.date || '',
+    receiptOverride: row.receipt,
+    currency:        cur,
+    lineItems: [{
+      service: row.service || 'Service',
+      details: row.description || '',
+      rates:   ['Rate'],
+      costs:   [due || '0'],
+    }],
+    projectTotal: total,
+    totalAmount:  due || total,
+  });
+}
+
+// Load a past invoice into the editor in view mode (not edit). Full restore from
+// the archive when available; otherwise restore known ledger summary fields.
 function loadInvoiceIntoEditor(receipt) {
   if (!receipt) return;
-  const current = getData();
+  if (document.body.classList.contains('editing')) stopEdit();
+  localStorage.removeItem('invoicer-autosave');
+  const draftBanner = document.getElementById('draft-banner');
+  if (draftBanner) draftBanner.remove();
+
   const archived = getArchivedInvoice(receipt);
   if (archived) {
     const restored = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
     restored.receiptOverride = receipt;
+    // Without dateOverride, getData() recomputes date as today on the next
+    // render/refresh — pin the archived display date.
+    restored.dateOverride = restored.dateOverride || restored.date || '';
     document.getElementById('invoice-data').textContent = JSON.stringify(restored, null, 2);
     if (typeof closeDialog === 'function') closeDialog();
-    render(restored);
-    startEdit();
-    showToast(`Invoice ${receipt} loaded`, 'success');
+    // render the derived data so date/receiptNumber come from the overrides —
+    // rendering the raw object leaves stale spans when a field is undefined
+    render(getData());
+    showToast(`Invoice ${receipt} loaded — press E to edit`, 'success');
     return;
   }
   const row = loadLedgerRows().find(r => r.receipt === receipt);
   if (!row) { showToast(`Invoice ${receipt} not found`, 'info'); return; }
-  // Try to fill client details from the client book
   const clientMatch = loadClients().find(c => c.name === row.client);
-  current.to = {
-    name:    row.client || current.to.name,
-    address: clientMatch?.address || current.to.address || '',
-    email:   clientMatch?.email   || current.to.email   || '',
-    phone:   clientMatch?.phone   || current.to.phone   || '',
-  };
-  if (row.date)    current.dateOverride = row.date;
-  if (row.service) current.lineItems = [{ service: row.service, details: row.description || '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
-  current.receiptOverride = row.receipt;
-  document.getElementById('invoice-data').textContent = JSON.stringify(current, null, 2);
+  const restored = draftFromLedgerRow(row);
+  document.getElementById('invoice-data').textContent = JSON.stringify(restored, null, 2);
   if (typeof closeDialog === 'function') closeDialog();
-  render(current);
-  startEdit();
+  render(getData());
   const hasDesc = !!(row.description);
   const msg = (clientMatch && hasDesc)
-    ? `Invoice ${receipt} loaded`
+    ? `Invoice ${receipt} loaded — press E to edit`
     : clientMatch
-      ? `Invoice ${receipt} loaded — re-enter line description`
-      : `Invoice ${receipt} loaded (summary only — re-enter address and line details)`;
+      ? `Invoice ${receipt} loaded (summary) — press E to edit`
+      : `Invoice ${receipt} loaded (summary only) — press E to edit`;
   showToast(msg, 'info');
 }
 
@@ -1965,7 +1996,7 @@ async function renderLedgerHistory() {
 
     const loadBtn = document.createElement('button');
     loadBtn.textContent = '↗ Load';
-    loadBtn.title = 'Open this invoice in the editor';
+    loadBtn.title = 'Load this invoice (view mode — press E to edit)';
     loadBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
     loadBtn.addEventListener('click', () => loadInvoiceFromLedger(row));
 
@@ -2146,7 +2177,9 @@ function duplicateInvoiceFromLedger(row) {
     draft.dateOverride = '';
     draft.receiptOverride = newReceipt;
     document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
-    render(draft);
+    // derive via getData() so the new receipt/date from the overrides render,
+    // not the stale receiptNumber copied from the archived object
+    render(getData());
     closeDialog();
     showToast(`Duplicated ${row.receipt} as new draft ${newReceipt}`, 'success');
     return;
@@ -2164,7 +2197,7 @@ function duplicateInvoiceFromLedger(row) {
     totalAmount:  row.amountDue || existing.totalAmount,
   };
   document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
-  render(draft);
+  render(getData());
   closeDialog();
   showToast(`Duplicated ${row.receipt} (summary only) as ${newReceipt}`, 'info');
 }
@@ -3394,18 +3427,21 @@ ${currentData}`;
       const archived = getArchivedInvoice(loadReceiptId);
       if (archived) {
         const restored = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
+        restored.receiptOverride = loadReceiptId;
+        restored.dateOverride = restored.dateOverride || restored.date || '';
         Object.keys(data).forEach(k => delete data[k]);
         Object.assign(data, restored);
-        data.receiptOverride = loadReceiptId;
+        localStorage.removeItem('invoicer-autosave');
         actionNotes.push(`Loaded full invoice ${loadReceiptId} from archive`);
       } else {
         const row = loadLedgerRows().find(r => r.receipt === loadReceiptId);
         if (row) {
-          if (row.client)  data.to = { ...data.to, name: row.client };
-          if (row.date)    data.dateOverride = row.date;
-          if (row.service) data.lineItems = [{ service: row.service, details: '', rates: ['Rate'], costs: [row.amountDue ? row.amountDue.replace(/[^0-9.,]/g, '').trim() : '0'] }];
-          data.receiptOverride = row.receipt;
-          actionNotes.push(`Loaded receipt ${row.receipt} from ledger summary only — address, contact, line-item details, and currency were not stored for this invoice and have been left as-is. Do not fabricate them.`);
+          // Clean rebuild from ledger + client book — never merge the prior draft
+          const restored = draftFromLedgerRow(row);
+          Object.keys(data).forEach(k => delete data[k]);
+          Object.assign(data, restored);
+          localStorage.removeItem('invoicer-autosave');
+          actionNotes.push(`Loaded receipt ${row.receipt} from ledger summary only — address, contact, line-item details, and currency were not stored for this invoice and have been rebuilt from the ledger and client book. Do not fabricate the rest.`);
         } else {
           actionNotes.push(`Receipt ${loadReceiptId} not found`);
         }
