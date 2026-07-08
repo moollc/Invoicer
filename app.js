@@ -2007,12 +2007,79 @@ async function renderLedgerHistory() {
       field('Pay Period', row.payPeriod || '—')
     );
 
+    // ── Project costs + net margin ──
+    const costsWrap = document.createElement('div');
+    const parseRowAmt = s => parseFloat(String(s || '').replace(/[^0-9.]/g, '')) || 0;
+    const curPrefix = (String(row.projectTotal || row.amountDue || '').trim().match(/^([A-Z]{2,4})\s/) || [])[1] || '';
+    const fmtAmt = n => (curPrefix ? curPrefix + ' ' : '') + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+    const renderCostsSection = () => {
+      const costs = costsForReceipt(row.receipt);
+      const costTotal = costs.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+      const net = parseRowAmt(row.projectTotal || row.amountDue) - costTotal;
+      costsWrap.innerHTML = '';
+      costsWrap.style.cssText = 'display:flex; flex-direction:column; gap:4px; margin-top:6px; padding-top:6px; border-top:1px dashed rgba(20,32,46,0.10);';
+
+      const head = document.createElement('div');
+      head.style.cssText = 'display:flex; justify-content:space-between; align-items:center;';
+      head.innerHTML = `<span style="color:#9aa2ac; font-size:10px; text-transform:uppercase; letter-spacing:0.5px;">Project Costs${costs.length ? ` · ${fmtAmt(costTotal)}` : ''}</span>` +
+        (costs.length ? `<span style="font-size:11px; font-weight:700; color:${net >= 0 ? '#2a8c55' : '#d0241b'};">Net Margin: ${fmtAmt(net)}</span>` : '');
+      costsWrap.appendChild(head);
+
+      costs.forEach(c => {
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:11px; color:#14202e;';
+        const label = document.createElement('span');
+        label.textContent = `${c.date ? c.date + ' · ' : ''}${c.desc}`;
+        label.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+        const amt = document.createElement('span');
+        amt.textContent = fmtAmt(parseFloat(c.amount) || 0);
+        amt.style.cssText = 'font-weight:600; flex-shrink:0;';
+        const del = document.createElement('button');
+        del.textContent = '×';
+        del.title = 'Remove cost';
+        del.style.cssText = 'background:none; border:none; cursor:pointer; color:#9aa2ac; font-size:13px; padding:0 2px; flex-shrink:0;';
+        del.addEventListener('click', e => {
+          e.stopPropagation();
+          deleteProjectCost(c.id);
+          renderCostsSection();
+        });
+        line.append(label, amt, del);
+        costsWrap.appendChild(line);
+      });
+
+      const addRow = document.createElement('div');
+      addRow.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap; margin-top:2px;';
+      const descIn = document.createElement('input');
+      descIn.placeholder = 'Cost description (e.g. Equipment supplier)';
+      descIn.style.cssText = 'flex:2; min-width:120px; font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.13); border-radius:5px; outline:none;';
+      const amtIn = document.createElement('input');
+      amtIn.type = 'number'; amtIn.min = '0'; amtIn.step = '0.01';
+      amtIn.placeholder = 'Amount';
+      amtIn.style.cssText = 'flex:1; min-width:70px; max-width:110px; font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.13); border-radius:5px; outline:none;';
+      const addBtn = document.createElement('button');
+      addBtn.textContent = '+ Add Cost';
+      addBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 10px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
+      const commitCost = () => {
+        const desc = descIn.value.trim();
+        const amount = parseFloat(amtIn.value);
+        if (!desc || isNaN(amount) || amount <= 0) return;
+        addProjectCost({ receipt: row.receipt, client: row.client, desc, amount });
+        renderCostsSection();
+      };
+      addBtn.addEventListener('click', e => { e.stopPropagation(); commitCost(); });
+      amtIn.addEventListener('keydown', e => { if (e.key === 'Enter') commitCost(); });
+      addRow.append(descIn, amtIn, addBtn);
+      costsWrap.appendChild(addRow);
+    };
+    renderCostsSection();
+
     const openBtn = document.createElement('button');
     openBtn.textContent = '↗ Open Invoice';
     openBtn.style.cssText = 'align-self:flex-start; font-family:Roboto,sans-serif; font-size:11px; padding:4px 10px; background:#14202e; color:#fff; border:none; border-radius:5px; cursor:pointer; margin-top:2px;';
     openBtn.addEventListener('click', e => { e.stopPropagation(); loadInvoiceFromLedger(row); document.getElementById('print-overlay').style.display = 'none'; });
 
-    expandPanel.append(detailsGrid, openBtn);
+    expandPanel.append(detailsGrid, costsWrap, openBtn);
 
     let expanded = false;
     info.style.cursor = 'pointer';
@@ -3130,7 +3197,7 @@ async function sendChat() {
 
   // Refresh sheet data so AI always sees live values
   if (_gmailToken && _sheetsSpreadsheetId) {
-    await Promise.allSettled([loadGoalsFromSheet(), loadClientsFromSheet()]);
+    await Promise.allSettled([loadGoalsFromSheet(), loadClientsFromSheet(), loadProjectCostsFromSheet()]);
   }
 
   const currentData = JSON.stringify(getData(), null, 2);
@@ -3147,7 +3214,7 @@ async function sendChat() {
   const ledgerRows = loadLedgerRows();
   const ledgerSummary = ledgerRows.length
     ? `Invoice ledger (${ledgerRows.length} records):\n` + ledgerRows.map(r =>
-        `  Receipt ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | ${r.amountDue} | ${r.status || '⬜ Unpaid'}`
+        `  Receipt ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | total ${r.projectTotal || r.amountDue} | due ${r.amountDue} | ${r.status || '⬜ Unpaid'}`
       ).join('\n')
     : '';
 
@@ -3157,10 +3224,29 @@ async function sendChat() {
     ? existingGoals.map(g => `  ${g.name}: target $${g.amount}, saved $${g.amountReached || 0}, deadline: ${g.deadline || 'none'}, status: ${g.status || 'Active'}, alloc: ${g.allocationPct || 0}%`).join('\n')
     : 'none';
 
+  // Project costs + bills context so the assistant answers margin questions
+  // from real data instead of inventing ledger outflows.
+  const allCosts = loadProjectCosts();
+  const costsSummary = allCosts.length
+    ? `Project costs (money the user spent on projects, linked to ledger receipts — NOT client-billed):\n` + allCosts.map(c =>
+        `  ${c.receipt || '(unlinked)'} | ${c.date} | ${c.desc} | ${c.amount}`
+      ).join('\n')
+    : 'Project costs: none recorded yet.';
+  const allBills = loadBills();
+  const billsSummary = allBills.length
+    ? `Business bills (recurring overhead, not project-linked): ` + allBills.map(b =>
+        `${b.name} ${b.amount}${billCycleLabel(b)}${b.paid ? ' (paid this cycle)' : ''}`
+      ).join(', ')
+    : '';
+  const ledgerRules = `The invoice ledger records INCOME ONLY — it has no expense or outflow rows and cannot record money going out. Never tell the user to add an expense, outflow, or negative entry to the ledger. Money spent on a project is a PROJECT COST: recorded from Ledger → expand a row → Add Cost, or by asking you with an instruction like "record a $25,000 equipment supplier cost for this invoice". Net margin for a project = its PROJECT TOTAL (not the amount due) minus its linked project costs.`;
+
   const systemPrompt = queryMode
-    ? `You are an invoice assistant with access to the user's live ledger, goals, and current invoice data pulled directly from their linked Google Sheet. Answer questions conversationally and concisely. Do not return JSON.
+    ? `You are an invoice assistant with access to the user's live ledger, goals, project costs, and current invoice data pulled directly from their linked Google Sheet. Answer questions conversationally and concisely. Do not return JSON.
+${ledgerRules}
 Current invoice data: ${currentData}
 ${ledgerSummary}
+${costsSummary}
+${billsSummary}
 Goals (live from sheet):\n${goalsDetail}
 Address book: ${existingClients.map(c => c.name).join(', ') || 'empty'}`
     : `You are an invoice data assistant. The current invoice data is shown below — it already reflects all previous changes.
@@ -3174,10 +3260,11 @@ To save a contact to the address book, include "_addContact": { "name": "...", "
 To add a new savings or revenue goal, include "_addGoal": { "name": "...", "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 15, "notes": "..." } — amount is a number, deadline is ISO 8601, allocationPct is 0–100 (default 0 if not mentioned), notes is optional; this does not change the invoice.
 To update an existing goal, include "_updateGoal": { "name": "...", "changes": { "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 20, "notes": "..." } } — name must match an existing goal (case-insensitive), include only the fields that are changing.
 To delete a goal, include "_deleteGoal": { "name": "..." } — name must match an existing goal (case-insensitive); only use this if the user explicitly asks to remove or delete a goal.
-To add expense line items to the current invoice, include "_addExpense": [{ "desc": "...", "amount": 120 }] — array, amount is a number, these belong to the current invoice only.
+To record a project cost (money the user spent on a project — supplier payments, gear rental, crew, etc.), include "_addProjectCost": [{ "receipt": "...", "desc": "...", "amount": 25000 }] — array; amount is a number; receipt is optional and defaults to the current invoice's receiptNumber; if the user names a past project, copy the exact receipt from the ledger summary (never invent one). Project costs are internal margin tracking and NEVER appear on the client-facing invoice or in the ledger. Do not use this for costs the user wants to charge back to the client — those are rebill expenses added via the Expenses toolbar, or line items.
+${ledgerRules}
 To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "📤 Sent", "✅ Paid".
 Date format rule: whenever you emit a "date" field, use MM/DD/YYYY (e.g. 06/11/2026). Never use DD/MM/YYYY or ISO 8601 for the date field.
-Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}
+Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}${allCosts.length ? '\n' + costsSummary : ''}
 Current invoice data:
 ${currentData}`;
 
@@ -3292,7 +3379,11 @@ ${currentData}`;
     const data = getData();
 
     // ── Part B: actions that need the invoice data object ──
-    if (patch._addExpense)   { applyAddExpense(patch._addExpense, data, actionNotes);     delete patch._addExpense; }
+    // _addExpense is the legacy alias for _addProjectCost (old models/history may still emit it)
+    if (patch._addProjectCost || patch._addExpense) {
+      applyAddProjectCost(patch._addProjectCost || patch._addExpense, data, actionNotes);
+      delete patch._addProjectCost; delete patch._addExpense;
+    }
     if (patch._updateStatus) { applyUpdateStatus(patch._updateStatus, data, actionNotes); delete patch._updateStatus; }
 
     // ── _loadReceipt: restore a past invoice ──
@@ -4190,6 +4281,121 @@ function clearPayBillFile() {
   document.getElementById('pay-bill-file').value = '';
   document.getElementById('pay-bill-file-name').textContent = 'Choose file…';
   document.getElementById('pay-bill-file-clear').style.display = 'none';
+}
+
+// ── Project Costs ────────────────────────────────────────────
+// One-off costs the user absorbs on a project (supplier payments, gear, crew),
+// keyed by ledger receipt so margin = invoice total − linked costs. Distinct
+// from Bills (recurring overhead, feeds the income pool) and from the rebill
+// logger (costs charged back to the client as invoice line items).
+
+function loadProjectCosts() {
+  try { return JSON.parse(localStorage.getItem('invoice-project-costs') || '[]'); } catch(e) { return []; }
+}
+function saveProjectCosts(costs) {
+  localStorage.setItem('invoice-project-costs', JSON.stringify(costs));
+}
+function costsForReceipt(receipt) {
+  return loadProjectCosts().filter(c => c.receipt === receipt);
+}
+function projectCostTotal(receipt) {
+  return costsForReceipt(receipt).reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+}
+
+function addProjectCost({ receipt, client, desc, amount, date }) {
+  const cost = {
+    id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+    receipt: (receipt || '').trim(),
+    client:  client || '',
+    desc:    (desc || '').trim(),
+    amount:  String(parseFloat(amount) || 0),
+    date:    date || new Date().toISOString().slice(0, 10),
+  };
+  const costs = loadProjectCosts();
+  costs.push(cost);
+  saveProjectCosts(costs);
+  syncProjectCostsToSheet().then(res => {
+    if (res && !res.success && res.error !== 'Not signed in') {
+      showToast('Cost saved locally — sheet sync failed. It will push on next sync.', 'info');
+    }
+  });
+  return cost;
+}
+
+function deleteProjectCost(id) {
+  saveProjectCosts(loadProjectCosts().filter(c => c.id !== id));
+  syncProjectCostsToSheet();
+}
+
+function projectCostToRow(c) {
+  return [c.id, c.receipt, c.client, c.desc, c.amount, c.date];
+}
+function projectCostFromRow(r) {
+  return {
+    id:      r[0],
+    receipt: sanitizeSheetValue(r[1]) || '',
+    client:  sanitizeSheetValue(r[2]) || '',
+    desc:    sanitizeSheetValue(r[3]) || '',
+    amount:  sanitizeSheetValue(r[4]) || '0',
+    date:    sanitizeSheetValue(r[5]) || '',
+  };
+}
+
+// Upsert by id (Bills pattern); rows whose id no longer exists locally are
+// blanked so a delete on this device doesn't resurrect on reload here.
+async function syncProjectCostsToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
+  const costs = loadProjectCosts();
+  let existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+  if (existing === null) {
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Costs] ensureAllTabs failed:', e.message); }
+    existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+  }
+  if (existing === null) return { success: false, error: 'ProjectCosts tab read failed' };
+  const localIds = new Set(costs.map(c => c.id));
+  let failures = 0;
+  for (const cost of costs) {
+    const newRow = projectCostToRow(cost);
+    const rowIdx = existing.findIndex(r => r[0] === cost.id);
+    try {
+      if (rowIdx === -1) {
+        await sheetsAppend(_sheetsSpreadsheetId, 'ProjectCosts!A1', [newRow]);
+        existing.push(newRow);
+      } else {
+        await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${rowIdx + 2}:F${rowIdx + 2}`, [newRow]);
+      }
+    } catch (e) {
+      failures++;
+      console.warn(`[Costs] Sheet write failed for "${cost.desc}":`, e.message);
+    }
+  }
+  for (let i = 0; i < existing.length; i++) {
+    if (existing[i][0] && !localIds.has(existing[i][0])) {
+      try { await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${i + 2}:F${i + 2}`, [['', '', '', '', '', '']]); } catch (e) {}
+    }
+  }
+  return failures ? { success: false, error: `${failures} cost(s) failed to sync` } : { success: true };
+}
+
+async function loadProjectCostsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  let rows = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+  if (rows === null) {
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Costs] ensureAllTabs failed:', e.message); }
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+  }
+  if (rows === null) return;
+  const sheetCosts = rows.filter(r => r[0] && r[0].trim()).map(projectCostFromRow);
+  const local = loadProjectCosts();
+  if (!sheetCosts.length) {
+    if (local.length) await syncProjectCostsToSheet();
+    return;
+  }
+  // Non-destructive merge: sheet wins by id, local-only records kept + pushed
+  const sheetIds = new Set(sheetCosts.map(c => c.id));
+  const localOnly = local.filter(c => !sheetIds.has(c.id));
+  saveProjectCosts([...sheetCosts, ...localOnly]);
+  if (localOnly.length) await syncProjectCostsToSheet();
 }
 
 async function confirmPayBill() {
@@ -5508,7 +5714,7 @@ async function ensureAllTabs(spreadsheetId) {
     }});
   }
 
-  for (const tab of ['Analysis', 'Clients', 'Goals', 'Bills', 'Profiles', 'Settings']) {
+  for (const tab of ['Analysis', 'Clients', 'Goals', 'Bills', 'Profiles', 'Settings', 'ProjectCosts']) {
     if (!existing.includes(tab)) {
       requests.push({ addSheet: { properties: { title: tab } } });
     }
@@ -5550,6 +5756,10 @@ async function ensureAllTabs(spreadsheetId) {
       await sheetsWrite(spreadsheetId, 'Goals!A1:L1', [['Name', 'Target Amount', 'Deadline', 'Notes', 'Created', 'Amount Reached', 'Last Contribution', 'Status', 'Claim Date', 'Receipt #', 'Receipt File', 'Allocation %']]);
     }
   }
+  if (!existing.includes('ProjectCosts')) {
+    await sheetsWrite(spreadsheetId, 'ProjectCosts!A1:F1', [['ID', 'Receipt #', 'Client', 'Description', 'Amount', 'Date']]);
+  }
+
   const billsHeaderRow = ['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History', 'Paid Total', 'Recipient', 'Cycle Start', 'Receipt Doc URL', 'Receipt Doc Name'];
   if (!existing.includes('Bills')) {
     await sheetsWrite(spreadsheetId, 'Bills!A1:O1', [billsHeaderRow]);
@@ -5690,7 +5900,8 @@ async function setupDrive() {
       loadGoalsFromSheet(),
       loadBillsFromSheet(),
       loadProfilesFromSheet(),
-      loadSettingsFromSheet()
+      loadSettingsFromSheet(),
+      loadProjectCostsFromSheet()
     ]);
     
     results.forEach((res, i) => {
@@ -6623,14 +6834,25 @@ function applyDeleteGoal(deleteData, actionNotes) {
   actionNotes.push(`Goal removed: ${removed.name}`);
 }
 
-function applyAddExpense(items, data, actionNotes) {
-  if (!Array.isArray(items) || items.length === 0) { console.warn('[applyAddExpense] Expected non-empty array.', items); return; }
+function applyAddProjectCost(items, data, actionNotes) {
+  if (!Array.isArray(items)) items = (items && typeof items === 'object') ? [items] : [];
+  if (!items.length) { console.warn('[applyAddProjectCost] Expected non-empty array.', items); return; }
   const valid = items.filter(item => item.desc && typeof item.desc === 'string' && !isNaN(parseFloat(item.amount)))
-    .map(item => ({ desc: item.desc.trim(), amount: typeof item.amount === 'number' ? item.amount : parseFloat(item.amount) }));
-  if (!valid.length) { console.warn('[applyAddExpense] No valid items.', items); return; }
-  if (!Array.isArray(data.invoiceExpenses)) data.invoiceExpenses = [];
-  data.invoiceExpenses.push(...valid);
-  actionNotes.push(`Expense${valid.length > 1 ? 's' : ''} added: ${valid.map(i => i.desc).join(', ')}`);
+    .map(item => ({
+      receipt: typeof item.receipt === 'string' ? item.receipt.trim() : '',
+      desc: item.desc.trim(),
+      amount: typeof item.amount === 'number' ? item.amount : parseFloat(item.amount)
+    }));
+  if (!valid.length) { console.warn('[applyAddProjectCost] No valid items.', items); return; }
+  // Never let the model attach a cost to a receipt that doesn't exist
+  const rows = loadLedgerRows();
+  const known = new Set(rows.map(r => r.receipt));
+  valid.forEach(v => {
+    if (!v.receipt || !known.has(v.receipt)) v.receipt = data.receiptNumber || '';
+    const row = rows.find(r => r.receipt === v.receipt);
+    addProjectCost({ receipt: v.receipt, client: row ? row.client : (data.to?.name || ''), desc: v.desc, amount: v.amount });
+  });
+  actionNotes.push(`Project cost${valid.length > 1 ? 's' : ''} recorded: ${valid.map(i => `${i.desc} (${i.amount})`).join(', ')} — see Ledger → expand row`);
 }
 
 const VALID_STATUSES = ['⬜ Unpaid', '💰 Deposit', '📤 Sent', '✅ Paid'];
@@ -7708,6 +7930,36 @@ window.addEventListener('beforeunload', (e) => {
 
 // Init Google auth silently on load — attempt silent token refresh if stored token is expired
 window.addEventListener('load', () => {
+  // One-time migration: the old _addExpense action saved invoiceExpenses on
+  // invoice data but nothing ever rendered them. They are project costs now
+  // (keyed by receipt), so pull them out of every place a draft can live —
+  // the loaded document, the autosave draft, and the invoice archive.
+  try {
+    if (!localStorage.getItem('invoice-expenses-migrated')) {
+      let migrated = 0;
+      const scrub = (obj, receiptHint) => {
+        if (!obj || !Array.isArray(obj.invoiceExpenses) || !obj.invoiceExpenses.length) return false;
+        obj.invoiceExpenses.forEach(e => {
+          if (e && e.desc && !isNaN(parseFloat(e.amount))) {
+            addProjectCost({ receipt: obj.receiptOverride || obj.receiptNumber || receiptHint || '', client: obj.to?.name || '', desc: e.desc, amount: e.amount });
+            migrated++;
+          }
+        });
+        delete obj.invoiceExpenses;
+        return true;
+      };
+      const draft = getData();
+      if (scrub(draft)) document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
+      const auto = JSON.parse(localStorage.getItem('invoicer-autosave') || 'null');
+      if (auto && scrub(auto)) localStorage.setItem('invoicer-autosave', JSON.stringify(auto));
+      const arc = loadInvoiceArchive();
+      let arcChanged = false;
+      Object.entries(arc).forEach(([receipt, inv]) => { if (scrub(inv, receipt)) arcChanged = true; });
+      if (arcChanged) localStorage.setItem('invoice-archive', JSON.stringify(arc));
+      localStorage.setItem('invoice-expenses-migrated', '1');
+      if (migrated) console.log(`✓ Migrated ${migrated} legacy invoiceExpenses to project costs`);
+    }
+  } catch(e) {}
   try {
     initGmailAuth(() => {
       updateEmailBtn();
