@@ -348,8 +348,16 @@ function getData() {
       raw.projectTotal.startsWith(raw.currency + ' ')) {
     raw.projectTotal = raw.projectTotal.slice(raw.currency.length + 1).trim();
   }
+  if (!document.body.classList.contains('editing')) syncTotalsFromLineItems(raw);
   return raw;
 }
+
+// Totals sync lives in source/shared/invoice-totals.mjs (loaded via boot/invoice-totals.js).
+function parseMoneyNum(s) { return InvoiceTotals.parseMoneyNum(s); }
+function sumLineItemsTotal(data) { return InvoiceTotals.sumLineItemsTotal(data); }
+function syncTotalsFromLineItems(data) { return InvoiceTotals.syncTotalsFromLineItems(data); }
+function formatTotalAmountDisplay(amount, data) { return InvoiceTotals.formatTotalAmountDisplay(amount, data); }
+function prepareInvoiceForArchive(data) { return InvoiceTotals.prepareInvoiceForArchive(data); }
 
 function get(obj, path) {
   if (!obj) return undefined;
@@ -367,6 +375,7 @@ function safeText(el, ...lines) {
 }
 
 function render(data) {
+  if (!document.body.classList.contains('editing')) syncTotalsFromLineItems(data);
   // Persist invoice state so it survives page refresh
   try { localStorage.setItem('invoice-last-state', JSON.stringify(data)); } catch(e) {}
 
@@ -1015,7 +1024,7 @@ function extractEditData() {
 }
 
 function saveEdit() {
-  const data = extractEditData();
+  const data = syncTotalsFromLineItems(extractEditData());
   // Strip line items where both service and details are blank
   if (Array.isArray(data.lineItems)) {
     data.lineItems = data.lineItems.filter(item => {
@@ -1041,14 +1050,14 @@ function saveEdit() {
     saveBtn.disabled = true;
     setTimeout(() => {
       stopEdit();
-      render(data);
+      render(getData());
       saveBtn.textContent = 'Save Changes';
       saveBtn.style.background = '#d0241b';
       saveBtn.disabled = false;
     }, 800);
   } else {
     stopEdit();
-    render(data);
+    render(getData());
   }
 }
 
@@ -1229,7 +1238,7 @@ function archiveInvoice(receipt, data) {
   const arc = loadInvoiceArchive();
   // Delete-then-reinsert keeps this receipt at the end (most recent) in insertion order.
   delete arc[receipt];
-  arc[receipt] = JSON.parse(JSON.stringify(data));
+  arc[receipt] = prepareInvoiceForArchive(data);
   // Evict oldest entries when over cap.
   const keys = Object.keys(arc);
   if (keys.length > ARCHIVE_CAP) keys.slice(0, keys.length - ARCHIVE_CAP).forEach(k => delete arc[k]);
@@ -1302,32 +1311,33 @@ function loadInvoiceIntoEditor(receipt) {
     // Without dateOverride, getData() recomputes date as today on the next
     // render/refresh — pin the archived display date.
     restored.dateOverride = restored.dateOverride || restored.date || '';
+    syncTotalsFromLineItems(restored);
     document.getElementById('invoice-data').textContent = JSON.stringify(restored, null, 2);
     if (typeof closeDialog === 'function') closeDialog();
     // render the derived data so date/receiptNumber come from the overrides —
     // rendering the raw object leaves stale spans when a field is undefined
     render(getData());
-    showToast(`Invoice ${receipt} loaded — press E to edit`, 'success');
+    showToast(`Invoice ${receipt} loaded`, 'success');
     return;
   }
   const row = loadLedgerRows().find(r => r.receipt === receipt);
   if (!row) { showToast(`Invoice ${receipt} not found`, 'info'); return; }
   const clientMatch = loadClients().find(c => c.name === row.client);
-  const restored = draftFromLedgerRow(row);
+  const restored = syncTotalsFromLineItems(draftFromLedgerRow(row));
   document.getElementById('invoice-data').textContent = JSON.stringify(restored, null, 2);
   if (typeof closeDialog === 'function') closeDialog();
   render(getData());
   const hasDesc = !!(row.description);
   const msg = (clientMatch && hasDesc)
-    ? `Invoice ${receipt} loaded — press E to edit`
+    ? `Invoice ${receipt} loaded`
     : clientMatch
-      ? `Invoice ${receipt} loaded (summary) — press E to edit`
-      : `Invoice ${receipt} loaded (summary only) — press E to edit`;
+      ? `Invoice ${receipt} loaded (summary)`
+      : `Invoice ${receipt} loaded (summary only)`;
   showToast(msg, 'info');
 }
 
 function markReceiptAsSent() {
-  const data = getData();
+  const data = syncTotalsFromLineItems(getData());
   // Read receipt from rendered DOM — avoids autoReceiptNumber() re-incrementing
   const receiptEl = document.querySelector('[data-field="receiptNumber"]');
   const receipt = (receiptEl && receiptEl.textContent.trim()) || data.receiptNumber;
@@ -1361,7 +1371,7 @@ function markReceiptAsSent() {
 let _pendingRow = null; // the row object for the current invoice, set on dialog open
 
 async function confirmPrint() {
-  const data = getData();
+  const data = syncTotalsFromLineItems(getData());
   const services = data.lineItems.map(l => l.service).join(', ');
   const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
   _pendingRow = {
@@ -1996,7 +2006,7 @@ async function renderLedgerHistory() {
 
     const loadBtn = document.createElement('button');
     loadBtn.textContent = '↗ Load';
-    loadBtn.title = 'Load this invoice (view mode — press E to edit)';
+    loadBtn.title = 'Load this invoice into the editor';
     loadBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:11px; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; background:#fff; color:#14202e; cursor:pointer; flex-shrink:0;';
     loadBtn.addEventListener('click', () => loadInvoiceFromLedger(row));
 
@@ -2173,7 +2183,7 @@ function duplicateInvoiceFromLedger(row) {
   const newReceipt = nextReceiptNumber((prevReceipt || '').trim());
 
   if (archived) {
-    const draft = normalizeInvoiceShape(JSON.parse(JSON.stringify(archived)));
+    const draft = syncTotalsFromLineItems(normalizeInvoiceShape(JSON.parse(JSON.stringify(archived))));
     draft.dateOverride = '';
     draft.receiptOverride = newReceipt;
     document.getElementById('invoice-data').textContent = JSON.stringify(draft, null, 2);
@@ -3475,6 +3485,7 @@ ${currentData}`;
     }
     data.dateOverride    = data.dateOverride || data.date;
     data.receiptOverride = data.receiptOverride || data.receiptNumber;
+    syncTotalsFromLineItems(data);
     document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
     // Re-derive date/receiptNumber from overrides so render shows correct values
     render(getData());

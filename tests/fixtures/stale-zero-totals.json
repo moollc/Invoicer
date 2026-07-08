@@ -1,0 +1,19 @@
+{
+  "receiptOverride": "20250701A",
+  "dateOverride": "07 / 01 / 2026",
+  "currency": "JMD",
+  "from": { "name": "moo LLC", "address": "", "email": "", "phone": "" },
+  "to": { "name": "Test Client", "address": "1 Main St", "email": "client@test.com", "phone": "" },
+  "lineItems": [
+    {
+      "service": "Production",
+      "details": "Day rate",
+      "rates": ["Day"],
+      "costs": ["25000", "25000"]
+    }
+  ],
+  "projectTotal": "0",
+  "totalAmount": "0",
+  "totalLabelTop": "Total",
+  "totalLabelBottom": "Due"
+}

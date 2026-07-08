@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node build/scripts/launcher.js",
     "dev": "node build/scripts/launcher.js --dev",
-    "build": "node build/scripts/build-web.js"
+    "build": "node build/scripts/build-web.js",
+    "test:totals": "node --test tests/invoice-totals.test.mjs"
   },
   "dependencies": {},
   "devDependencies": {}

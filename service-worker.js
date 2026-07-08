@@ -1,10 +1,12 @@
-﻿const CACHE = 'app-mqe81fp7'; // __CACHE_VERSION__
+﻿const CACHE = 'app-mqe81fp10'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/privacy.html',
   '/terms.html',
+  '/boot/invoice-totals.js',
+  '/source/shared/invoice-totals.mjs',
   '/source/shared/permissions.js',
   '/source/shared/file-bridge.js',
   '/source/shared/sync.js'
