@@ -4273,40 +4273,84 @@ async function deleteBill(id) {
 
 let _payBillId = null;
 let _payBillDoc = null; // { dataUrl, name }
+let _payBillModalHtml = null; // original form HTML (restored after celebrate)
+let _payBillHideTimer = null;
+
+function ensurePayBillForm() {
+  const overlay = document.getElementById('pay-bill-overlay');
+  if (!overlay) return null;
+  if (!_payBillModalHtml) {
+    _payBillModalHtml = overlay.innerHTML;
+  } else if (!document.getElementById('pay-bill-name')) {
+    // Celebrate path replaced the form — restore before reopening
+    overlay.innerHTML = _payBillModalHtml;
+  }
+  return overlay;
+}
+
+function hidePayBillOverlay() {
+  const overlay = document.getElementById('pay-bill-overlay');
+  if (_payBillHideTimer) {
+    clearTimeout(_payBillHideTimer);
+    _payBillHideTimer = null;
+  }
+  if (!overlay) return;
+  overlay.classList.remove('modal-open');
+  // No CSS transition on this overlay — always force-hide (transitionend never fired → stuck UI)
+  overlay.style.display = 'none';
+  if (_payBillModalHtml) overlay.innerHTML = _payBillModalHtml;
+  // Restore backdrop dismiss (celebrate path overwrites overlay.onclick)
+  overlay.onclick = function (e) {
+    if (e.target.id === 'pay-bill-overlay') closePayBillModal(false);
+  };
+  _payBillId = null;
+  _payBillDoc = null;
+}
 
 function markBillPaid(id) {
   _payBillId = id;
   _payBillDoc = null;
   const bill = loadBills().find(b => b.id === id);
   if (!bill) return;
+  const overlay = ensurePayBillForm();
+  if (!overlay) return;
   document.getElementById('pay-bill-name').textContent = bill.name;
   document.getElementById('pay-bill-file-name').textContent = 'Choose file…';
   document.getElementById('pay-bill-file').value = '';
   document.getElementById('pay-bill-file-clear').style.display = 'none';
-  const overlay = document.getElementById('pay-bill-overlay');
   overlay.style.display = 'flex';
   requestAnimationFrame(() => overlay.classList.add('modal-open'));
 }
 
 function closePayBillModal(celebrate) {
   const overlay = document.getElementById('pay-bill-overlay');
-  if (celebrate) {
-    const box = overlay.querySelector('.modal-box');
-    if (box) {
-      box.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;gap:12px;">
-        <div style="font-size:48px;line-height:1;">✅</div>
-        <div style="font-size:18px;font-weight:700;color:#fff;">Paid!</div>
-      </div>`;
-    }
-    triggerConfetti();
-    setTimeout(() => {
-      overlay.classList.remove('modal-open');
-      overlay.addEventListener('transitionend', () => { overlay.style.display = 'none'; }, { once: true });
-    }, 1100);
-  } else {
-    overlay.classList.remove('modal-open');
-    overlay.addEventListener('transitionend', () => { overlay.style.display = 'none'; }, { once: true });
+  if (!overlay) return;
+
+  // Cancel path or already celebrating: dismiss immediately
+  if (!celebrate) {
+    hidePayBillOverlay();
+    return;
   }
+
+  if (!_payBillModalHtml) _payBillModalHtml = overlay.innerHTML;
+
+  const box = overlay.querySelector('.modal-box');
+  if (box) {
+    box.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;gap:10px;cursor:pointer;" onclick="hidePayBillOverlay()" role="button" tabindex="0" aria-label="Dismiss paid confirmation">
+      <div style="font-size:48px;line-height:1;">✅</div>
+      <div style="font-size:18px;font-weight:700;color:#14202e;">Paid!</div>
+      <div style="font-size:12px;color:#6c7682;">Tap anywhere to continue</div>
+    </div>`;
+  }
+  // Backdrop or card: dismiss on any click while success is showing
+  overlay.onclick = function payBillSuccessDismiss() {
+    overlay.onclick = null;
+    hidePayBillOverlay();
+  };
+  triggerConfetti();
+  // Auto-dismiss — do not wait for transitionend (none defined on this overlay)
+  if (_payBillHideTimer) clearTimeout(_payBillHideTimer);
+  _payBillHideTimer = setTimeout(hidePayBillOverlay, 1400);
   _payBillId = null;
   _payBillDoc = null;
 }
