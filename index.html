@@ -1001,9 +1001,9 @@
     <button onclick="closePayBillModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
     <div class="modal-label">Bill Payment</div>
     <div id="pay-bill-name" class="modal-title"></div>
-    <p style="font-size:12px;color:#6c7682;margin:0 0 16px;">Optionally attach a receipt, invoice, or statement PDF/image before marking paid.</p>
+    <p style="font-size:12px;color:#6c7682;margin:0 0 16px;">Optionally attach a payment receipt (PDF/image) before marking paid.</p>
     <div class="modal-form-group">
-      <label class="modal-form-label">Attach Document (optional)</label>
+      <label class="modal-form-label">Payment Receipt (optional)</label>
       <label id="pay-bill-file-label" class="pay-bill-file-label">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         <span id="pay-bill-file-name">Choose file…</span>
@@ -1014,6 +1014,29 @@
     <div class="modal-btn-row">
       <button onclick="confirmPayBill()">Mark Paid</button>
       <button onclick="closePayBillModal()" class="modal-btn-secondary">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- INVOICE BILL ATTACH MODAL -->
+<div id="invoice-bill-overlay" role="dialog" aria-modal="true" aria-label="Attach Bill Invoice" onclick="if(event.target.id==='invoice-bill-overlay') closeInvoiceBillModal()" style="display:none;">
+  <div class="modal-box modal-box--400">
+    <button onclick="closeInvoiceBillModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
+    <div class="modal-label">Supplier Invoice</div>
+    <div id="invoice-bill-name" class="modal-title"></div>
+    <p style="font-size:12px;color:#6c7682;margin:0 0 16px;">Attach the biller's invoice (PDF/image). The bill stays unpaid until you use Pay.</p>
+    <div class="modal-form-group">
+      <label class="modal-form-label">Invoice Document (optional)</label>
+      <label id="invoice-bill-file-label" class="pay-bill-file-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        <span id="invoice-bill-file-name">Choose file…</span>
+        <input id="invoice-bill-file" type="file" accept="application/pdf,image/*" style="display:none;" onchange="onInvoiceBillFileChange(this)">
+      </label>
+      <button id="invoice-bill-file-clear" onclick="clearInvoiceBillFile()" style="display:none;background:none;border:none;color:#9aa2ac;font-size:11px;cursor:pointer;padding:4px 0;">✕ Remove</button>
+    </div>
+    <div class="modal-btn-row">
+      <button onclick="confirmBillInvoice()">Save Invoice</button>
+      <button onclick="closeInvoiceBillModal()" class="modal-btn-secondary">Cancel</button>
     </div>
   </div>
 </div>

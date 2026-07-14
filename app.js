@@ -1284,11 +1284,16 @@ function draftFromLedgerRow(row) {
     dateOverride:    row.date || '',
     receiptOverride: row.receipt,
     currency:        cur,
+    // Cost the line item at the full project total, not the amount due — the
+    // view-mode totals sync (syncTotalsFromLineItems) treats line-item costs as
+    // full scope and heals projectTotal to match. Using `due` here would make a
+    // deposit-style row (total 60k, due 25k) collapse its project total to 25k
+    // on load. totalAmount carries the (possibly partial) amount due.
     lineItems: [{
       service: row.service || 'Service',
       details: row.description || '',
       rates:   ['Rate'],
-      costs:   [due || '0'],
+      costs:   [total || '0'],
     }],
     projectTotal: total,
     totalAmount:  due || total,
@@ -2115,12 +2120,42 @@ async function renderLedgerHistory() {
     };
     renderCostsSection();
 
+    // ── Rebill expenses for this receipt (pass-through, client-facing) ──
+    const rebillWrap = document.createElement('div');
+    const renderRebillSection = () => {
+      const expenses = clientExpensesForReceipt(row.receipt);
+      rebillWrap.innerHTML = '';
+      if (!expenses.length) { rebillWrap.style.display = 'none'; return; }
+      rebillWrap.style.display = 'flex';
+      rebillWrap.style.cssText += ';flex-direction:column; gap:4px; margin-top:6px; padding-top:6px; border-top:1px dashed rgba(20,32,46,0.10);';
+      const pending = expenses.filter(e => !e.billed);
+      const head = document.createElement('div');
+      head.innerHTML = `<span style="color:#9aa2ac; font-size:10px; text-transform:uppercase; letter-spacing:0.5px;">Rebill Expenses${pending.length ? ` · ${pending.length} pending` : ''}</span>`;
+      rebillWrap.appendChild(head);
+      expenses.forEach(e => {
+        const line = document.createElement('div');
+        line.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:11px; color:#14202e;';
+        const label = document.createElement('span');
+        label.textContent = `${e.date ? e.date + ' · ' : ''}${e.description}`;
+        label.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
+        const amt = document.createElement('span');
+        amt.textContent = fmtAmt(parseFloat(e.amount) || 0);
+        amt.style.cssText = 'font-weight:600; flex-shrink:0;';
+        const status = document.createElement('span');
+        status.textContent = e.billed ? `✓ billed${e.billedReceipt && e.billedReceipt !== row.receipt ? ' → ' + e.billedReceipt : ''}` : 'pending';
+        status.style.cssText = `flex-shrink:0; font-size:10px; font-weight:600; color:${e.billed ? '#2a8c55' : '#c47f17'};`;
+        line.append(label, amt, status);
+        rebillWrap.appendChild(line);
+      });
+    };
+    renderRebillSection();
+
     const openBtn = document.createElement('button');
     openBtn.textContent = '↗ Open Invoice';
     openBtn.style.cssText = 'align-self:flex-start; font-family:Roboto,sans-serif; font-size:11px; padding:4px 10px; background:#14202e; color:#fff; border:none; border-radius:5px; cursor:pointer; margin-top:2px;';
     openBtn.addEventListener('click', e => { e.stopPropagation(); loadInvoiceFromLedger(row); document.getElementById('print-overlay').style.display = 'none'; });
 
-    expandPanel.append(detailsGrid, costsWrap, openBtn);
+    expandPanel.append(detailsGrid, costsWrap, rebillWrap, openBtn);
 
     let expanded = false;
     info.style.cursor = 'pointer';
@@ -3281,14 +3316,21 @@ async function sendChat() {
         `${b.name} ${b.amount}${billCycleLabel(b)}${b.paid ? ' (paid this cycle)' : ''}`
       ).join(', ')
     : '';
-  const ledgerRules = `The invoice ledger records INCOME ONLY — it has no expense or outflow rows and cannot record money going out. Never tell the user to add an expense, outflow, or negative entry to the ledger. Money spent on a project is a PROJECT COST: recorded from Ledger → expand a row → Add Cost, or by asking you with an instruction like "record a $25,000 equipment supplier cost for this invoice". Net margin for a project = its PROJECT TOTAL (not the amount due) minus its linked project costs.`;
+  const allRebill = loadClientExpensesAll();
+  const rebillSummary = allRebill.length
+    ? `Rebill expenses (pass-through costs the user charges BACK to the client; linked to the receipt where they were incurred):\n` + allRebill.map(e =>
+        `  ${e.receipt || '(unlinked)'} | ${e.date} | ${e.description} | ${e.amount} | ${e.billed ? `billed${e.billedReceipt ? ' on ' + e.billedReceipt : ''}` : 'pending'}`
+      ).join('\n')
+    : '';
+  const ledgerRules = `The invoice ledger records INCOME ONLY — it has no expense or outflow rows and cannot record money going out. Never tell the user to add an expense, outflow, or negative entry to the ledger. Money spent on a project that the user absorbs is a PROJECT COST: recorded from Ledger → expand a row → Add Cost, or by asking you with an instruction like "record a $25,000 equipment supplier cost for this invoice". Costs the user will charge back to the client are REBILL EXPENSES: logged via the Expenses toolbar button (receipt-linked), rebilled onto the invoice as an "Expense Rebill" line item. Net margin for a project = its PROJECT TOTAL (not the amount due) minus its linked project costs.`;
 
   const systemPrompt = queryMode
-    ? `You are an invoice assistant with access to the user's live ledger, goals, project costs, and current invoice data pulled directly from their linked Google Sheet. Answer questions conversationally and concisely. Do not return JSON.
+    ? `You are an invoice assistant with access to the user's live ledger, goals, project costs, rebill expenses, and current invoice data pulled directly from their linked Google Sheet. Answer questions conversationally and concisely. Do not return JSON.
 ${ledgerRules}
 Current invoice data: ${currentData}
 ${ledgerSummary}
 ${costsSummary}
+${rebillSummary}
 ${billsSummary}
 Goals (live from sheet):\n${goalsDetail}
 Address book: ${existingClients.map(c => c.name).join(', ') || 'empty'}`
@@ -3303,11 +3345,12 @@ To save a contact to the address book, include "_addContact": { "name": "...", "
 To add a new savings or revenue goal, include "_addGoal": { "name": "...", "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 15, "notes": "..." } — amount is a number, deadline is ISO 8601, allocationPct is 0–100 (default 0 if not mentioned), notes is optional; this does not change the invoice.
 To update an existing goal, include "_updateGoal": { "name": "...", "changes": { "amount": 3500, "deadline": "YYYY-MM-DD", "allocationPct": 20, "notes": "..." } } — name must match an existing goal (case-insensitive), include only the fields that are changing.
 To delete a goal, include "_deleteGoal": { "name": "..." } — name must match an existing goal (case-insensitive); only use this if the user explicitly asks to remove or delete a goal.
-To record a project cost (money the user spent on a project — supplier payments, gear rental, crew, etc.), include "_addProjectCost": [{ "receipt": "...", "desc": "...", "amount": 25000 }] — array; amount is a number; receipt is optional and defaults to the current invoice's receiptNumber; if the user names a past project, copy the exact receipt from the ledger summary (never invent one). Project costs are internal margin tracking and NEVER appear on the client-facing invoice or in the ledger. Do not use this for costs the user wants to charge back to the client — those are rebill expenses added via the Expenses toolbar, or line items.
+To record a project cost (money the user spent on a project — supplier payments, gear rental, crew, etc.), include "_addProjectCost": [{ "receipt": "...", "desc": "...", "amount": 25000 }] — array; amount is a number; receipt is optional and defaults to the current invoice's receiptNumber; if the user names a past project, copy the exact receipt from the ledger summary (never invent one). Project costs are internal margin tracking and NEVER appear on the client-facing invoice or in the ledger. Do not use this for costs the user wants to charge back to the client — those are rebill expenses.
+To log a rebill expense (a pass-through cost the user will CHARGE BACK to the client, e.g. travel, materials), include "_addClientExpense": [{ "receipt": "...", "description": "...", "amount": 150 }] — array; amount is a number; receipt is optional and defaults to the current invoice's receiptNumber (copy exact receipts from the ledger summary, never invent one). This logs the expense as pending; the user rebills it onto the invoice from the Expenses toolbar. Do not confuse with "_addProjectCost" (absorbed costs).
 ${ledgerRules}
 To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "📤 Sent", "✅ Paid".
 Date format rule: whenever you emit a "date" field, use MM/DD/YYYY (e.g. 06/11/2026). Never use DD/MM/YYYY or ISO 8601 for the date field.
-Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}${allCosts.length ? '\n' + costsSummary : ''}
+Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}${allCosts.length ? '\n' + costsSummary : ''}${allRebill.length ? '\n' + rebillSummary : ''}
 Current invoice data:
 ${currentData}`;
 
@@ -3427,6 +3470,7 @@ ${currentData}`;
       applyAddProjectCost(patch._addProjectCost || patch._addExpense, data, actionNotes);
       delete patch._addProjectCost; delete patch._addExpense;
     }
+    if (patch._addClientExpense) { applyAddClientExpense(patch._addClientExpense, data, actionNotes); delete patch._addClientExpense; }
     if (patch._updateStatus) { applyUpdateStatus(patch._updateStatus, data, actionNotes); delete patch._updateStatus; }
 
     // ── _loadReceipt: restore a past invoice ──
@@ -4095,7 +4139,9 @@ function billToSheetRow(bill) {
     bill.recipient || '',
     bill.cycleStart || '',
     bill.receiptDocUrl || '',
-    bill.receiptDocName || ''
+    bill.receiptDocName || '',
+    bill.invoiceDocUrl || '',
+    bill.invoiceDocName || ''
   ];
 }
 
@@ -4110,7 +4156,9 @@ function billFromSheetRow(r) {
     recipient: r[11] || '',
     cycleStart: r[12] || '',
     receiptDocUrl: r[13] || '',
-    receiptDocName: r[14] || ''
+    receiptDocName: r[14] || '',
+    invoiceDocUrl: r[15] || '',
+    invoiceDocName: r[16] || ''
   };
 }
 
@@ -4127,6 +4175,9 @@ function mergeBillFromLocal(sheetBill, localBill) {
   }
   if (!sheetBill.receiptDocUrl && localBill.receiptDocUrl) result.receiptDocUrl = localBill.receiptDocUrl;
   if (!sheetBill.receiptDocName && localBill.receiptDocName) result.receiptDocName = localBill.receiptDocName;
+  if (!sheetBill.invoiceDocUrl && localBill.invoiceDocUrl) result.invoiceDocUrl = localBill.invoiceDocUrl;
+  if (!sheetBill.invoiceDocName && localBill.invoiceDocName) result.invoiceDocName = localBill.invoiceDocName;
+  if (!sheetBill.invoiceDocUrl && localBill.invoiceDoc) result.invoiceDoc = localBill.invoiceDoc;
   if (!sheetBill.recipient && localBill.recipient) result.recipient = localBill.recipient;
   if (!sheetBill.cycleStart && localBill.cycleStart) result.cycleStart = localBill.cycleStart;
   return result;
@@ -4136,6 +4187,7 @@ function billNeedsSheetRepair(merged, sheetBill) {
   return (merged.paid && !sheetBill.paid)
     || (merged.paidTotal !== '0' && (!sheetBill.paidTotal || sheetBill.paidTotal === '0'))
     || (merged.receiptDocUrl && merged.receiptDocUrl !== (sheetBill.receiptDocUrl || ''))
+    || (merged.invoiceDocUrl && merged.invoiceDocUrl !== (sheetBill.invoiceDocUrl || ''))
     || (merged.recipient && merged.recipient !== (sheetBill.recipient || ''))
     || (merged.cycleStart && merged.cycleStart !== (sheetBill.cycleStart || ''));
 }
@@ -4143,10 +4195,10 @@ function billNeedsSheetRepair(merged, sheetBill) {
 async function syncBillsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
   const bills = loadBills();
-  let existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+  let existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:Q');
   if (existing === null) {
     try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Bills] ensureAllTabs failed:', e.message); }
-    existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+    existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:Q');
   }
   if (existing === null) return { success: false, error: 'Bills tab read failed' };
   let failures = 0;
@@ -4158,7 +4210,7 @@ async function syncBillsToSheet() {
         await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
         existing.push(newRow);
       } else {
-        await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:O${rowIdx + 2}`, [newRow]);
+        await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:Q${rowIdx + 2}`, [newRow]);
       }
     } catch (e) {
       failures++;
@@ -4170,10 +4222,10 @@ async function syncBillsToSheet() {
 
 async function loadBillsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  let rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+  let rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:Q');
   if (rows === null) {
     try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Bills] ensureAllTabs failed:', e.message); }
-    rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:O');
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:Q');
   }
   if (rows === null) return;
   const sheetBills = rows.filter(r => r[0] && r[0].trim()).map(billFromSheetRow);
@@ -4374,6 +4426,147 @@ function clearPayBillFile() {
   document.getElementById('pay-bill-file-clear').style.display = 'none';
 }
 
+let _invoiceBillId = null;
+let _invoiceBillDoc = null;
+
+function billSlug(name) {
+  return name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+function billRenamedFile(bill, kind, originalName) {
+  const ext = originalName.includes('.') ? originalName.split('.').pop() : '';
+  const dateStr = new Date().toISOString().slice(0, 10);
+  return `${billSlug(bill.name)}-${kind}-${dateStr}${ext ? '.' + ext : ''}`;
+}
+
+async function ensureBillsDriveFolder() {
+  const folderQuery = `name = 'Bills' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const folderSearch = await driveRequest('GET', `/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name)`);
+  if (folderSearch?.files?.length > 0) return folderSearch.files[0].id;
+  const created = await driveRequest('POST', '/files', { name: 'Bills', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
+  if (!created.id) throw new Error('Failed to create Bills folder in Drive.');
+  return created.id;
+}
+
+async function uploadBillFileToDrive({ bill, dataUrl, originalName, kind }) {
+  const billsFolderId = await ensureBillsDriveFolder();
+  const renamedFile = billRenamedFile(bill, kind, originalName);
+  const mimeType = dataUrl.split(';')[0].split(':')[1];
+  const metaRes = await driveRequest('POST', '/files', { name: renamedFile, mimeType, parents: [billsFolderId] });
+  if (!metaRes.id) throw new Error('Drive metadata creation failed.');
+
+  const base64 = dataUrl.split(',')[1];
+  const byteChars = atob(base64);
+  const byteArr = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([byteArr], { type: mimeType });
+
+  const controller = new AbortController();
+  const uploadTimeout = setTimeout(() => controller.abort(), 15000);
+  const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+    method: 'PATCH',
+    headers: { 'Authorization': `Bearer ${_gmailToken}`, 'Content-Type': mimeType },
+    body: blob,
+    signal: controller.signal
+  });
+  clearTimeout(uploadTimeout);
+  if (!uploadRes.ok) throw new Error('Drive upload failed.');
+
+  return {
+    url: `https://drive.google.com/file/d/${metaRes.id}/view`,
+    name: renamedFile
+  };
+}
+
+function openInvoiceBillModal(id) {
+  _invoiceBillId = id;
+  _invoiceBillDoc = null;
+  const bill = loadBills().find(b => b.id === id);
+  if (!bill) return;
+  const overlay = document.getElementById('invoice-bill-overlay');
+  if (!overlay) return;
+  const saveBtn = document.querySelector('#invoice-bill-overlay .modal-btn-row button');
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Save Invoice'; }
+  document.getElementById('invoice-bill-name').textContent = bill.name;
+  document.getElementById('invoice-bill-file-name').textContent = 'Choose file…';
+  document.getElementById('invoice-bill-file').value = '';
+  document.getElementById('invoice-bill-file-clear').style.display = 'none';
+  overlay.style.display = 'flex';
+  requestAnimationFrame(() => overlay.classList.add('modal-open'));
+}
+
+function closeInvoiceBillModal() {
+  const overlay = document.getElementById('invoice-bill-overlay');
+  if (!overlay) return;
+  overlay.classList.remove('modal-open');
+  overlay.style.display = 'none';
+  _invoiceBillId = null;
+  _invoiceBillDoc = null;
+}
+
+function onInvoiceBillFileChange(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    _invoiceBillDoc = { dataUrl: e.target.result, name: file.name };
+    document.getElementById('invoice-bill-file-name').textContent = file.name;
+    document.getElementById('invoice-bill-file-clear').style.display = 'block';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearInvoiceBillFile() {
+  _invoiceBillDoc = null;
+  document.getElementById('invoice-bill-file').value = '';
+  document.getElementById('invoice-bill-file-name').textContent = 'Choose file…';
+  document.getElementById('invoice-bill-file-clear').style.display = 'none';
+}
+
+async function confirmBillInvoice() {
+  if (!_invoiceBillId) return;
+  if (!_invoiceBillDoc) {
+    showToast('Select a file to attach', 'info');
+    return;
+  }
+  const bills = loadBills();
+  const idx = bills.findIndex(b => b.id === _invoiceBillId);
+  if (idx === -1) return;
+  const bill = bills[idx];
+  const docSnapshot = { ..._invoiceBillDoc };
+
+  const btn = document.querySelector('#invoice-bill-overlay .modal-btn-row button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+  bill.invoiceDoc = docSnapshot.dataUrl;
+  bill.invoiceDocName = docSnapshot.name;
+  saveBills(bills);
+  await syncBillsToSheet();
+  closeInvoiceBillModal();
+  renderBillsList();
+  showToast('Invoice attached', 'success');
+
+  if (gmailTokenValid() && _driveFolderId) {
+    try {
+      const uploaded = await uploadBillFileToDrive({ bill, dataUrl: docSnapshot.dataUrl, originalName: docSnapshot.name, kind: 'Invoice' });
+      const savedBills = loadBills();
+      const savedIdx = savedBills.findIndex(b => b.id === bill.id);
+      if (savedIdx !== -1) {
+        savedBills[savedIdx].invoiceDocUrl = uploaded.url;
+        savedBills[savedIdx].invoiceDocName = uploaded.name;
+        delete savedBills[savedIdx].invoiceDoc;
+        saveBills(savedBills);
+        await syncBillsToSheet();
+      }
+      showToast(`Doc saved to Drive: ${uploaded.name}`, 'success');
+      renderBillsList();
+    } catch (err) {
+      const label = err.name === 'AbortError' ? 'Upload timed out' : err.message;
+      showToast(`${label} — doc saved locally`, 'info');
+    }
+  }
+}
+
 // ── Project Costs ────────────────────────────────────────────
 // One-off costs the user absorbs on a project (supplier payments, gear, crew),
 // keyed by ledger receipt so margin = invoice total − linked costs. Distinct
@@ -4523,54 +4716,17 @@ async function confirmPayBill() {
   // Drive upload is post-save — failure never blocks the user
   if (docSnapshot && gmailTokenValid() && _driveFolderId) {
     try {
-      const folderQuery = `name = 'Bills' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
-      const folderSearch = await driveRequest('GET', `/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name)`);
-      let billsFolderId;
-      if (folderSearch?.files?.length > 0) {
-        billsFolderId = folderSearch.files[0].id;
-      } else {
-        const created = await driveRequest('POST', '/files', { name: 'Bills', mimeType: 'application/vnd.google-apps.folder', parents: [_driveFolderId] });
-        if (!created.id) throw new Error('Failed to create Bills folder in Drive.');
-        billsFolderId = created.id;
-      }
-
-      const ext = docSnapshot.name.includes('.') ? docSnapshot.name.split('.').pop() : '';
-      const dateStr = new Date().toISOString().slice(0, 10);
-      const billSlug = bill.name.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-      const renamedFile = `${billSlug}-${dateStr}${ext ? '.' + ext : ''}`;
-
-      const mimeType = docSnapshot.dataUrl.split(';')[0].split(':')[1];
-      const metaRes = await driveRequest('POST', '/files', { name: renamedFile, mimeType, parents: [billsFolderId] });
-      if (!metaRes.id) throw new Error('Drive metadata creation failed.');
-
-      const base64 = docSnapshot.dataUrl.split(',')[1];
-      const byteChars = atob(base64);
-      const byteArr = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) byteArr[i] = byteChars.charCodeAt(i);
-      const blob = new Blob([byteArr], { type: mimeType });
-
-      const controller = new AbortController();
-      const uploadTimeout = setTimeout(() => controller.abort(), 15000);
-      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
-        method: 'PATCH',
-        headers: { 'Authorization': `Bearer ${_gmailToken}`, 'Content-Type': mimeType },
-        body: blob,
-        signal: controller.signal
-      });
-      clearTimeout(uploadTimeout);
-      if (!uploadRes.ok) throw new Error('Drive upload failed.');
-
-      // Replace local fallback with Drive URL
+      const uploaded = await uploadBillFileToDrive({ bill, dataUrl: docSnapshot.dataUrl, originalName: docSnapshot.name, kind: 'Receipt' });
       const savedBills = loadBills();
       const savedIdx = savedBills.findIndex(b => b.id === bill.id);
       if (savedIdx !== -1) {
-        savedBills[savedIdx].receiptDocUrl = `https://drive.google.com/file/d/${metaRes.id}/view`;
-        savedBills[savedIdx].receiptDocName = renamedFile;
+        savedBills[savedIdx].receiptDocUrl = uploaded.url;
+        savedBills[savedIdx].receiptDocName = uploaded.name;
         delete savedBills[savedIdx].receiptDoc;
         saveBills(savedBills);
         await syncBillsToSheet();
       }
-      showToast(`Doc saved to Drive: ${renamedFile}`, 'success');
+      showToast(`Doc saved to Drive: ${uploaded.name}`, 'success');
       renderBillsList();
     } catch (err) {
       // Bill is already paid and saved — just note the doc stayed local
@@ -4580,18 +4736,24 @@ async function confirmPayBill() {
   }
 }
 
-function viewBillDoc(id) {
+function openBillDocLocal(dataUrl) {
+  const win = window.open('', '_blank');
+  if (dataUrl.startsWith('data:image/')) {
+    win.document.write(`<html><body style="margin:0;background:#111;display:flex;justify-content:center;"><img src="${dataUrl}" style="max-width:100%;height:auto;"></body></html>`);
+  } else {
+    win.location.href = dataUrl;
+  }
+}
+
+function viewBillDoc(id, kind = 'receipt') {
   const bill = loadBills().find(b => b.id === id);
   if (!bill) return;
-  if (bill.receiptDocUrl) {
-    window.open(bill.receiptDocUrl, '_blank');
-  } else if (bill.receiptDoc) {
-    const win = window.open('', '_blank');
-    if (bill.receiptDoc.startsWith('data:image/')) {
-      win.document.write(`<html><body style="margin:0;background:#111;display:flex;justify-content:center;"><img src="${bill.receiptDoc}" style="max-width:100%;height:auto;"></body></html>`);
-    } else {
-      win.location.href = bill.receiptDoc;
-    }
+  const urlKey = kind === 'invoice' ? 'invoiceDocUrl' : 'receiptDocUrl';
+  const docKey = kind === 'invoice' ? 'invoiceDoc' : 'receiptDoc';
+  if (bill[urlKey]) {
+    window.open(bill[urlKey], '_blank');
+  } else if (bill[docKey]) {
+    openBillDocLocal(bill[docKey]);
   }
 }
 
@@ -4751,9 +4913,17 @@ function renderBillsList() {
       </div>
       <div class="bill-funded-row">
         <span class="bill-funded-label">Funded: ${fmt(funded)} of ${fmt(amount)}</span>
-        ${status !== 'paid' ? `<button onclick="markBillPaid('${bill.id}')" class="goal-claim-btn ${pct < 100 ? 'goal-claim-btn--warn' : ''}">
-          ${pct >= 100 ? 'Pay & Receipt' : 'Pay Anyway'}
-        </button>` : `<span class="goal-claimed-label">✓ Paid</span>${(bill.receiptDocUrl || bill.receiptDoc) ? `<button onclick="viewBillDoc('${bill.id}')" class="bill-doc-btn">📎 Doc</button>` : ''}`}
+        ${status !== 'paid' ? `<div class="bill-action-btns">
+          <button onclick="openInvoiceBillModal('${bill.id}')" class="goal-btn-edit">Attach Invoice</button>
+          <button onclick="markBillPaid('${bill.id}')" class="goal-claim-btn ${pct < 100 ? 'goal-claim-btn--warn' : ''}">
+            ${pct >= 100 ? 'Pay & Receipt' : 'Pay Anyway'}
+          </button>
+          ${(bill.invoiceDocUrl || bill.invoiceDoc) ? `<button onclick="viewBillDoc('${bill.id}', 'invoice')" class="bill-doc-btn">📎 Invoice</button>` : ''}
+        </div>` : `<div class="bill-action-btns">
+          <span class="goal-claimed-label">✓ Paid</span>
+          ${(bill.receiptDocUrl || bill.receiptDoc) ? `<button onclick="viewBillDoc('${bill.id}', 'receipt')" class="bill-doc-btn">📎 Receipt</button>` : ''}
+          ${(bill.invoiceDocUrl || bill.invoiceDoc) ? `<button onclick="viewBillDoc('${bill.id}', 'invoice')" class="bill-doc-btn">📎 Invoice</button>` : ''}
+        </div>`}
       </div>`;
     el.appendChild(card);
     // Animate bar
@@ -4808,30 +4978,177 @@ function applyClient(client) {
   data.receiptOverride = data.receiptNumber;
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
   render(data);
-  // Prompt to rebill pending expenses for this client
-  const pending = loadClientExpenses(client.name).filter(e => !e.billed);
+  // Prompt to rebill expenses pending for THIS invoice's receipt (plus legacy
+  // receiptless ones for the client) — not the whole client blob.
+  const pending = unbilledClientExpenses(client.name, data.receiptNumber);
   if (pending.length) {
     promptRebillExpenses(client.name, pending);
   }
 }
 
 // ── Expense Rebilling ────────────────────────────────────────────
+// Pass-through costs the user charges back to the client. Unified store
+// (single array, receipt-linked) + ClientExpenses sheet tab, mirroring the
+// ProjectCosts pattern. Distinct from Project Costs (absorbed, internal
+// margin) and Bills (recurring overhead).
 
-function loadClientExpenses(clientName) {
-  const key = 'expenses-' + (clientName || '').toLowerCase().replace(/\s+/g, '-');
-  try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch(e) { return []; }
+function loadClientExpensesAll() {
+  try { return JSON.parse(localStorage.getItem('invoice-client-expenses') || '[]'); } catch(e) { return []; }
+}
+function saveClientExpensesAll(list) {
+  localStorage.setItem('invoice-client-expenses', JSON.stringify(list));
+}
+function clientExpensesForReceipt(receipt) {
+  return loadClientExpensesAll().filter(e => e.receipt === receipt);
+}
+// Unbilled expenses to offer on an invoice: linked to this receipt, plus
+// legacy/receiptless ones for the same client so migrated data isn't stranded.
+function unbilledClientExpenses(clientName, receipt) {
+  return loadClientExpensesAll().filter(e =>
+    !e.billed && (e.receipt === receipt || (!e.receipt && e.client === clientName)));
 }
 
-function saveClientExpenses(clientName, expenses) {
-  const key = 'expenses-' + (clientName || '').toLowerCase().replace(/\s+/g, '-');
-  localStorage.setItem(key, JSON.stringify(expenses));
+function addClientExpense({ receipt, client, description, amount }) {
+  const exp = {
+    id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+    receipt: (receipt || '').trim(),
+    client:  client || '',
+    description: (description || '').trim(),
+    amount:  String(parseFloat(amount) || 0),
+    date:    new Date().toISOString().slice(0, 10),
+    billed:  false,
+    billedReceipt: '',
+  };
+  const list = loadClientExpensesAll();
+  list.push(exp);
+  saveClientExpensesAll(list);
+  syncClientExpensesToSheet();
+  showToast(`✓ Expense logged for ${exp.client || 'client'}${exp.receipt ? ' · ' + exp.receipt : ''}`, 'success');
+  return exp;
 }
 
-function addClientExpense(clientName, description, amount) {
-  const expenses = loadClientExpenses(clientName);
-  expenses.push({ id: Date.now(), description, amount: String(amount), billed: false, date: new Date().toLocaleDateString('en-US') });
-  saveClientExpenses(clientName, expenses);
-  showToast(`✓ Expense logged for ${clientName}`, 'success');
+function deleteClientExpense(id) {
+  saveClientExpensesAll(loadClientExpensesAll().filter(e => e.id !== id));
+  syncClientExpensesToSheet();
+}
+
+function clientExpenseToRow(e) {
+  return [e.id, e.receipt, e.client, e.description, e.amount, e.date, e.billed ? 'TRUE' : '', e.billedReceipt || ''];
+}
+function clientExpenseFromRow(r) {
+  return {
+    id:      r[0],
+    receipt: sanitizeSheetValue(r[1]) || '',
+    client:  sanitizeSheetValue(r[2]) || '',
+    description: sanitizeSheetValue(r[3]) || '',
+    amount:  sanitizeSheetValue(r[4]) || '0',
+    date:    sanitizeSheetValue(r[5]) || '',
+    billed:  String(r[6] || '').toUpperCase() === 'TRUE',
+    billedReceipt: sanitizeSheetValue(r[7]) || '',
+  };
+}
+
+// Upsert by id; blank rows whose id no longer exists locally (ProjectCosts pattern)
+async function syncClientExpensesToSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
+  const list = loadClientExpensesAll();
+  let existing = await sheetsRead(_sheetsSpreadsheetId, 'ClientExpenses!A2:H');
+  if (existing === null) {
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Rebill] ensureAllTabs failed:', e.message); }
+    existing = await sheetsRead(_sheetsSpreadsheetId, 'ClientExpenses!A2:H');
+  }
+  if (existing === null) return { success: false, error: 'ClientExpenses tab read failed' };
+  const localIds = new Set(list.map(e => e.id));
+  let failures = 0;
+  for (const exp of list) {
+    const newRow = clientExpenseToRow(exp);
+    const rowIdx = existing.findIndex(r => r[0] === exp.id);
+    try {
+      if (rowIdx === -1) {
+        await sheetsAppend(_sheetsSpreadsheetId, 'ClientExpenses!A1', [newRow]);
+        existing.push(newRow);
+      } else {
+        await sheetsWrite(_sheetsSpreadsheetId, `ClientExpenses!A${rowIdx + 2}:H${rowIdx + 2}`, [newRow]);
+      }
+    } catch (e) {
+      failures++;
+      console.warn(`[Rebill] Sheet write failed for "${exp.description}":`, e.message);
+    }
+  }
+  for (let i = 0; i < existing.length; i++) {
+    if (existing[i][0] && !localIds.has(existing[i][0])) {
+      try { await sheetsWrite(_sheetsSpreadsheetId, `ClientExpenses!A${i + 2}:H${i + 2}`, [['', '', '', '', '', '', '', '']]); } catch (e) {}
+    }
+  }
+  return failures ? { success: false, error: `${failures} expense(s) failed to sync` } : { success: true };
+}
+
+async function loadClientExpensesFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  let rows = await sheetsRead(_sheetsSpreadsheetId, 'ClientExpenses!A2:H');
+  if (rows === null) {
+    try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Rebill] ensureAllTabs failed:', e.message); }
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'ClientExpenses!A2:H');
+  }
+  if (rows === null) return;
+  const sheetList = rows.filter(r => r[0] && r[0].trim()).map(clientExpenseFromRow);
+  const local = loadClientExpensesAll();
+  if (!sheetList.length) {
+    if (local.length) await syncClientExpensesToSheet();
+    return;
+  }
+  // Non-destructive merge: sheet wins by id, local-only records kept + pushed
+  const sheetIds = new Set(sheetList.map(e => e.id));
+  const localOnly = local.filter(e => !sheetIds.has(e.id));
+  saveClientExpensesAll([...sheetList, ...localOnly]);
+  if (localOnly.length) await syncClientExpensesToSheet();
+}
+
+// One-time: merge legacy per-client 'expenses-{slug}' keys into the unified
+// store. Best-effort receipt = the client's latest ledger row.
+function migrateLegacyClientExpenses() {
+  if (localStorage.getItem('client-expenses-unified-migrated')) return;
+  const slugOf = name => (name || '').toLowerCase().replace(/\s+/g, '-');
+  const slugToName = {};
+  loadClients().forEach(c => { slugToName[slugOf(c.name)] = c.name; });
+  loadLedgerRows().forEach(r => { if (r.client) slugToName[slugOf(r.client)] = slugToName[slugOf(r.client)] || r.client; });
+  const legacyKeys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('expenses-')) legacyKeys.push(k);
+  }
+  if (!legacyKeys.length) { localStorage.setItem('client-expenses-unified-migrated', '1'); return; }
+  const unified = loadClientExpensesAll();
+  let moved = 0;
+  legacyKeys.forEach(key => {
+    let legacy = [];
+    try { legacy = JSON.parse(localStorage.getItem(key) || '[]'); } catch(e) {}
+    const slug = key.slice('expenses-'.length);
+    const client = slugToName[slug] || slug.replace(/-/g, ' ');
+    const clientRows = loadLedgerRows().filter(r => slugOf(r.client) === slug);
+    const latestReceipt = clientRows.length ? clientRows[clientRows.length - 1].receipt : '';
+    legacy.forEach(e => {
+      if (!e || !e.description) return;
+      unified.push({
+        id: String(e.id || Date.now()) + Math.random().toString(36).slice(2, 6),
+        receipt: latestReceipt,
+        client,
+        description: e.description,
+        amount: String(e.amount || '0'),
+        date: e.date || '',
+        billed: !!e.billed,
+        billedReceipt: '',
+      });
+      moved++;
+    });
+    localStorage.removeItem(key);
+  });
+  saveClientExpensesAll(unified);
+  localStorage.setItem('client-expenses-unified-migrated', '1');
+  if (moved) {
+    console.log(`✓ Migrated ${moved} legacy client expense(s) to unified store`);
+    syncClientExpensesToSheet();
+  }
 }
 
 function promptRebillExpenses(clientName, pending) {
@@ -4850,10 +5167,14 @@ function promptRebillExpenses(clientName, pending) {
       });
       document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
       render(data);
-      // Mark as billed
-      const all = loadClientExpenses(clientName);
-      pending.forEach(p => { const idx = all.findIndex(e => e.id === p.id); if (idx >= 0) all[idx].billed = true; });
-      saveClientExpenses(clientName, all);
+      // Mark billed + record which invoice the rebill landed on
+      const all = loadClientExpensesAll();
+      pending.forEach(p => {
+        const idx = all.findIndex(e => e.id === p.id);
+        if (idx >= 0) { all[idx].billed = true; all[idx].billedReceipt = data.receiptNumber || ''; }
+      });
+      saveClientExpensesAll(all);
+      syncClientExpensesToSheet();
       showToast('✓ Expenses added to invoice', 'success');
     }
   );
@@ -4863,9 +5184,7 @@ function openExpenseLogger() {
   const data = getData();
   const clientName = data.to?.name;
   if (!clientName || clientName === 'John Doe') { showToast('Apply a client first to log expenses', 'error'); return; }
-
-  const existing = loadClientExpenses(clientName);
-  const unbilled = existing.filter(e => !e.billed);
+  const currentReceipt = data.receiptNumber || '';
 
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
@@ -4877,8 +5196,26 @@ function openExpenseLogger() {
   title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:4px;';
   title.textContent = 'Log Expense';
   const sub = document.createElement('div');
-  sub.style.cssText = 'font-size:11px;color:#6c7682;margin-bottom:16px;';
-  sub.textContent = `Client: ${clientName} · ${unbilled.length} pending`;
+  sub.style.cssText = 'font-size:11px;color:#6c7682;margin-bottom:12px;';
+
+  // Receipt picker: this client's ledger receipts + the current invoice
+  const recRow = document.createElement('div');
+  recRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+  const recLbl = document.createElement('span');
+  recLbl.textContent = 'Receipt';
+  recLbl.style.cssText = 'font-size:11px;color:#6c7682;flex-shrink:0;';
+  const recSel = document.createElement('select');
+  recSel.style.cssText = 'flex:1;font-family:Roboto,sans-serif;font-size:12px;padding:6px 8px;border:1.5px solid #ddd;border-radius:6px;outline:none;background:#f9f9f9;';
+  const receipts = loadLedgerRows().filter(r => r.client === clientName).map(r => r.receipt);
+  if (currentReceipt && !receipts.includes(currentReceipt)) receipts.push(currentReceipt);
+  receipts.forEach(r => {
+    const o = document.createElement('option');
+    o.value = r;
+    o.textContent = r === currentReceipt ? `${r} (current invoice)` : r;
+    if (r === currentReceipt) o.selected = true;
+    recSel.appendChild(o);
+  });
+  recRow.append(recLbl, recSel);
 
   const descInp = document.createElement('input');
   descInp.placeholder = 'Description (e.g. Travel, Materials)';
@@ -4895,36 +5232,53 @@ function openExpenseLogger() {
 
   const pendingTitle = document.createElement('div');
   pendingTitle.style.cssText = 'font-size:11px;font-weight:700;color:#6c7682;letter-spacing:0.5px;margin-bottom:6px;';
-  pendingTitle.textContent = 'PENDING EXPENSES';
 
   const pendingList = document.createElement('div');
+  const rebillBtn = document.createElement('button');
+  rebillBtn.style.cssText = 'width:100%;padding:8px;background:#2a8c55;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;margin-top:10px;display:none;font-family:Roboto,sans-serif;';
+
+  const pendingForSelected = () => unbilledClientExpenses(clientName, recSel.value);
   const refreshPending = () => {
+    const items = pendingForSelected();
+    pendingTitle.textContent = `PENDING · ${recSel.value}`;
+    sub.textContent = `Client: ${clientName} · ${items.length} pending on ${recSel.value}`;
     pendingList.innerHTML = '';
-    const items = loadClientExpenses(clientName).filter(e => !e.billed);
-    if (!items.length) { pendingList.innerHTML = '<div style="font-size:11px;color:#9aa2ac;padding:8px 0;">No pending expenses.</div>'; return; }
+    if (!items.length) { pendingList.innerHTML = '<div style="font-size:11px;color:#9aa2ac;padding:8px 0;">No pending expenses for this receipt.</div>'; }
     items.forEach(e => {
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #f0f0f0;font-size:11.5px;';
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #f0f0f0;font-size:11.5px;gap:8px;';
       const lbl = document.createElement('span');
       lbl.textContent = `${e.description} — ${e.amount}`;
+      lbl.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       const del = document.createElement('button');
       del.textContent = '✕';
-      del.style.cssText = 'background:none;border:none;color:#9aa2ac;cursor:pointer;font-size:11px;';
-      del.onclick = () => { const all = loadClientExpenses(clientName); const idx = all.findIndex(x => x.id === e.id); if (idx >= 0) all.splice(idx, 1); saveClientExpenses(clientName, all); refreshPending(); sub.textContent = `Client: ${clientName} · ${loadClientExpenses(clientName).filter(x => !x.billed).length} pending`; };
+      del.style.cssText = 'background:none;border:none;color:#9aa2ac;cursor:pointer;font-size:11px;flex-shrink:0;';
+      del.onclick = () => { deleteClientExpense(e.id); refreshPending(); };
       row.append(lbl, del);
       pendingList.appendChild(row);
     });
+    // Rebill only makes sense onto the invoice that's open right now
+    const canRebill = items.length && recSel.value === currentReceipt;
+    rebillBtn.style.display = canRebill ? 'block' : 'none';
+    rebillBtn.textContent = `↺ Rebill ${items.length} to this invoice`;
   };
+  recSel.onchange = refreshPending;
   refreshPending();
 
   addBtn.onclick = () => {
     const desc = descInp.value.trim();
     const amt = amtInp.value.trim();
     if (!desc || !amt) { showToast('Enter description and amount', 'error'); return; }
-    addClientExpense(clientName, desc, amt);
+    addClientExpense({ receipt: recSel.value, client: clientName, description: desc, amount: amt });
     descInp.value = ''; amtInp.value = '';
     refreshPending();
-    sub.textContent = `Client: ${clientName} · ${loadClientExpenses(clientName).filter(e => !e.billed).length} pending`;
+  };
+
+  rebillBtn.onclick = () => {
+    const items = pendingForSelected();
+    if (!items.length) return;
+    document.body.removeChild(overlay);
+    promptRebillExpenses(clientName, items);
   };
 
   const closeBtn = document.createElement('button');
@@ -4933,7 +5287,7 @@ function openExpenseLogger() {
   closeBtn.onclick = () => document.body.removeChild(overlay);
   overlay.onclick = e => { if (e.target === overlay) document.body.removeChild(overlay); };
 
-  box.append(title, sub, descInp, amtInp, addBtn, pendingTitle, pendingList, closeBtn);
+  box.append(title, sub, recRow, descInp, amtInp, addBtn, pendingTitle, pendingList, rebillBtn, closeBtn);
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   descInp.focus();
@@ -5805,7 +6159,7 @@ async function ensureAllTabs(spreadsheetId) {
     }});
   }
 
-  for (const tab of ['Analysis', 'Clients', 'Goals', 'Bills', 'Profiles', 'Settings', 'ProjectCosts']) {
+  for (const tab of ['Analysis', 'Clients', 'Goals', 'Bills', 'Profiles', 'Settings', 'ProjectCosts', 'ClientExpenses']) {
     if (!existing.includes(tab)) {
       requests.push({ addSheet: { properties: { title: tab } } });
     }
@@ -5850,12 +6204,15 @@ async function ensureAllTabs(spreadsheetId) {
   if (!existing.includes('ProjectCosts')) {
     await sheetsWrite(spreadsheetId, 'ProjectCosts!A1:F1', [['ID', 'Receipt #', 'Client', 'Description', 'Amount', 'Date']]);
   }
+  if (!existing.includes('ClientExpenses')) {
+    await sheetsWrite(spreadsheetId, 'ClientExpenses!A1:H1', [['ID', 'Receipt #', 'Client', 'Description', 'Amount', 'Date', 'Billed', 'Billed Receipt']]);
+  }
 
-  const billsHeaderRow = ['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History', 'Paid Total', 'Recipient', 'Cycle Start', 'Receipt Doc URL', 'Receipt Doc Name'];
+  const billsHeaderRow = ['ID', 'Name', 'Amount', 'Recurrence', 'Custom Days', 'Due Day', 'Allocation %', 'Funded', 'Paid', 'History', 'Paid Total', 'Recipient', 'Cycle Start', 'Receipt Doc URL', 'Receipt Doc Name', 'Invoice Doc URL', 'Invoice Doc Name'];
   if (!existing.includes('Bills')) {
-    await sheetsWrite(spreadsheetId, 'Bills!A1:O1', [billsHeaderRow]);
+    await sheetsWrite(spreadsheetId, 'Bills!A1:Q1', [billsHeaderRow]);
   } else {
-    const billsMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Bills!A1:O1`);
+    const billsMeta = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/Bills!A1:Q1`);
     const billsHeaders = billsMeta.values ? billsMeta.values[0] : [];
     if (billsHeaders.length > 0) {
       if (!billsHeaders.includes('Paid Total')) await sheetsWrite(spreadsheetId, 'Bills!K1', [['Paid Total']]);
@@ -5863,6 +6220,8 @@ async function ensureAllTabs(spreadsheetId) {
       if (!billsHeaders.includes('Cycle Start')) await sheetsWrite(spreadsheetId, 'Bills!M1', [['Cycle Start']]);
       if (!billsHeaders.includes('Receipt Doc URL')) await sheetsWrite(spreadsheetId, 'Bills!N1', [['Receipt Doc URL']]);
       if (!billsHeaders.includes('Receipt Doc Name')) await sheetsWrite(spreadsheetId, 'Bills!O1', [['Receipt Doc Name']]);
+      if (!billsHeaders.includes('Invoice Doc URL')) await sheetsWrite(spreadsheetId, 'Bills!P1', [['Invoice Doc URL']]);
+      if (!billsHeaders.includes('Invoice Doc Name')) await sheetsWrite(spreadsheetId, 'Bills!Q1', [['Invoice Doc Name']]);
     }
   }
   if (!existing.includes('Profiles')) {
@@ -5992,7 +6351,8 @@ async function setupDrive() {
       loadBillsFromSheet(),
       loadProfilesFromSheet(),
       loadSettingsFromSheet(),
-      loadProjectCostsFromSheet()
+      loadProjectCostsFromSheet(),
+      loadClientExpensesFromSheet()
     ]);
     
     results.forEach((res, i) => {
@@ -6944,6 +7304,25 @@ function applyAddProjectCost(items, data, actionNotes) {
     addProjectCost({ receipt: v.receipt, client: row ? row.client : (data.to?.name || ''), desc: v.desc, amount: v.amount });
   });
   actionNotes.push(`Project cost${valid.length > 1 ? 's' : ''} recorded: ${valid.map(i => `${i.desc} (${i.amount})`).join(', ')} — see Ledger → expand row`);
+}
+
+function applyAddClientExpense(items, data, actionNotes) {
+  if (!Array.isArray(items)) items = (items && typeof items === 'object') ? [items] : [];
+  const valid = items.filter(item => item.description && typeof item.description === 'string' && !isNaN(parseFloat(item.amount)))
+    .map(item => ({
+      receipt: typeof item.receipt === 'string' ? item.receipt.trim() : '',
+      description: item.description.trim(),
+      amount: typeof item.amount === 'number' ? item.amount : parseFloat(item.amount)
+    }));
+  if (!valid.length) { console.warn('[applyAddClientExpense] No valid items.', items); return; }
+  const rows = loadLedgerRows();
+  const known = new Set(rows.map(r => r.receipt));
+  valid.forEach(v => {
+    if (!v.receipt || !known.has(v.receipt)) v.receipt = data.receiptNumber || '';
+    const row = rows.find(r => r.receipt === v.receipt);
+    addClientExpense({ receipt: v.receipt, client: row ? row.client : (data.to?.name || ''), description: v.description, amount: v.amount });
+  });
+  actionNotes.push(`Rebill expense${valid.length > 1 ? 's' : ''} logged: ${valid.map(v => `${v.description} (${v.amount})`).join(', ')} — pending in the Expenses toolbar`);
 }
 
 const VALID_STATUSES = ['⬜ Unpaid', '💰 Deposit', '📤 Sent', '✅ Paid'];
@@ -8051,6 +8430,7 @@ window.addEventListener('load', () => {
       if (migrated) console.log(`✓ Migrated ${migrated} legacy invoiceExpenses to project costs`);
     }
   } catch(e) {}
+  try { migrateLegacyClientExpenses(); } catch(e) {}
   try {
     initGmailAuth(() => {
       updateEmailBtn();
