@@ -2606,20 +2606,37 @@ function loadChatProviders() {
 function saveChatProviders(list) {
   localStorage.setItem('invoice-ai-providers', JSON.stringify(list));
 }
+/** True only when a provider has a non-empty API key (configured, not a blank stub). */
+function providerHasKey(cfg) {
+  return !!(cfg && String(cfg.key || '').trim());
+}
 function getSelectedIdx() {
-  return parseInt(localStorage.getItem('invoice-ai-selected') || '0', 10);
+  const list = loadChatProviders();
+  if (!list.length) return -1;
+  let idx = parseInt(localStorage.getItem('invoice-ai-selected') || '-1', 10);
+  if (!Number.isFinite(idx) || idx < 0 || idx >= list.length) idx = -1;
+  return idx;
 }
 function setSelectedIdx(i) {
   localStorage.setItem('invoice-ai-selected', String(i));
   updateActiveProviderPill();
 }
+/** Provider used for chat: selected only if it has a key; else first with a key; else null. */
+function getReadyProvider() {
+  const list = loadChatProviders();
+  const sel = getSelectedIdx();
+  if (sel >= 0 && providerHasKey(list[sel])) return { cfg: list[sel], idx: sel };
+  const idx = list.findIndex(providerHasKey);
+  if (idx >= 0) return { cfg: list[idx], idx };
+  return null;
+}
 
 function updateActiveProviderPill() {
-  const list  = loadChatProviders();
-  const idx   = getSelectedIdx();
-  const cfg   = list[idx];
+  const ready = getReadyProvider();
+  const cfg   = ready ? ready.cfg : null;
   const dot   = document.getElementById('chat-active-dot');
   const title = document.getElementById('chat-title');
+  if (!dot || !title) return;
   if (cfg) {
     const prov = PROVIDERS[cfg.type] || {};
     dot.style.background    = prov.color || '#aaa';
@@ -2628,14 +2645,15 @@ function updateActiveProviderPill() {
     title.style.color       = 'var(--ink)';
     title.style.cursor      = '';
     title.onclick           = null;
-    title.title             = '';
+    title.title             = cfg.name || prov.label || '';
   } else {
+    // No key configured — never show OpenAI (or any vendor) as "live"
     dot.style.background    = '#aaa';
     dot.style.display       = 'none';
     title.textContent       = 'Setup Assistant';
     title.style.color       = 'var(--muted)';
     title.style.cursor      = 'pointer';
-    title.title             = 'Click to connect an AI provider';
+    title.title             = 'Click to connect an AI provider with an API key';
     title.onclick           = () => openConnectionsModal();
   }
 }
@@ -2695,15 +2713,22 @@ function renderConnectionsStatus() {
 
   const ai = document.getElementById('conn-ai-status');
   if (ai) {
-    const list = loadChatProviders();
-    const cfg  = list[getSelectedIdx()];
-    if (cfg) {
-      const prov = PROVIDERS[cfg.type] || { label: cfg.type, defaultModel: '' };
-      ai.textContent = `✓ ${cfg.name} · ${cfg.model || prov.defaultModel}${cfg.key ? '' : ' · no key'}`;
-      ai.className = cfg.key ? 'conn-status conn-status--ok' : 'conn-status';
+    const ready = getReadyProvider();
+    if (ready) {
+      const prov = PROVIDERS[ready.cfg.type] || { label: ready.cfg.type, defaultModel: '' };
+      ai.textContent = `✓ ${ready.cfg.name || prov.label} · ${ready.cfg.model || prov.defaultModel}`;
+      ai.className = 'conn-status conn-status--ok';
     } else {
-      ai.textContent = 'None';
-      ai.className = 'conn-status';
+      const list = loadChatProviders();
+      const stub = list.find(p => !providerHasKey(p));
+      if (stub) {
+        const prov = PROVIDERS[stub.type] || { label: stub.type };
+        ai.textContent = `${prov.label} stub · add API key`;
+        ai.className = 'conn-status';
+      } else {
+        ai.textContent = 'None';
+        ai.className = 'conn-status';
+      }
     }
   }
 }
@@ -2719,10 +2744,11 @@ function renderProviderListMini() {
   }
   el.innerHTML = list.map((p, i) => {
     const prov = PROVIDERS[p.type] || { color: '#aaa', emoji: '●', label: p.type };
-    const isActive = i === selIdx;
+    const ready = providerHasKey(p);
+    const isActive = i === selIdx && ready;
     return `<div class="prov-mini-row${isActive ? ' prov-mini-active' : ''}" onclick="setSelectedIdx(${i});renderProviderListMini();updateActiveProviderPill();">
       <span class="prov-mini-badge" style="background:${prov.color}">${prov.emoji}</span>
-      <span class="prov-mini-name">${p.name}</span>
+      <span class="prov-mini-name">${p.name}${ready ? '' : ' · no key'}</span>
       ${isActive ? '<span class="prov-mini-check">✓</span>' : ''}
     </div>`;
   }).join('');
@@ -2741,7 +2767,8 @@ function renderProviderList() {
 
   list.forEach((p, i) => {
     const prov   = PROVIDERS[p.type] || { color: '#aaa', emoji: '●', label: p.type };
-    const isActive = i === selIdx;
+    const hasKey = providerHasKey(p);
+    const isActive = i === selIdx && hasKey;
 
     const card = document.createElement('div');
     card.className = 'prov-card' + (isActive ? ' active-card' : '');
@@ -2758,15 +2785,25 @@ function renderProviderList() {
 
     const info = document.createElement('div');
     info.className = 'prov-card-info';
-    info.innerHTML = `<div class="prov-card-name">${p.name}</div><div class="prov-card-sub">${prov.label} · ${p.model || prov.defaultModel}</div>`;
+    info.innerHTML = `<div class="prov-card-name">${p.name}</div><div class="prov-card-sub">${prov.label} · ${p.model || prov.defaultModel}${hasKey ? '' : ' · no API key'}</div>`;
 
     const actions = document.createElement('div');
     actions.className = 'prov-card-actions';
 
     const useBtn = document.createElement('button');
     useBtn.className = 'btn-use-provider' + (isActive ? ' active' : '');
-    useBtn.textContent = isActive ? '✓ Active' : 'Use';
-    useBtn.onclick = e => { e.stopPropagation(); setSelectedIdx(i); renderProviderList(); };
+    // Never label a keyless stub as Active (was showing OpenAI Active with empty key)
+    useBtn.textContent = isActive ? '✓ Active' : (hasKey ? 'Use' : 'Add key');
+    useBtn.onclick = e => {
+      e.stopPropagation();
+      if (!providerHasKey(list[i])) {
+        toggleProviderExpand(i);
+        showToast('Paste an API key before setting this provider as active.', 'info');
+        return;
+      }
+      setSelectedIdx(i);
+      renderProviderList();
+    };
 
     const expandBtn = document.createElement('button');
     expandBtn.className = 'btn-expand-provider';
@@ -2901,7 +2938,18 @@ function renderProviderList() {
     keyIn.type = 'password';
     keyIn.value = p.key;
     keyIn.placeholder = 'sk-…';
-    keyIn.oninput = () => { list[i].key = keyIn.value; saveChatProviders(list); };
+    keyIn.oninput = () => {
+      list[i].key = keyIn.value;
+      saveChatProviders(list);
+      // Promote to Active only once a key exists; refresh labels
+      if (providerHasKey(list[i]) && getSelectedIdx() < 0) setSelectedIdx(i);
+      updateActiveProviderPill();
+      const sub = info.querySelector('.prov-card-sub');
+      if (sub) {
+        const pr = PROVIDERS[list[i].type] || {};
+        sub.textContent = `${pr.label || ''} · ${list[i].model || pr.defaultModel || ''}${providerHasKey(list[i]) ? '' : ' · no API key'}`;
+      }
+    };
     keyRow.appendChild(keyIn);
 
     // Delete
@@ -2929,11 +2977,13 @@ function toggleProviderExpand(i) {
 
 function addProvider() {
   const list = loadChatProviders();
-  list.push({ name: 'New Provider', type: 'openai', key: '', model: 'gpt-4o' });
+  // Blank stub — not Active until a key is saved. Default type is a template only.
+  list.push({ name: 'New Provider', type: 'openai', key: '', model: PROVIDERS.openai.defaultModel || 'gpt-4o' });
   saveChatProviders(list);
+  // Do not auto-select a keyless provider as the chat "active" model
   openProvidersModal();
   updateActiveProviderPill();
-  // Auto-expand the new card
+  // Auto-expand the new card so user can pick type + paste key
   setTimeout(() => toggleProviderExpand(list.length - 1), 50);
 }
 
@@ -3254,9 +3304,12 @@ async function sendChat() {
   const text    = input.value.trim();
   if (!text) return;
 
-  const list = loadChatProviders();
-  const cfg  = list[getSelectedIdx()];
-  if (!cfg) { appendMsg('error', 'No provider selected. Open ⚙ settings to add one.'); return; }
+  const ready = getReadyProvider();
+  if (!ready) {
+    appendMsg('error', 'No AI provider with an API key. Open Connections → Manage Providers and paste a key.');
+    return;
+  }
+  const cfg = ready.cfg;
 
   const prov = PROVIDERS[cfg.type];
   if (!prov) { appendMsg('error', `Unknown provider type: ${cfg.type}`); return; }
@@ -4175,6 +4228,7 @@ function mergeBillFromLocal(sheetBill, localBill) {
   }
   if (!sheetBill.receiptDocUrl && localBill.receiptDocUrl) result.receiptDocUrl = localBill.receiptDocUrl;
   if (!sheetBill.receiptDocName && localBill.receiptDocName) result.receiptDocName = localBill.receiptDocName;
+  if (!sheetBill.receiptDocUrl && localBill.receiptDoc) result.receiptDoc = localBill.receiptDoc;
   if (!sheetBill.invoiceDocUrl && localBill.invoiceDocUrl) result.invoiceDocUrl = localBill.invoiceDocUrl;
   if (!sheetBill.invoiceDocName && localBill.invoiceDocName) result.invoiceDocName = localBill.invoiceDocName;
   if (!sheetBill.invoiceDocUrl && localBill.invoiceDoc) result.invoiceDoc = localBill.invoiceDoc;
@@ -4478,6 +4532,56 @@ async function uploadBillFileToDrive({ bill, dataUrl, originalName, kind }) {
   };
 }
 
+/** Find 1-based sheet row for a bill id (header is row 1). */
+async function findBillSheetRow(billId) {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return -1;
+  const ids = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:A');
+  if (!ids || !ids.length) return -1;
+  const idx = ids.findIndex(r => String(r[0] || '') === String(billId));
+  return idx === -1 ? -1 : idx + 2;
+}
+
+/**
+ * After Drive upload: persist URL/name locally + full bill sync + targeted N:O / P:Q write.
+ * Targeted write uses RAW so Sheets never mangles Drive links; full-row sync alone was
+ * dropping Receipt Doc URL for some pays while the file still landed in Drive.
+ */
+async function applyBillDriveDoc(billId, kind, uploaded) {
+  const isInvoice = kind === 'invoice' || kind === 'Invoice';
+  const urlKey = isInvoice ? 'invoiceDocUrl' : 'receiptDocUrl';
+  const nameKey = isInvoice ? 'invoiceDocName' : 'receiptDocName';
+  const dataKey = isInvoice ? 'invoiceDoc' : 'receiptDoc';
+
+  const savedBills = loadBills();
+  const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
+  if (savedIdx === -1) throw new Error('Bill not found after Drive upload');
+
+  savedBills[savedIdx][urlKey] = uploaded.url;
+  savedBills[savedIdx][nameKey] = uploaded.name;
+  delete savedBills[savedIdx][dataKey];
+  saveBills(savedBills);
+
+  // Full row sync (paid, history, both doc pairs, etc.)
+  const syncRes = await syncBillsToSheet();
+  if (syncRes && syncRes.success === false) {
+    console.warn('[Bills] Full row sync after Drive doc failed:', syncRes.error);
+  }
+
+  // Belt-and-suspenders: write only the doc columns for this bill
+  const row = await findBillSheetRow(billId);
+  if (row > 0 && _sheetsSpreadsheetId) {
+    const range = isInvoice ? `Bills!P${row}:Q${row}` : `Bills!N${row}:O${row}`;
+    try {
+      await sheetsWrite(_sheetsSpreadsheetId, range, [[uploaded.url, uploaded.name]], 'RAW');
+    } catch (e) {
+      console.warn('[Bills] Targeted doc column write failed:', e.message);
+      // Retry once via full row if targeted write failed
+      await syncBillsToSheet();
+    }
+  }
+  return savedBills[savedIdx];
+}
+
 function openInvoiceBillModal(id) {
   _invoiceBillId = id;
   _invoiceBillDoc = null;
@@ -4538,7 +4642,7 @@ async function confirmBillInvoice() {
   const btn = document.querySelector('#invoice-bill-overlay .modal-btn-row button');
   if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-  bill.invoiceDoc = docSnapshot.dataUrl;
+  // Name only until Drive returns URL — avoid stuffing PDF base64 into localStorage first
   bill.invoiceDocName = docSnapshot.name;
   saveBills(bills);
   await syncBillsToSheet();
@@ -4549,20 +4653,29 @@ async function confirmBillInvoice() {
   if (gmailTokenValid() && _driveFolderId) {
     try {
       const uploaded = await uploadBillFileToDrive({ bill, dataUrl: docSnapshot.dataUrl, originalName: docSnapshot.name, kind: 'Invoice' });
-      const savedBills = loadBills();
-      const savedIdx = savedBills.findIndex(b => b.id === bill.id);
-      if (savedIdx !== -1) {
-        savedBills[savedIdx].invoiceDocUrl = uploaded.url;
-        savedBills[savedIdx].invoiceDocName = uploaded.name;
-        delete savedBills[savedIdx].invoiceDoc;
-        saveBills(savedBills);
-        await syncBillsToSheet();
-      }
+      await applyBillDriveDoc(bill.id, 'Invoice', uploaded);
       showToast(`Doc saved to Drive: ${uploaded.name}`, 'success');
       renderBillsList();
     } catch (err) {
+      // Keep local fallback for view until next successful upload
+      const savedBills = loadBills();
+      const savedIdx = savedBills.findIndex(b => String(b.id) === String(bill.id));
+      if (savedIdx !== -1) {
+        savedBills[savedIdx].invoiceDoc = docSnapshot.dataUrl;
+        savedBills[savedIdx].invoiceDocName = docSnapshot.name;
+        saveBills(savedBills);
+        renderBillsList();
+      }
       const label = err.name === 'AbortError' ? 'Upload timed out' : err.message;
       showToast(`${label} — doc saved locally`, 'info');
+    }
+  } else {
+    const savedBills = loadBills();
+    const savedIdx = savedBills.findIndex(b => String(b.id) === String(bill.id));
+    if (savedIdx !== -1) {
+      savedBills[savedIdx].invoiceDoc = docSnapshot.dataUrl;
+      saveBills(savedBills);
+      renderBillsList();
     }
   }
 }
@@ -4688,6 +4801,7 @@ async function confirmPayBill() {
   const idx = bills.findIndex(b => b.id === _payBillId);
   if (idx === -1) return;
   const bill = bills[idx];
+  const billId = bill.id;
   const amount = parseFloat(bill.amount) || 0;
   const docSnapshot = _payBillDoc ? { ..._payBillDoc } : null;
 
@@ -4701,9 +4815,9 @@ async function confirmPayBill() {
   bill.paid = true;
   bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
 
-  // Store doc locally as fallback while Drive upload is in-flight
+  // Name only until Drive URL is known — do not persist PDF base64 before upload
+  // (large dataUrls + full-row sheet sync was leaving N empty while Drive still got the file)
   if (docSnapshot) {
-    bill.receiptDoc = docSnapshot.dataUrl;
     bill.receiptDocName = docSnapshot.name;
   }
 
@@ -4711,28 +4825,41 @@ async function confirmPayBill() {
   await syncBillsToSheet();
   closePayBillModal(true);
   renderBillsList();
-  generatePaymentReceipt(bill);
 
-  // Drive upload is post-save — failure never blocks the user
+  // Drive first, then optional html2pdf download — never race sheet write with PDF gen
   if (docSnapshot && gmailTokenValid() && _driveFolderId) {
     try {
       const uploaded = await uploadBillFileToDrive({ bill, dataUrl: docSnapshot.dataUrl, originalName: docSnapshot.name, kind: 'Receipt' });
-      const savedBills = loadBills();
-      const savedIdx = savedBills.findIndex(b => b.id === bill.id);
-      if (savedIdx !== -1) {
-        savedBills[savedIdx].receiptDocUrl = uploaded.url;
-        savedBills[savedIdx].receiptDocName = uploaded.name;
-        delete savedBills[savedIdx].receiptDoc;
-        saveBills(savedBills);
-        await syncBillsToSheet();
-      }
+      await applyBillDriveDoc(billId, 'Receipt', uploaded);
       showToast(`Doc saved to Drive: ${uploaded.name}`, 'success');
       renderBillsList();
     } catch (err) {
-      // Bill is already paid and saved — just note the doc stayed local
+      // Bill stays paid — keep local file for 📎 Receipt until a later sync
+      const savedBills = loadBills();
+      const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
+      if (savedIdx !== -1) {
+        savedBills[savedIdx].receiptDoc = docSnapshot.dataUrl;
+        savedBills[savedIdx].receiptDocName = docSnapshot.name;
+        saveBills(savedBills);
+        renderBillsList();
+      }
       const label = err.name === 'AbortError' ? 'Upload timed out' : err.message;
       showToast(`${label} — doc saved locally`, 'info');
     }
+  } else if (docSnapshot) {
+    const savedBills = loadBills();
+    const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
+    if (savedIdx !== -1) {
+      savedBills[savedIdx].receiptDoc = docSnapshot.dataUrl;
+      saveBills(savedBills);
+      renderBillsList();
+    }
+  }
+
+  try {
+    await generatePaymentReceipt(bill);
+  } catch (e) {
+    console.warn('[Bills] Payment receipt PDF failed:', e.message);
   }
 }
 
@@ -6111,18 +6238,21 @@ async function sheetsRequest(method, path, body, isRetry = false) {
     return { error: { message: e.message } };
   }
 }
-async function sheetsWrite(spreadsheetId, range, values) {
-  const res = await sheetsRequest('PUT', `/spreadsheets/${spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`, { values });
+async function sheetsWrite(spreadsheetId, range, values, valueInputOption = 'USER_ENTERED') {
+  const enc = encodeURIComponent(range);
+  const res = await sheetsRequest('PUT', `/spreadsheets/${spreadsheetId}/values/${enc}?valueInputOption=${valueInputOption}`, { values });
   if (res.error) throw new Error(res.error.message);
   return res;
 }
 async function sheetsAppend(spreadsheetId, range, values) {
-  const res = await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED`, { values });
+  const enc = encodeURIComponent(range);
+  const res = await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}/values/${enc}:append?valueInputOption=USER_ENTERED`, { values });
   if (res.error) throw new Error(res.error.message);
   return res;
 }
 async function sheetsRead(spreadsheetId, range) {
-  const res = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/${range}`);
+  const enc = encodeURIComponent(range);
+  const res = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/${enc}`);
   if (!res || res.error) return null;
   return res.values || [];
 }
