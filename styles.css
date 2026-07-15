@@ -71,6 +71,218 @@
     print-color-adjust: exact;
   }
 
+  /* ── Invoice layout blocks (Slice A) ── */
+  #invoice.layout-header-swap .header {
+    grid-template-columns: 360px 1fr;
+  }
+  #invoice.layout-header-swap .title-block {
+    order: 2;
+    border-right: none;
+    border-left: 1.5px solid var(--rule);
+    padding-right: 0;
+    padding-left: 32px;
+  }
+  #invoice.layout-header-swap .right-col {
+    order: 1;
+    text-align: left;
+    padding-left: 0;
+    padding-right: 32px;
+  }
+  #invoice.layout-header-swap .header {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+  }
+  #invoice.layout-density-compact .header {
+    padding-bottom: 12px;
+  }
+  #invoice.layout-density-compact .invoice-table {
+    margin-top: 12px;
+  }
+  #invoice.layout-density-compact .total-wrap {
+    margin-top: 12px;
+  }
+  #invoice.layout-density-compact .footer {
+    margin-top: 14px;
+  }
+  .layout-block {
+    width: 100%;
+  }
+
+  /* Templates modal — create card */
+  .tmpl-create-card {
+    background: #f0f4f8;
+    border: 1.5px solid rgba(20,32,46,0.12);
+    border-radius: 10px;
+    padding: 14px 14px 12px;
+    margin-bottom: 4px;
+  }
+  .tmpl-create-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #14202e;
+    margin-bottom: 6px;
+  }
+  .tmpl-create-lead {
+    font-size: 11.5px;
+    color: #6c7682;
+    line-height: 1.45;
+    margin: 0 0 10px;
+  }
+  .tmpl-create-row { display: flex; gap: 8px; margin-bottom: 8px; }
+  .tmpl-create-input {
+    flex: 1;
+    padding: 9px 11px;
+    border: 1.5px solid rgba(20,32,46,0.14);
+    border-radius: 7px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    outline: none;
+    background: #fff;
+  }
+  .tmpl-create-input:focus { border-color: #14202e; }
+  .tmpl-create-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #14202e;
+    margin-bottom: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .tmpl-create-btn {
+    width: 100%;
+    padding: 10px 14px;
+    background: #14202e;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .tmpl-create-btn:hover { opacity: 0.92; }
+  .tmpl-create-ai-tip {
+    margin: 10px 0 0;
+    font-size: 11px;
+    line-height: 1.45;
+    color: #5b4fcf;
+    background: rgba(91,79,207,0.08);
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .tmpl-empty-hint {
+    font-size: 12px;
+    color: #6c7682;
+    padding: 8px 4px 4px;
+    line-height: 1.4;
+  }
+  .tmpl-cat-header {
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #6c7682;
+    margin-top: 12px;
+    margin-bottom: 4px;
+  }
+  .tmpl-drive-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 4px;
+  }
+  .tmpl-secondary-btn {
+    padding: 7px 12px;
+    background: #fff;
+    border: 1.5px solid rgba(20,32,46,0.14);
+    border-radius: 7px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: #14202e;
+    cursor: pointer;
+  }
+  .tmpl-secondary-btn:hover { border-color: #14202e; }
+  .tmpl-secondary-btn:disabled { opacity: 0.5; cursor: default; }
+  .tmpl-drive-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #f6f6f4;
+    border-radius: 7px;
+    margin-bottom: 6px;
+  }
+  .tmpl-drive-meta { flex: 1; min-width: 0; }
+  .tmpl-drive-name {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #14202e;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tmpl-drive-sub {
+    display: block;
+    font-size: 11px;
+    color: #6c7682;
+    margin-top: 2px;
+  }
+  .tmpl-mine-row {
+    display: flex;
+    gap: 6px;
+    align-items: stretch;
+    margin-bottom: 6px;
+  }
+  .tmpl-mine-main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 10px 14px;
+    background: #f6f6f4;
+    border: 1.5px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
+    font-family: 'Roboto', sans-serif;
+    text-align: left;
+    flex: 1;
+    transition: border-color 0.15s;
+  }
+  .tmpl-mine-main:hover { border-color: #14202e; }
+  .tmpl-mine-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #14202e;
+  }
+  .tmpl-mine-desc {
+    font-size: 11px;
+    color: #6c7682;
+    margin-top: 2px;
+  }
+  .tmpl-mine-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .tmpl-icon-btn {
+    min-width: 36px;
+    padding: 6px 8px;
+    background: #fff;
+    border: 1.5px solid rgba(20,32,46,0.14);
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+  }
+  .tmpl-icon-btn:hover { border-color: #14202e; }
+  .tmpl-icon-btn--danger {
+    border-color: rgba(208,36,27,0.25);
+    color: #d0241b;
+  }
+
   /* ── EDIT-MODE TOOLBAR ── */
   /* ── TOOLBAR RAIL ── */
   #toolbar {
@@ -742,48 +954,101 @@
       padding: 20px 24px !important;
     }
 
+    /* Bottom rail: always fit full viewport width; every control visible (no horizontal scroll) */
     #toolbar {
       position: fixed;
-      right: auto;
+      right: max(8px, env(safe-area-inset-right, 0px));
+      left: max(8px, env(safe-area-inset-left, 0px));
       top: auto;
-      bottom: 20px;
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: max(10px, env(safe-area-inset-bottom, 0px));
+      transform: none;
       flex-direction: row;
       flex-wrap: nowrap;
       align-items: center;
-      justify-content: flex-start;
-      border-radius: 40px;
-      padding: 6px 12px;
-      gap: 2px;
+      justify-content: space-between;
+      border-radius: 28px;
+      padding: 5px 6px;
+      gap: 0;
       width: auto;
-      max-width: calc(100vw - 24px);
-      overflow-x: auto;
-      overflow-y: hidden;
-      scrollbar-width: none;
+      max-width: none;
+      box-sizing: border-box;
+      overflow: visible;
       box-shadow: 0 8px 32px rgba(0,0,0,0.15);
       background: rgba(20,32,46,0.95);
       backdrop-filter: blur(8px);
       z-index: 1000;
     }
-    #toolbar::-webkit-scrollbar { display: none; }
-    .tb-group { flex-direction: row; gap: 2px; flex-shrink: 0; }
-    .tb-divider { width: 1.5px; height: 18px; margin: 0 2px; background: rgba(255,255,255,0.1); flex-shrink: 0; }
+    .tb-group {
+      flex-direction: row;
+      flex: 1 1 0;
+      min-width: 0;
+      gap: 0;
+      align-items: center;
+      justify-content: space-evenly;
+    }
+    .tb-divider {
+      width: 1px;
+      height: 16px;
+      margin: 0 1px;
+      background: rgba(255,255,255,0.12);
+      flex: 0 0 auto;
+    }
     #toolbar button {
-      width: 34px;
-      height: 34px;
-      flex-shrink: 0;
+      width: auto;
+      min-width: 0;
+      max-width: none;
+      height: 36px;
+      flex: 1 1 0;
       display: flex;
       align-items: center;
       justify-content: center;
+      padding: 0 1px;
+      border-radius: 10px;
+    }
+    #toolbar button svg {
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
     }
     #toolbar button .tb-label { display: none; }
+    #toolbar #theme-picker-wrap {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    #toolbar #theme-picker-wrap #btn-theme {
+      width: 100%;
+      max-width: none;
+    }
+    #toolbar #btn-shortcuts {
+      width: auto;
+      min-width: 0;
+      flex: 1 1 0;
+      height: 36px;
+      border-radius: 10px;
+      font-size: 12px;
+    }
     #font-selector, #theme-selector {
-      width: 72px;
+      width: auto;
+      min-width: 0;
+      max-width: 52px;
+      height: 32px;
+      padding: 0 2px;
+      font-size: 9px;
+      flex: 1 1 0;
+      margin-top: 0;
+    }
+    /* Editing adds Save/Cancel + font: keep icons tight so the bar still fits */
+    body.editing #toolbar button,
+    body.editing #toolbar #btn-shortcuts {
       height: 34px;
-      padding: 2px 6px;
-      font-size: 11px;
-      flex-shrink: 0;
+    }
+    body.editing #toolbar button svg {
+      width: 14px;
+      height: 14px;
     }
 
     .page {
@@ -1751,6 +2016,17 @@
 
   /* ── Extracted inline styles (CSP compliance) ── */
   #btn-shortcuts { font-size:13px; font-weight:700; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; padding:0; }
+  /* Mobile toolbar: override fixed 28px so the rail can distribute all buttons across full width */
+  @media screen and (max-width: 900px) {
+    #toolbar #btn-shortcuts {
+      width: auto;
+      min-width: 0;
+      height: 36px;
+      flex: 1 1 0;
+      border-radius: 10px;
+      font-size: 12px;
+    }
+  }
   #chat-title-group { display:flex; align-items:center; gap:7px; flex:1; min-width:0; }
   #btn-chat-close { background:none; border:none; cursor:pointer; font-size:13px; width:28px; height:28px; border-radius:8px; color:var(--muted); display:flex; align-items:center; justify-content:center; transition:background 0.15s; flex-shrink:0; }
   #chat-menu { display:none; position:absolute; right:0; top:calc(100% + 6px); background:#fff; border:1.5px solid rgba(20,32,46,0.12); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.14); min-width:170px; z-index:9000; padding:6px 0; font-family:'Roboto',sans-serif; }

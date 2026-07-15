@@ -756,6 +756,8 @@
   <!-- WATERMARK -->
   <div id="invoice-watermark"></div>
 
+  <!-- Layout blocks: order/visibility driven by invoice layout (Slice A) -->
+  <div class="layout-block" data-layout-id="header">
   <!-- HEADER -->
   <div class="header">
     <div class="title-block">
@@ -786,14 +788,14 @@
       </div>
     </div>
 
-    <div class="right-col">
-      <div class="logo-wrap" id="logo-wrap">
+    <div class="right-col" id="invoice-right-col">
+      <div class="logo-wrap" id="logo-wrap" data-layout-slot="logo">
         <div class="logo-placeholder" id="logo-placeholder" onclick="document.getElementById('logo-file-input').click()" title="Click to upload your logo">
           ＋ Add Logo
         </div>
         <input id="logo-file-input" type="file" accept="image/*" class="hidden" onchange="handleLogoUpload(this)">
       </div>
-      <div class="party from">
+      <div class="party from" data-layout-slot="from">
         <div class="lbl">From</div>
         <div class="name" data-field="from.name"></div>
         <div class="sub" id="from-sub" data-field="from._sub"></div>
@@ -801,14 +803,16 @@
           ⬇ Save as Profile
         </button>
       </div>
-      <div class="party to">
+      <div class="party to" data-layout-slot="to">
         <div class="lbl">To</div>
         <div class="name" data-field="to.name"></div>
         <div class="sub" id="to-sub" data-field="to._sub"></div>
       </div>
     </div>
   </div>
+  </div>
 
+  <div class="layout-block" data-layout-id="line_items">
   <!-- TABLE -->
   <table class="invoice-table">
     <thead>
@@ -824,12 +828,16 @@
   <div id="add-item-wrap">
     <button onclick="addLineItem()" class="btn-dashed">+ Add Line Item</button>
   </div>
+  </div>
 
+  <div class="layout-block" data-layout-id="notes">
   <!-- INVOICE NOTES -->
   <div id="invoice-notes-wrap">
     <div id="invoice-notes-el"></div>
   </div>
+  </div>
 
+  <div class="layout-block" data-layout-id="totals">
   <!-- TOTAL -->
   <div class="total-wrap">
     <div class="total-block">
@@ -850,16 +858,21 @@
       </div>
     </div>
   </div>
+  </div>
 
+  <div class="layout-block" data-layout-id="pay_period">
   <div class="pay-period">
     Pay Period — <span data-field="payPeriod"></span>
   </div>
+  </div>
 
+  <div class="layout-block" data-layout-id="footer">
   <!-- FOOTER -->
   <div class="footer">
     <div class="thank-you">Thank You!</div>
     <div class="footer-divider"></div>
     <div class="payment-note" id="payment-note-el"></div>
+  </div>
   </div>
 
 </div>

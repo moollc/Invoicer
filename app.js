@@ -374,10 +374,406 @@ function safeText(el, ...lines) {
   });
 }
 
+// ── Invoice layout (Slice A) ─────────────────────────────────
+// Declarative arrangement of existing fields — not free HTML.
+// Print/PDF clone inherits DOM order after applyInvoiceLayout().
+
+const LAYOUT_BLOCK_IDS = ['header', 'line_items', 'notes', 'totals', 'pay_period', 'footer'];
+const LAYOUT_REQUIRED = new Set(['line_items', 'totals']);
+
+function defaultInvoiceLayout() {
+  return {
+    version: 1,
+    density: 'comfortable',
+    headerSwap: false,
+    logoVisible: true,
+    partiesOrder: ['from', 'to'],
+    blocks: LAYOUT_BLOCK_IDS.map(id => ({ id, visible: true })),
+  };
+}
+
+function normalizeInvoiceLayout(raw) {
+  const base = defaultInvoiceLayout();
+  if (!raw || typeof raw !== 'object') return base;
+  const layout = {
+    version: 1,
+    density: raw.density === 'compact' ? 'compact' : 'comfortable',
+    headerSwap: !!raw.headerSwap,
+    logoVisible: raw.logoVisible !== false,
+    partiesOrder: Array.isArray(raw.partiesOrder) && raw.partiesOrder.length
+      ? raw.partiesOrder.filter(p => p === 'from' || p === 'to')
+      : ['from', 'to'],
+    blocks: [],
+  };
+  if (layout.partiesOrder.length === 1) {
+    layout.partiesOrder = layout.partiesOrder[0] === 'to' ? ['to', 'from'] : ['from', 'to'];
+  }
+  if (layout.partiesOrder[0] === layout.partiesOrder[1]) layout.partiesOrder = ['from', 'to'];
+
+  const byId = {};
+  (Array.isArray(raw.blocks) ? raw.blocks : []).forEach(b => {
+    if (b && b.id && LAYOUT_BLOCK_IDS.includes(b.id)) byId[b.id] = b;
+  });
+  // Preserve order from raw.blocks when valid; append any missing ids
+  const ordered = [];
+  (Array.isArray(raw.blocks) ? raw.blocks : []).forEach(b => {
+    if (b && b.id && LAYOUT_BLOCK_IDS.includes(b.id) && !ordered.includes(b.id)) ordered.push(b.id);
+  });
+  LAYOUT_BLOCK_IDS.forEach(id => { if (!ordered.includes(id)) ordered.push(id); });
+  layout.blocks = ordered.map(id => ({
+    id,
+    visible: LAYOUT_REQUIRED.has(id) ? true : (byId[id] ? byId[id].visible !== false : true),
+  }));
+  return layout;
+}
+
+function loadInvoiceLayout() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('invoice-current-layout') || 'null');
+    return normalizeInvoiceLayout(raw);
+  } catch (e) {
+    return defaultInvoiceLayout();
+  }
+}
+
+function saveInvoiceLayout(layout) {
+  const norm = normalizeInvoiceLayout(layout);
+  try { localStorage.setItem('invoice-current-layout', JSON.stringify(norm)); } catch (e) {}
+  return norm;
+}
+
+function mergeInvoiceLayout(partial) {
+  const cur = loadInvoiceLayout();
+  if (!partial || typeof partial !== 'object') return cur;
+  const next = { ...cur, ...partial };
+  if (partial.blocks) next.blocks = partial.blocks;
+  if (partial.partiesOrder) next.partiesOrder = partial.partiesOrder;
+  return saveInvoiceLayout(next);
+}
+
+/** Apply layout to #invoice DOM (order, visibility, header/parties). */
+function applyInvoiceLayout(layout) {
+  const page = document.getElementById('invoice');
+  if (!page) return;
+  const L = normalizeInvoiceLayout(layout || loadInvoiceLayout());
+
+  page.classList.toggle('layout-density-compact', L.density === 'compact');
+  page.classList.toggle('layout-header-swap', !!L.headerSwap);
+
+  const blockMap = {};
+  L.blocks.forEach(b => { blockMap[b.id] = b; });
+
+  // Reorder top-level layout blocks
+  const watermark = page.querySelector('#invoice-watermark');
+  L.blocks.forEach(b => {
+    const el = page.querySelector(`.layout-block[data-layout-id="${b.id}"]`);
+    if (!el) return;
+    const mustShow = LAYOUT_REQUIRED.has(b.id) || b.visible !== false;
+    el.style.display = mustShow ? '' : 'none';
+    el.hidden = !mustShow;
+    page.appendChild(el);
+  });
+  // Keep watermark first
+  if (watermark) page.insertBefore(watermark, page.firstChild);
+
+  // Parties + logo order inside right column
+  const col = document.getElementById('invoice-right-col');
+  if (col) {
+    const logo = col.querySelector('[data-layout-slot="logo"]');
+    const from = col.querySelector('[data-layout-slot="from"]');
+    const to = col.querySelector('[data-layout-slot="to"]');
+    if (logo) {
+      logo.style.display = L.logoVisible === false ? 'none' : '';
+      col.appendChild(logo);
+    }
+    L.partiesOrder.forEach(slot => {
+      const el = slot === 'to' ? to : from;
+      if (el) col.appendChild(el);
+    });
+  }
+}
+
+// ── User layout templates (local) ────────────────────────────
+
+function loadUserTemplates() {
+  try { return JSON.parse(localStorage.getItem('invoice-user-templates') || '[]'); }
+  catch (e) { return []; }
+}
+function saveUserTemplates(list) {
+  try { localStorage.setItem('invoice-user-templates', JSON.stringify(list)); } catch (e) {}
+}
+
+function saveCurrentAsUserTemplate(name, includeData) {
+  const label = String(name || '').trim();
+  if (!label) throw new Error('Template name required');
+  const layout = loadInvoiceLayout();
+  let seedData = null;
+  if (includeData) {
+    const d = getData();
+    seedData = {
+      payPeriod: d.payPeriod,
+      currency: d.currency,
+      lineItems: d.lineItems,
+      projectTotal: d.projectTotal,
+      totalLabelTop: d.totalLabelTop,
+      totalLabelBottom: d.totalLabelBottom,
+      totalAmount: d.totalAmount,
+      paymentNote: d.paymentNote,
+      invoiceNotes: d.invoiceNotes || '',
+    };
+  }
+  const list = loadUserTemplates();
+  const id = 'user-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const entry = {
+    id,
+    name: label,
+    created: new Date().toISOString(),
+    layout,
+    seedData,
+  };
+  list.unshift(entry);
+  saveUserTemplates(list);
+  return entry;
+}
+
+function applyUserTemplate(id) {
+  const entry = loadUserTemplates().find(t => t.id === id);
+  if (!entry) throw new Error('Template not found');
+  saveInvoiceLayout(entry.layout);
+  applyInvoiceLayout(entry.layout);
+  if (entry.seedData) {
+    let existing;
+    try { existing = JSON.parse(document.getElementById('invoice-data').textContent); }
+    catch (e) { existing = getData(); }
+    const merged = Object.assign({}, existing, entry.seedData, {
+      from: existing.from,
+      to: existing.to,
+    });
+    document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+    render(getData());
+  } else {
+    render(getData());
+  }
+  return entry;
+}
+
+function deleteUserTemplate(id) {
+  saveUserTemplates(loadUserTemplates().filter(t => t.id !== id));
+}
+
+// ── Slice B: portable template files + Google Drive Templates/ ──
+// File kind: mooInvoicer.template  ·  name: *.invoicer-template.json
+// Folder: mooInvoicer/Templates/
+
+const TEMPLATE_PORTABLE_KIND = 'mooInvoicer.template';
+const TEMPLATE_PORTABLE_VERSION = 1;
+
+function templateFileSlug(name) {
+  return String(name || 'template')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'template';
+}
+
+function templateFileName(entry) {
+  return `${templateFileSlug(entry.name)}.invoicer-template.json`;
+}
+
+/** Shareable / re-importable payload (disk + Drive). */
+function templateToPortable(entry) {
+  return {
+    kind: TEMPLATE_PORTABLE_KIND,
+    version: TEMPLATE_PORTABLE_VERSION,
+    id: entry.id,
+    name: entry.name,
+    created: entry.created || null,
+    exportedAt: new Date().toISOString(),
+    layout: normalizeInvoiceLayout(entry.layout),
+    seedData: entry.seedData || null,
+  };
+}
+
+function parsePortableTemplate(obj) {
+  if (!obj || typeof obj !== 'object') throw new Error('Invalid template file');
+  if (obj.kind !== TEMPLATE_PORTABLE_KIND) {
+    throw new Error('Not an Invoicer template (.invoicer-template.json)');
+  }
+  if (!obj.layout) throw new Error('Template file missing layout');
+  const name = String(obj.name || 'Imported template').trim() || 'Imported template';
+  let id = obj.id && String(obj.id).startsWith('user-')
+    ? String(obj.id)
+    : ('user-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5));
+  return {
+    id,
+    name,
+    created: obj.created || new Date().toISOString(),
+    layout: normalizeInvoiceLayout(obj.layout),
+    seedData: obj.seedData || null,
+    driveFileId: obj.driveFileId || null,
+    driveFileName: obj.driveFileName || null,
+  };
+}
+
+/** Merge portable template into local My templates (replace same id). */
+function importPortableToLocal(obj) {
+  const entry = parsePortableTemplate(obj);
+  const list = loadUserTemplates();
+  const idx = list.findIndex(t => t.id === entry.id);
+  if (idx >= 0) {
+    list[idx] = {
+      ...list[idx],
+      name: entry.name,
+      layout: entry.layout,
+      seedData: entry.seedData,
+      driveFileId: entry.driveFileId || list[idx].driveFileId || null,
+      driveFileName: entry.driveFileName || list[idx].driveFileName || null,
+    };
+    saveUserTemplates(list);
+    return list[idx];
+  }
+  // Avoid id clash if somehow parsed id exists differently
+  if (list.some(t => t.id === entry.id)) {
+    entry.id = 'user-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  }
+  list.unshift(entry);
+  saveUserTemplates(list);
+  return entry;
+}
+
+function downloadUserTemplateFile(templateId) {
+  const entry = loadUserTemplates().find(t => t.id === templateId);
+  if (!entry) throw new Error('Template not found');
+  const portable = templateToPortable(entry);
+  const blob = new Blob([JSON.stringify(portable, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = templateFileName(entry);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2500);
+  return templateFileName(entry);
+}
+
+async function ensureTemplatesDriveFolder() {
+  const rootId = await ensureDriveFolder();
+  const folderQuery = `name = 'Templates' and '${rootId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+  const folderSearch = await driveRequest('GET', `/files?q=${encodeURIComponent(folderQuery)}&fields=files(id,name)`);
+  if (folderSearch?.files?.length > 0) return folderSearch.files[0].id;
+  const created = await driveRequest('POST', '/files', {
+    name: 'Templates',
+    mimeType: 'application/vnd.google-apps.folder',
+    parents: [rootId],
+  });
+  if (!created || !created.id) throw new Error(created?.error?.message || 'Could not create Templates folder on Drive');
+  return created.id;
+}
+
+async function driveUploadJsonFile(fileId, jsonText) {
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${_gmailToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: jsonText,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'Drive media upload failed');
+  }
+  return res.json().catch(() => ({}));
+}
+
+async function uploadUserTemplateToDrive(templateId) {
+  if (!gmailTokenValid()) throw new Error('Sign in with Google first');
+  const entry = loadUserTemplates().find(t => t.id === templateId);
+  if (!entry) throw new Error('Template not found');
+  await ensureDriveFolder();
+  const folderId = await ensureTemplatesDriveFolder();
+  const portable = templateToPortable(entry);
+  const jsonText = JSON.stringify(portable, null, 2);
+  const fileName = templateFileName(entry);
+
+  let fileId = entry.driveFileId || null;
+  if (fileId) {
+    // Verify file still exists
+    const meta = await driveRequest('GET', `/files/${fileId}?fields=id,trashed`);
+    if (!meta?.id || meta.trashed) fileId = null;
+  }
+  if (!fileId) {
+    const safeName = fileName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const q = `name = '${safeName}' and '${folderId}' in parents and trashed = false`;
+    const search = await driveRequest('GET', `/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
+    if (search?.files?.length) fileId = search.files[0].id;
+  }
+  if (!fileId) {
+    const meta = await driveRequest('POST', '/files', {
+      name: fileName,
+      mimeType: 'application/json',
+      parents: [folderId],
+    });
+    if (!meta?.id) throw new Error(meta?.error?.message || 'Drive file create failed');
+    fileId = meta.id;
+  }
+  await driveUploadJsonFile(fileId, jsonText);
+
+  const list = loadUserTemplates();
+  const idx = list.findIndex(t => t.id === templateId);
+  if (idx >= 0) {
+    list[idx].driveFileId = fileId;
+    list[idx].driveFileName = fileName;
+    saveUserTemplates(list);
+  }
+  return {
+    fileId,
+    fileName,
+    url: `https://drive.google.com/file/d/${fileId}/view`,
+  };
+}
+
+async function listDriveTemplates() {
+  if (!gmailTokenValid()) return [];
+  await ensureDriveFolder();
+  const folderId = await ensureTemplatesDriveFolder();
+  const q = `'${folderId}' in parents and trashed = false`;
+  const search = await driveRequest(
+    'GET',
+    `/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime,mimeType)&orderBy=modifiedTime desc&pageSize=50`
+  );
+  if (search?.error) throw new Error(search.error.message || 'Drive list failed');
+  return (search?.files || []).filter(f =>
+    /\.invoicer-template\.json$/i.test(f.name || '') || f.mimeType === 'application/json'
+  );
+}
+
+async function importTemplateFromDrive(fileId) {
+  if (!gmailTokenValid()) throw new Error('Sign in with Google first');
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${_gmailToken}` },
+  });
+  if (!res.ok) throw new Error('Could not download template from Drive');
+  const text = await res.text();
+  let obj;
+  try { obj = JSON.parse(text); }
+  catch (e) { throw new Error('Drive file is not valid JSON'); }
+  obj.driveFileId = fileId;
+  return importPortableToLocal(obj);
+}
+
+function importTemplateFromFileText(text) {
+  let obj;
+  try { obj = JSON.parse(text); }
+  catch (e) { throw new Error('File is not valid JSON'); }
+  return importPortableToLocal(obj);
+}
+
 function render(data) {
   if (!document.body.classList.contains('editing')) syncTotalsFromLineItems(data);
   // Persist invoice state so it survives page refresh
   try { localStorage.setItem('invoice-last-state', JSON.stringify(data)); } catch(e) {}
+
+  applyInvoiceLayout(loadInvoiceLayout());
 
   const fromSub = document.getElementById('from-sub');
   if (fromSub) {
@@ -3402,8 +3798,23 @@ To record a project cost (money the user spent on a project — supplier payment
 To log a rebill expense (a pass-through cost the user will CHARGE BACK to the client, e.g. travel, materials), include "_addClientExpense": [{ "receipt": "...", "description": "...", "amount": 150 }] — array; amount is a number; receipt is optional and defaults to the current invoice's receiptNumber (copy exact receipts from the ledger summary, never invent one). This logs the expense as pending; the user rebills it onto the invoice from the Expenses toolbar. Do not confuse with "_addProjectCost" (absorbed costs).
 ${ledgerRules}
 To change the payment status of the current invoice in the ledger, include "_updateStatus": { "receipt": "...", "status": "..." } — receipt must be copied exactly from the "receiptNumber" field below (do not invent it); status must be exactly one of: "⬜ Unpaid", "💰 Deposit", "📤 Sent", "✅ Paid".
+Layout (visual arrangement of the invoice page — not free HTML):
+Current layout JSON is shown below. To rearrange, include "_setLayout" with any of:
+  density: "comfortable" | "compact"
+  headerSwap: true = parties/logo on the left, title on the right
+  logoVisible: true | false
+  partiesOrder: ["from","to"] or ["to","from"]
+  blocks: array of { "id": one of header|line_items|notes|totals|pay_period|footer, "visible": true|false } — order of array = vertical order on the page
+Rules: line_items and totals must always stay visible. Only use block ids listed. Do not invent HTML/CSS.
+To save the current layout (and optionally starter line items/notes) as a named template on this device, include "_saveTemplate": { "name": "Studio Day", "includeData": true|false } — only when the user asks to save a template.
+To apply a saved user template, include "_applyTemplate": { "id": "user-..." } — use an id from the My templates list below when the user asks to apply one. Built-in ids: default, film-quote, film-invoice, dit-job, music-session, design-project, consulting.
+To upload a local user template to Google Drive (mooInvoicer/Templates/), include "_uploadTemplate": { "id": "user-..." } — only when the user asks to upload/share to Drive.
+To import a template file from Drive by file id, include "_importDriveTemplate": { "fileId": "..." } — only when the user provides a Drive file id or asks to pull a known Drive template after listing.
 Date format rule: whenever you emit a "date" field, use MM/DD/YYYY (e.g. 06/11/2026). Never use DD/MM/YYYY or ISO 8601 for the date field.
 Do not include any action key unless the user explicitly requested that action.${goalNamesLine ? '\n' + goalNamesLine : ''}${clientsLine ? '\n' + clientsLine : ''}${ledgerSummary ? '\n' + ledgerSummary : ''}${allCosts.length ? '\n' + costsSummary : ''}${allRebill.length ? '\n' + rebillSummary : ''}
+Current layout:
+${JSON.stringify(loadInvoiceLayout())}
+My templates (local): ${loadUserTemplates().map(t => t.id + ' = ' + t.name + (t.driveFileId ? ' [Drive]' : '')).join('; ') || 'none'}
 Current invoice data:
 ${currentData}`;
 
@@ -3514,6 +3925,83 @@ ${currentData}`;
     if (patch._addGoal)    { applyAddGoal(patch._addGoal, actionNotes);       delete patch._addGoal; }
     if (patch._updateGoal) { applyUpdateGoal(patch._updateGoal, actionNotes); delete patch._updateGoal; }
     if (patch._deleteGoal) { applyDeleteGoal(patch._deleteGoal, actionNotes); delete patch._deleteGoal; }
+
+    // Layout / templates (local Slice A)
+    if (patch._setLayout) {
+      try {
+        const next = mergeInvoiceLayout(patch._setLayout);
+        applyInvoiceLayout(next);
+        actionNotes.push('Updated invoice layout');
+      } catch (e) {
+        actionNotes.push('Layout update failed: ' + (e.message || e));
+      }
+      delete patch._setLayout;
+    }
+    if (patch._saveTemplate) {
+      try {
+        const st = patch._saveTemplate;
+        const name = typeof st === 'string' ? st : (st && st.name);
+        const includeData = !!(st && st.includeData);
+        const entry = saveCurrentAsUserTemplate(name, includeData);
+        actionNotes.push(`Saved template “${entry.name}” (${entry.id})`);
+      } catch (e) {
+        actionNotes.push('Save template failed: ' + (e.message || e));
+      }
+      delete patch._saveTemplate;
+    }
+    if (patch._applyTemplate) {
+      try {
+        const tid = typeof patch._applyTemplate === 'string'
+          ? patch._applyTemplate
+          : (patch._applyTemplate && patch._applyTemplate.id);
+        if (!tid) throw new Error('Template id required');
+        if (String(tid).startsWith('user-')) {
+          applyUserTemplate(tid);
+          actionNotes.push(`Applied template ${tid}`);
+        } else {
+          // Built-in: merge content only (avoid modal close side-effects from applyTemplate UI path)
+          const template = getTemplateData(tid);
+          let existing;
+          try { existing = JSON.parse(document.getElementById('invoice-data').textContent); }
+          catch (e) { existing = getData(); }
+          const merged = Object.assign({}, existing, template, { from: existing.from, to: existing.to });
+          localStorage.setItem('invoicer-preferred-template', tid);
+          saveInvoiceLayout(defaultInvoiceLayout());
+          document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+          render(getData());
+          actionNotes.push(`Applied built-in template ${tid}`);
+        }
+      } catch (e) {
+        actionNotes.push('Apply template failed: ' + (e.message || e));
+      }
+      delete patch._applyTemplate;
+    }
+    if (patch._uploadTemplate) {
+      try {
+        const tid = typeof patch._uploadTemplate === 'string'
+          ? patch._uploadTemplate
+          : (patch._uploadTemplate && patch._uploadTemplate.id);
+        if (!tid) throw new Error('Template id required');
+        const up = await uploadUserTemplateToDrive(tid);
+        actionNotes.push(`Uploaded template to Drive: ${up.fileName}`);
+      } catch (e) {
+        actionNotes.push('Drive upload failed: ' + (e.message || e));
+      }
+      delete patch._uploadTemplate;
+    }
+    if (patch._importDriveTemplate) {
+      try {
+        const fid = typeof patch._importDriveTemplate === 'string'
+          ? patch._importDriveTemplate
+          : (patch._importDriveTemplate && (patch._importDriveTemplate.fileId || patch._importDriveTemplate.id));
+        if (!fid) throw new Error('Drive fileId required');
+        const entry = await importTemplateFromDrive(fid);
+        actionNotes.push(`Imported “${entry.name}” from Drive (${entry.id})`);
+      } catch (e) {
+        actionNotes.push('Drive import failed: ' + (e.message || e));
+      }
+      delete patch._importDriveTemplate;
+    }
 
     const data = getData();
 
@@ -5760,6 +6248,13 @@ const TMPL_CONSULTING = {
   paymentNote: 'Payment due within 30 days of invoice date.', paid: false,
 };
 
+/** Models that follow structured layout JSON more reliably for template design. */
+const TEMPLATE_AI_MODEL_TIP =
+  'Design layouts in chat, then save here. Best at structured layout instructions: '
+  + 'Claude Sonnet (Anthropic), GPT-4o / GPT-4.1 (OpenAI), Gemini 2.5 Pro. '
+  + 'Composer 2.5 Fast (via Grok CLI) is strong for coding the app itself. '
+  + 'Smaller/faster chat models often miss block order — re-check the invoice after they reply.';
+
 function openTemplatesModal() {
   const list = document.getElementById('templates-list');
   list.innerHTML = '';
@@ -5777,13 +6272,216 @@ function openTemplatesModal() {
       + '<span style="font-size:11px; color:#6c7682; margin-top:2px;">' + description + '</span>';
     btn.onclick = onClick;
     list.appendChild(btn);
+    return btn;
   };
   const catHeader = function(cat) {
     const catLabel = document.createElement('div');
-    catLabel.style.cssText = 'font-size:10px; letter-spacing:3px; text-transform:uppercase; color:#6c7682; margin-top:12px; margin-bottom:4px;';
+    catLabel.className = 'tmpl-cat-header';
     catLabel.textContent = cat;
     list.appendChild(catLabel);
   };
+
+  // ── Create template (primary entry at top) ──
+  const createCard = document.createElement('div');
+  createCard.className = 'tmpl-create-card';
+  createCard.innerHTML =
+    '<div class="tmpl-create-title">Create template</div>'
+    + '<p class="tmpl-create-lead">Saves the <strong>current invoice layout</strong> on this device. '
+    + 'Optional starter content (line items, notes, pay terms). Use chat first if you want the AI to rearrange the page, then create here.</p>'
+    + '<div class="tmpl-create-row">'
+    +   '<input id="tmpl-create-name" type="text" placeholder="Name (e.g. Studio Day Rate)" class="tmpl-create-input" />'
+    + '</div>'
+    + '<label class="tmpl-create-check"><input id="tmpl-create-include-data" type="checkbox" checked /> '
+    + 'Include current line items &amp; notes as starter content</label>'
+    + '<button type="button" id="tmpl-create-btn" class="tmpl-create-btn">+ Create template</button>'
+    + '<p class="tmpl-create-ai-tip" id="tmpl-ai-tip"></p>';
+  list.appendChild(createCard);
+  const tipEl = createCard.querySelector('#tmpl-ai-tip');
+  if (tipEl) tipEl.textContent = TEMPLATE_AI_MODEL_TIP;
+  const nameIn = createCard.querySelector('#tmpl-create-name');
+  const includeCb = createCard.querySelector('#tmpl-create-include-data');
+  const createBtn = createCard.querySelector('#tmpl-create-btn');
+  createBtn.onclick = function() {
+    const name = (nameIn.value || '').trim();
+    if (!name) { showToast('Enter a template name', 'info'); nameIn.focus(); return; }
+    try {
+      const entry = saveCurrentAsUserTemplate(name, !!(includeCb && includeCb.checked));
+      showToast(`Created template “${entry.name}”`, 'success');
+      openTemplatesModal();
+    } catch (e) {
+      showToast(e.message || 'Could not create template', 'error');
+    }
+  };
+  nameIn.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); createBtn.click(); }
+  });
+
+  // Import from file (shareable .invoicer-template.json)
+  const importRow = document.createElement('div');
+  importRow.className = 'tmpl-drive-bar';
+  importRow.innerHTML =
+    '<button type="button" id="tmpl-import-file-btn" class="tmpl-secondary-btn">Import file…</button>'
+    + '<button type="button" id="tmpl-drive-refresh-btn" class="tmpl-secondary-btn">Drive Templates</button>'
+    + '<input type="file" id="tmpl-import-file" accept=".json,application/json,.invoicer-template.json" style="display:none" />';
+  list.appendChild(importRow);
+  const fileInput = importRow.querySelector('#tmpl-import-file');
+  importRow.querySelector('#tmpl-import-file-btn').onclick = function() { fileInput.click(); };
+  fileInput.onchange = function() {
+    const file = fileInput.files && fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function() {
+      try {
+        const entry = importTemplateFromFileText(String(reader.result || ''));
+        showToast(`Imported “${entry.name}”`, 'success');
+        openTemplatesModal();
+      } catch (e) {
+        showToast(e.message || 'Import failed', 'error');
+      }
+      fileInput.value = '';
+    };
+    reader.readAsText(file);
+  };
+  importRow.querySelector('#tmpl-drive-refresh-btn').onclick = async function() {
+    if (!gmailTokenValid()) {
+      showToast('Sign in with Google first (Connections)', 'info');
+      return;
+    }
+    const status = document.createElement('div');
+    status.className = 'tmpl-empty-hint';
+    status.id = 'tmpl-drive-status';
+    status.textContent = 'Loading Drive Templates…';
+    const existing = list.querySelector('#tmpl-drive-section');
+    if (existing) existing.remove();
+    const section = document.createElement('div');
+    section.id = 'tmpl-drive-section';
+    list.insertBefore(section, importRow.nextSibling);
+    section.appendChild(status);
+    try {
+      const files = await listDriveTemplates();
+      status.remove();
+      const head = document.createElement('div');
+      head.className = 'tmpl-cat-header';
+      head.textContent = 'Google Drive · mooInvoicer/Templates';
+      section.appendChild(head);
+      if (!files.length) {
+        const empty = document.createElement('div');
+        empty.className = 'tmpl-empty-hint';
+        empty.textContent = 'No template files on Drive yet. Upload one from My templates.';
+        section.appendChild(empty);
+      } else {
+        files.forEach(function(f) {
+          const row = document.createElement('div');
+          row.className = 'tmpl-drive-row';
+          row.innerHTML =
+            '<div class="tmpl-drive-meta"><span class="tmpl-drive-name"></span>'
+            + '<span class="tmpl-drive-sub"></span></div>'
+            + '<button type="button" class="tmpl-secondary-btn tmpl-drive-import">Import</button>';
+          row.querySelector('.tmpl-drive-name').textContent = f.name || f.id;
+          row.querySelector('.tmpl-drive-sub').textContent = f.modifiedTime
+            ? new Date(f.modifiedTime).toLocaleString()
+            : 'Drive';
+          row.querySelector('.tmpl-drive-import').onclick = async function() {
+            try {
+              const entry = await importTemplateFromDrive(f.id);
+              showToast(`Imported “${entry.name}” from Drive`, 'success');
+              openTemplatesModal();
+            } catch (e) {
+              showToast(e.message || 'Drive import failed', 'error');
+            }
+          };
+          section.appendChild(row);
+        });
+      }
+    } catch (e) {
+      status.textContent = e.message || 'Could not list Drive templates';
+    }
+  };
+
+  // My templates (local)
+  const mine = loadUserTemplates();
+  catHeader('My templates');
+  if (!mine.length) {
+    const empty = document.createElement('div');
+    empty.className = 'tmpl-empty-hint';
+    empty.textContent = 'No custom templates yet. Create one above, or ask chat to arrange the invoice then create.';
+    list.appendChild(empty);
+  } else {
+    mine.forEach(function(t) {
+      const desc = (t.seedData ? 'Layout + starter content · ' : 'Layout only · ')
+        + (t.created ? new Date(t.created).toLocaleDateString() : 'local')
+        + (t.driveFileId ? ' · on Drive' : '');
+      const wrap = document.createElement('div');
+      wrap.className = 'tmpl-mine-row';
+      const btn = document.createElement('button');
+      btn.className = 'tmpl-mine-main';
+      btn.innerHTML = '<span class="tmpl-mine-name"></span><span class="tmpl-mine-desc"></span>';
+      btn.querySelector('.tmpl-mine-name').textContent = t.name;
+      btn.querySelector('.tmpl-mine-desc').textContent = desc;
+      btn.onclick = function() {
+        try {
+          applyUserTemplate(t.id);
+          closeTemplatesModal();
+          startEdit();
+          showToast(`Applied “${t.name}”`, 'success');
+        } catch (e) {
+          showToast(e.message || 'Could not apply template', 'error');
+        }
+      };
+      const actions = document.createElement('div');
+      actions.className = 'tmpl-mine-actions';
+      const dl = document.createElement('button');
+      dl.type = 'button';
+      dl.className = 'tmpl-icon-btn';
+      dl.title = 'Download shareable file';
+      dl.textContent = '⬇';
+      dl.onclick = function(e) {
+        e.stopPropagation();
+        try {
+          const fn = downloadUserTemplateFile(t.id);
+          showToast(`Downloaded ${fn}`, 'success');
+        } catch (err) {
+          showToast(err.message || 'Download failed', 'error');
+        }
+      };
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'tmpl-icon-btn';
+      up.title = 'Upload to Google Drive Templates folder';
+      up.textContent = '☁';
+      up.onclick = async function(e) {
+        e.stopPropagation();
+        if (!gmailTokenValid()) {
+          showToast('Sign in with Google first (Connections)', 'info');
+          return;
+        }
+        up.disabled = true;
+        try {
+          const res = await uploadUserTemplateToDrive(t.id);
+          showToast(`Uploaded to Drive: ${res.fileName}`, 'success');
+          openTemplatesModal();
+        } catch (err) {
+          showToast(err.message || 'Drive upload failed', 'error');
+        } finally {
+          up.disabled = false;
+        }
+      };
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'tmpl-icon-btn tmpl-icon-btn--danger';
+      del.title = 'Delete local template';
+      del.textContent = '✕';
+      del.onclick = async function(e) {
+        e.stopPropagation();
+        if (!await showConfirm(`Delete template “${t.name}”?`)) return;
+        deleteUserTemplate(t.id);
+        openTemplatesModal();
+      };
+      actions.append(dl, up, del);
+      wrap.append(btn, actions);
+      list.appendChild(wrap);
+    });
+  }
 
   Object.keys(categories).forEach(function(cat) {
     catHeader(cat);
@@ -5797,7 +6495,6 @@ function openTemplatesModal() {
   const receipts = Object.keys(archive);
   if (receipts.length) {
     catHeader('From your invoices');
-    // newest first by receipt label
     receipts.sort().reverse().forEach(function(receipt) {
       const inv = archive[receipt];
       const client = (inv.to && inv.to.name) || 'No client';
@@ -5808,6 +6505,7 @@ function openTemplatesModal() {
   }
 
   document.getElementById('templates-overlay').style.display = 'flex';
+  setTimeout(function() { if (nameIn) nameIn.focus(); }, 50);
 }
 
 // Start a NEW invoice from a past one: real fields restored, fresh receipt,
@@ -5830,14 +6528,27 @@ function closeTemplatesModal() {
 }
 
 function applyTemplate(id) {
+  // User-saved layout templates
+  if (String(id).startsWith('user-')) {
+    try {
+      applyUserTemplate(id);
+      closeTemplatesModal();
+      startEdit();
+    } catch (e) {
+      showToast(e.message || 'Could not apply template', 'error');
+    }
+    return;
+  }
   const template = getTemplateData(id);
   let existing;
   try { existing = JSON.parse(document.getElementById('invoice-data').textContent); }
   catch(e) { showToast('Could not read invoice data. Try reloading the page.', 'error'); return; }
   const merged = Object.assign({}, existing, template, { from: existing.from, to: existing.to });
   localStorage.setItem('invoicer-preferred-template', id);
+  // Built-ins reset to default layout so structure matches stock templates
+  saveInvoiceLayout(defaultInvoiceLayout());
   document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
-  render(merged);
+  render(getData());
   closeTemplatesModal();
   startEdit();
 }
