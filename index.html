@@ -564,11 +564,11 @@
 </div>
 
 <div id="templates-overlay" role="dialog" aria-modal="true" aria-label="Invoice templates" onclick="if(event.target.id==='templates-overlay') closeTemplatesModal()">
-  <div class="modal-box modal-box--540">
+  <div class="modal-box modal-box--540 tmpl-modal-box">
     <button onclick="closeTemplatesModal()" aria-label="Close" class="modal-close-btn--32">✕</button>
     <div class="modal-label">Start from a</div>
     <div class="modal-title">Template</div>
-    <div id="templates-list"></div>
+    <div id="templates-list" class="tmpl-list-scroll"></div>
     <button onclick="closeTemplatesModal()" class="modal-btn-full-eee">Cancel</button>
   </div>
 </div>
