@@ -124,7 +124,11 @@ function sanitizePrintClone(clone) {
     inp.replaceWith(document.createTextNode(inp.value || ''));
   });
   // Remove edit-only chrome that leaks into print.
-  ['#title-size-wrap', '#autosum-hint', '#notes-char-counter', '#status-picker'].forEach(id => {
+  // #tax-rate-edit-row must be removed as a WHOLE ROW: the <input> pass above
+  // replaces inputs with their value, so leaving it would print the literal
+  // text "GCT / Tax Rate 0 %" on invoices that have no tax at all.
+  ['#title-size-wrap', '#autosum-hint', '#notes-char-counter', '#status-picker',
+   '#tax-rate-edit-row'].forEach(id => {
     const el = clone.querySelector(id);
     if (el) el.remove();
   });
@@ -145,6 +149,26 @@ function sanitizePrintClone(clone) {
       const val = get(data, el.dataset.field);
       if (val !== undefined && typeof val !== 'object') el.textContent = val;
     });
+  } catch(e) {}
+  // Drop line-item rows that have no cost entered, so a half-filled draft
+  // doesn't ship with empty lines. Editor and stored data are untouched — this
+  // only affects the clone that becomes the PDF/print output. Never removes the
+  // final row, so an invoice can't print with an empty items table.
+  try {
+    const body = clone.querySelector('#line-items');
+    if (body) {
+      const rows = Array.from(body.querySelectorAll('tr'));
+      const isBlankCost = tr => {
+        const cell = tr.querySelector('.col-cost');
+        if (!cell) return false;
+        const txt = (cell.textContent || '').replace(/[^0-9.]/g, '');
+        return txt === '' || parseFloat(txt) === 0;
+      };
+      const keepers = rows.filter(tr => !isBlankCost(tr));
+      if (keepers.length > 0) {
+        rows.filter(isBlankCost).forEach(tr => tr.remove());
+      }
+    }
   } catch(e) {}
   return clone;
 }
@@ -374,12 +398,48 @@ function safeText(el, ...lines) {
   });
 }
 
-// ── Invoice layout (Slice A) ─────────────────────────────────
+// ── Invoice layout (Slice A) + visual tokens (V1) ────────────
 // Declarative arrangement of existing fields — not free HTML.
-// Print/PDF clone inherits DOM order after applyInvoiceLayout().
+// V1 visual: closed design tokens (accents, cards, dividers) — print-safe.
+// Print/PDF clone inherits DOM order + classes after applyInvoiceLayout().
 
 const LAYOUT_BLOCK_IDS = ['header', 'line_items', 'notes', 'totals', 'pay_period', 'footer'];
 const LAYOUT_REQUIRED = new Set(['line_items', 'totals']);
+
+/** Closed visual token set — AI may only use these keys/values. */
+const VISUAL_TOKEN_DEFAULTS = {
+  headerAccent: 'solid',   // solid | double | none
+  sectionCards: false,     // soft card frames around major blocks
+  dividerStyle: 'solid',   // solid | dashed | none (rules / footer line)
+  totalsStyle: 'card',     // card | flat (amount block)
+  notesStyle: 'plain',     // plain | box
+  tableHeader: 'filled',   // filled | minimal
+};
+
+const VISUAL_TOKEN_ENUMS = {
+  headerAccent: ['solid', 'double', 'none'],
+  dividerStyle: ['solid', 'dashed', 'none'],
+  totalsStyle: ['card', 'flat'],
+  notesStyle: ['plain', 'box'],
+  tableHeader: ['filled', 'minimal'],
+};
+
+function defaultVisualTokens() {
+  return { ...VISUAL_TOKEN_DEFAULTS };
+}
+
+function normalizeVisualTokens(raw) {
+  const base = defaultVisualTokens();
+  if (!raw || typeof raw !== 'object') return base;
+  const v = { ...base };
+  if (VISUAL_TOKEN_ENUMS.headerAccent.includes(raw.headerAccent)) v.headerAccent = raw.headerAccent;
+  if (typeof raw.sectionCards === 'boolean') v.sectionCards = raw.sectionCards;
+  if (VISUAL_TOKEN_ENUMS.dividerStyle.includes(raw.dividerStyle)) v.dividerStyle = raw.dividerStyle;
+  if (VISUAL_TOKEN_ENUMS.totalsStyle.includes(raw.totalsStyle)) v.totalsStyle = raw.totalsStyle;
+  if (VISUAL_TOKEN_ENUMS.notesStyle.includes(raw.notesStyle)) v.notesStyle = raw.notesStyle;
+  if (VISUAL_TOKEN_ENUMS.tableHeader.includes(raw.tableHeader)) v.tableHeader = raw.tableHeader;
+  return v;
+}
 
 function defaultInvoiceLayout() {
   return {
@@ -389,6 +449,7 @@ function defaultInvoiceLayout() {
     logoVisible: true,
     partiesOrder: ['from', 'to'],
     blocks: LAYOUT_BLOCK_IDS.map(id => ({ id, visible: true })),
+    visual: defaultVisualTokens(),
   };
 }
 
@@ -404,6 +465,7 @@ function normalizeInvoiceLayout(raw) {
       ? raw.partiesOrder.filter(p => p === 'from' || p === 'to')
       : ['from', 'to'],
     blocks: [],
+    visual: normalizeVisualTokens(raw.visual),
   };
   if (layout.partiesOrder.length === 1) {
     layout.partiesOrder = layout.partiesOrder[0] === 'to' ? ['to', 'from'] : ['from', 'to'];
@@ -448,17 +510,42 @@ function mergeInvoiceLayout(partial) {
   const next = { ...cur, ...partial };
   if (partial.blocks) next.blocks = partial.blocks;
   if (partial.partiesOrder) next.partiesOrder = partial.partiesOrder;
+  if (partial.visual && typeof partial.visual === 'object') {
+    next.visual = normalizeVisualTokens({ ...cur.visual, ...partial.visual });
+  }
   return saveInvoiceLayout(next);
 }
 
-/** Apply layout to #invoice DOM (order, visibility, header/parties). */
+/** Merge visual tokens only (chat _setVisual). */
+function mergeInvoiceVisual(partialVisual) {
+  return mergeInvoiceLayout({ visual: partialVisual || {} });
+}
+
+/** Apply layout to #invoice DOM (order, visibility, header/parties, visual tokens). */
 function applyInvoiceLayout(layout) {
   const page = document.getElementById('invoice');
   if (!page) return;
   const L = normalizeInvoiceLayout(layout || loadInvoiceLayout());
+  const V = L.visual || defaultVisualTokens();
 
   page.classList.toggle('layout-density-compact', L.density === 'compact');
   page.classList.toggle('layout-header-swap', !!L.headerSwap);
+
+  // Clear previous visual token classes, then apply
+  page.classList.remove(
+    'layout-accent-solid', 'layout-accent-double', 'layout-accent-none',
+    'layout-section-cards',
+    'layout-divider-solid', 'layout-divider-dashed', 'layout-divider-none',
+    'layout-totals-card', 'layout-totals-flat',
+    'layout-notes-plain', 'layout-notes-box',
+    'layout-table-filled', 'layout-table-minimal'
+  );
+  page.classList.add('layout-accent-' + (V.headerAccent || 'solid'));
+  if (V.sectionCards) page.classList.add('layout-section-cards');
+  page.classList.add('layout-divider-' + (V.dividerStyle || 'solid'));
+  page.classList.add('layout-totals-' + (V.totalsStyle || 'card'));
+  page.classList.add('layout-notes-' + (V.notesStyle || 'plain'));
+  page.classList.add('layout-table-' + (V.tableHeader || 'filled'));
 
   const blockMap = {};
   L.blocks.forEach(b => { blockMap[b.id] = b; });
@@ -1063,13 +1150,21 @@ function startEdit() {
     
     const tr = rateWrap ? rateWrap.closest('tr') : costWrap.closest('tr');
     if (tr) {
+      // startEdit() re-runs on every add/remove/duplicate. Without clearing,
+      // these controls accumulate invisibly (3 rows had 12 delete buttons).
+      tr.querySelectorAll('.delete-row-btn, .row-move-btn, .drag-handle').forEach(el => el.remove());
       tr.style.position = 'relative';
       const delBtn = document.createElement('button');
       delBtn.innerHTML = '✕';
       delBtn.className = 'delete-row-btn';
       delBtn.title = 'Remove line item';
       delBtn.onclick = () => removeLineItem(i);
-      tr.querySelector('.col-service').appendChild(delBtn);
+      delBtn.setAttribute('aria-label', 'Remove line item');
+      const svcCell = tr.querySelector('.col-service');
+      // The button is absolutely positioned inside this cell, so the cell must
+      // be the containing block or it would anchor to the page.
+      svcCell.style.position = 'relative';
+      svcCell.appendChild(delBtn);
 
       const moveLineItem = (fromIdx, dir) => {
         const d = extractEditData();
@@ -1088,14 +1183,14 @@ function startEdit() {
       upBtn.textContent = '↑';
       upBtn.className = 'delete-row-btn';
       upBtn.title = 'Move up';
-      upBtn.style.cssText = 'right:auto; left:calc(100% + 2px); top:8px; font-size:10px;';
+      upBtn.style.cssText = 'left:34px; top:6px; font-size:10px; background:#5a6472;';
       upBtn.onclick = () => moveLineItem(i, -1);
 
       const downBtn = document.createElement('button');
       downBtn.textContent = '↓';
       downBtn.className = 'delete-row-btn';
       downBtn.title = 'Move down';
-      downBtn.style.cssText = 'right:auto; left:calc(100% + 22px); top:8px; font-size:10px;';
+      downBtn.style.cssText = 'left:60px; top:6px; font-size:10px; background:#5a6472;';
       downBtn.onclick = () => moveLineItem(i, 1);
 
       tr.querySelector('.col-service').appendChild(upBtn);
@@ -1105,7 +1200,7 @@ function startEdit() {
       dupBtn.innerHTML = '⎘';
       dupBtn.className = 'delete-row-btn';
       dupBtn.title = 'Duplicate line item';
-      dupBtn.style.cssText = 'right:auto; left:calc(100% + 42px); top:8px; font-size:11px;';
+      dupBtn.style.cssText = 'left:86px; top:6px; font-size:11px; background:#5a6472;';
       dupBtn.onclick = () => duplicateLineItem(i);
       tr.querySelector('.col-service').appendChild(dupBtn);
 
@@ -1219,16 +1314,21 @@ function startEdit() {
     metaCurrSpan.appendChild(sel);
   }
 
-  // Tax rate field — inject after the project-total-row
+  // Tax rate field — inject after the project-total-row.
+  // Only shown when a rate is actually set (on the invoice or as a profile
+  // default). An invoice with no tax must never surface GCT/Tax anywhere —
+  // not in edit mode, and never in print/PDF/send output.
   const ptRow = document.querySelector('.project-total-row');
-  if (ptRow && !document.getElementById('tax-rate-edit-row')) {
-    const taxData = getData();
-    const defaultTax = localStorage.getItem('invoicer-tax-rate') || '0';
+  const taxData = getData();
+  const defaultTax = localStorage.getItem('invoicer-tax-rate') || '0';
+  const hasTaxRate = parseFloat(taxData.taxRate) > 0 || parseFloat(defaultTax) > 0;
+  if (ptRow && hasTaxRate && !document.getElementById('tax-rate-edit-row')) {
     const currentTax = parseFloat(taxData.taxRate) > 0
       ? Math.round(parseFloat(taxData.taxRate) * 100)
-      : (parseFloat(defaultTax) > 0 ? Math.round(parseFloat(defaultTax) * 100) : '');
+      : Math.round(parseFloat(defaultTax) * 100);
     const taxRow = document.createElement('div');
     taxRow.id = 'tax-rate-edit-row';
+    taxRow.className = 'edit-only';
     taxRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:3px 0; font-family:Roboto,sans-serif; font-size:11.5px; color:#6c7682;';
     taxRow.innerHTML = `
       <span style="color:#6c7682;">GCT / Tax Rate</span>
@@ -1459,7 +1559,18 @@ function saveEdit() {
 
 function addLineItem() {
   const data = extractEditData();
-  data.lineItems.push({ service: 'New Service', details: 'Details...', rates: ['Rate'], costs: ['0'] });
+  // Carry the previous row's rate label(s) forward — on multi-line invoices the
+  // rate is almost always the same, and retyping it every time was busywork.
+  const prev = data.lineItems[data.lineItems.length - 1];
+  const inheritedRates = prev && Array.isArray(prev.rates) && prev.rates.some(r => (r || '').trim())
+    ? prev.rates.map(r => r)
+    : ['Rate'];
+  data.lineItems.push({
+    service: 'New Service',
+    details: 'Details...',
+    rates: inheritedRates,
+    costs: inheritedRates.map(() => '0') // cost always starts blank/zero
+  });
   document.getElementById('invoice-data').textContent = JSON.stringify(data, null, 2);
   stopEdit();
   render(data);
@@ -1486,6 +1597,11 @@ function removeLineItem(index) {
 
 function _executeRemoveLineItem(index) {
   const data = extractEditData();
+  // Snapshot before the splice so a mis-click is recoverable — deleting used
+  // to be instant and irreversible.
+  const removed = data.lineItems[index]
+    ? JSON.parse(JSON.stringify(data.lineItems[index]))
+    : null;
   data.lineItems.splice(index, 1);
   if (data.lineItems.length === 0) {
     data.lineItems.push({ service: 'Service', details: '', rates: ['Rate'], costs: ['0'] });
@@ -1494,6 +1610,37 @@ function _executeRemoveLineItem(index) {
   stopEdit();
   render(data);
   startEdit();
+  if (removed) offerUndoLineItemDelete(removed, index);
+}
+
+// Toast with an Undo action that puts the deleted line item back where it was.
+function offerUndoLineItemDelete(removed, index) {
+  const label = (removed.service || 'Line item').toString().slice(0, 32);
+  const toast = showToast(`Removed “${escapeHTML(label)}”.`, 'info', 8000);
+  if (!toast) return;
+  const btn = document.createElement('button');
+  btn.textContent = '↩ Undo';
+  btn.className = 'toast-undo-btn';
+  btn.onclick = () => {
+    const d = extractEditData();
+    // A placeholder row is inserted when the last item is deleted — drop it so
+    // undo doesn't leave a stray "Service" line behind.
+    if (d.lineItems.length === 1) {
+      const only = d.lineItems[0];
+      const isPlaceholder = only.service === 'Service' && !only.details &&
+        Array.isArray(only.costs) && only.costs.join('') === '0';
+      if (isPlaceholder) d.lineItems = [];
+    }
+    d.lineItems.splice(Math.min(index, d.lineItems.length), 0, removed);
+    document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2);
+    stopEdit();
+    render(d);
+    startEdit();
+    toast.remove();
+    showToast('Line item restored.', 'success', 2500);
+  };
+  const closeBtn = toast.querySelector('.toast-close');
+  if (closeBtn) toast.insertBefore(btn, closeBtn); else toast.appendChild(btn);
 }
 
 function duplicateLineItem(index) {
@@ -1532,6 +1679,10 @@ function stopEdit() {
   if (bar) bar.style.display = 'none';
   const counter = document.getElementById('notes-char-counter');
   if (counter) counter.remove();
+  // Tax row is injected on entering edit mode — drop it so it can never be
+  // left behind in the live DOM that window.print() renders.
+  const taxRow = document.getElementById('tax-rate-edit-row');
+  if (taxRow) taxRow.remove();
 }
 
 function formatCurrencyNative(amount, currencyCode = 'USD', decimals = 2) {
@@ -3805,7 +3956,16 @@ Current layout JSON is shown below. To rearrange, include "_setLayout" with any 
   logoVisible: true | false
   partiesOrder: ["from","to"] or ["to","from"]
   blocks: array of { "id": one of header|line_items|notes|totals|pay_period|footer, "visible": true|false } — order of array = vertical order on the page
+  visual: design tokens object (see below)
 Rules: line_items and totals must always stay visible. Only use block ids listed. Do not invent HTML/CSS.
+Visual design tokens (closed set — no free shapes/lines yet). Prefer "_setVisual": { ... } or layout.visual:
+  headerAccent: "solid" | "double" | "none"
+  sectionCards: true | false
+  dividerStyle: "solid" | "dashed" | "none"
+  totalsStyle: "card" | "flat"
+  notesStyle: "plain" | "box"
+  tableHeader: "filled" | "minimal"
+Only use those keys/values.
 To save the current layout (and optionally starter line items/notes) as a named template on this device, include "_saveTemplate": { "name": "Studio Day", "includeData": true|false } — only when the user asks to save a template.
 To apply a saved user template, include "_applyTemplate": { "id": "user-..." } — use an id from the My templates list below when the user asks to apply one. Built-in ids: default, film-quote, film-invoice, dit-job, music-session, design-project, consulting.
 To upload a local user template to Google Drive (mooInvoicer/Templates/), include "_uploadTemplate": { "id": "user-..." } — only when the user asks to upload/share to Drive.
@@ -3926,7 +4086,7 @@ ${currentData}`;
     if (patch._updateGoal) { applyUpdateGoal(patch._updateGoal, actionNotes); delete patch._updateGoal; }
     if (patch._deleteGoal) { applyDeleteGoal(patch._deleteGoal, actionNotes); delete patch._deleteGoal; }
 
-    // Layout / templates (local Slice A)
+    // Layout / visual tokens / templates
     if (patch._setLayout) {
       try {
         const next = mergeInvoiceLayout(patch._setLayout);
@@ -3936,6 +4096,16 @@ ${currentData}`;
         actionNotes.push('Layout update failed: ' + (e.message || e));
       }
       delete patch._setLayout;
+    }
+    if (patch._setVisual) {
+      try {
+        const next = mergeInvoiceVisual(patch._setVisual);
+        applyInvoiceLayout(next);
+        actionNotes.push('Updated visual style tokens');
+      } catch (e) {
+        actionNotes.push('Visual update failed: ' + (e.message || e));
+      }
+      delete patch._setVisual;
     }
     if (patch._saveTemplate) {
       try {

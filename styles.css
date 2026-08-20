@@ -109,6 +109,104 @@
     width: 100%;
   }
 
+  /* ── V1 visual tokens (print-safe closed set) ── */
+  /* Header accent under .header border */
+  #invoice.layout-accent-none .header {
+    border-bottom-color: transparent;
+  }
+  #invoice.layout-accent-solid .header {
+    border-bottom: 1.5px solid var(--rule);
+  }
+  #invoice.layout-accent-double .header {
+    border-bottom: 3px double var(--ink);
+  }
+
+  /* Soft cards around major layout blocks */
+  #invoice.layout-section-cards .layout-block[data-layout-id="line_items"],
+  #invoice.layout-section-cards .layout-block[data-layout-id="notes"],
+  #invoice.layout-section-cards .layout-block[data-layout-id="totals"],
+  #invoice.layout-section-cards .layout-block[data-layout-id="footer"] {
+    background: #fafaf8;
+    border: 1px solid rgba(20, 32, 46, 0.08);
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin-top: 10px;
+    box-sizing: border-box;
+  }
+  #invoice.layout-section-cards .layout-block[data-layout-id="header"] {
+    margin-bottom: 4px;
+  }
+
+  /* Divider / rule style */
+  #invoice.layout-divider-none .header {
+    border-bottom-width: 0;
+  }
+  #invoice.layout-divider-none .pay-period {
+    border-bottom-width: 0;
+  }
+  #invoice.layout-divider-none .footer-divider {
+    display: none;
+  }
+  #invoice.layout-divider-dashed .header {
+    border-bottom-style: dashed;
+  }
+  #invoice.layout-divider-dashed .pay-period {
+    border-bottom-style: dashed;
+  }
+  #invoice.layout-divider-dashed .footer-divider {
+    border-left: 1.5px dashed var(--rule);
+    width: 0;
+    background: transparent;
+  }
+
+  /* Totals: card (default look) vs flat */
+  #invoice.layout-totals-flat .total-card {
+    background: transparent !important;
+    color: var(--ink) !important;
+    padding: 8px 0 !important;
+    border-radius: 0 !important;
+  }
+  #invoice.layout-totals-flat .total-card .qualifier {
+    opacity: 0.55;
+    color: var(--ink);
+  }
+  #invoice.layout-totals-flat .total-card .total-amount {
+    color: var(--ink);
+  }
+
+  /* Notes */
+  #invoice.layout-notes-box #invoice-notes-wrap {
+    background: #f6f6f4;
+    border: 1px solid rgba(20, 32, 46, 0.08);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  #invoice.layout-notes-box #invoice-notes-el {
+    color: #3a4550;
+  }
+
+  /* Table header */
+  #invoice.layout-table-minimal .invoice-table thead th {
+    background: transparent !important;
+    color: var(--muted) !important;
+    border-bottom: 1.5px solid var(--rule);
+    font-weight: 600;
+  }
+  #invoice.layout-table-filled .invoice-table thead th {
+    /* keep theme defaults */
+  }
+
+  /* Print clone inherits same classes on #invoice / .print-clone root if cloned */
+  .print-clone.layout-section-cards .layout-block[data-layout-id="line_items"],
+  .print-clone.layout-section-cards .layout-block[data-layout-id="notes"],
+  .print-clone.layout-section-cards .layout-block[data-layout-id="totals"],
+  .print-clone.layout-section-cards .layout-block[data-layout-id="footer"] {
+    background: #fafaf8;
+    border: 1px solid rgba(20, 32, 46, 0.08);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+
   /* Templates modal — create card */
   .tmpl-create-card {
     background: #f0f4f8;
@@ -412,6 +510,29 @@
     background: rgba(208,36,27,0.04);
     cursor: text;
   }
+  /* Service / details editables fill their cell rather than shrink-wrapping
+     to the text, so every edit box matches the rectangle it sits in. */
+  body.editing .col-service [data-field] {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+  }
+  /* Clear the delete button that sits in the service cell's top-left. */
+  body.editing .invoice-table td.col-service { padding-top: 34px; }
+  /* The details cell IS the editable (data-field on the <td>), unlike every
+     other field which wraps an inner element — so it never picked up the
+     dashed edit outline. Give it the same affordance. */
+  body.editing .invoice-table td.col-details[data-field] {
+    outline: 2px dashed rgba(255,255,255,0.35);
+    outline-offset: -4px;
+    border-radius: 3px;
+    cursor: text;
+  }
+  body.editing .invoice-table td.col-details[data-field]:focus {
+    outline: 2px solid var(--red);
+    background: rgba(208,36,27,0.06);
+  }
   body.editing [data-field]:focus {
     outline: 2px solid var(--red);
     background: rgba(208,36,27,0.06);
@@ -437,11 +558,31 @@
     outline: 2px solid rgba(255,255,255,0.8);
   }
 
+  /* Edit-mode cells: the wrapper inside the cell becomes the flex column so
+     the textarea stretches to fill the cell rectangle. The <td> itself must
+     stay display:table-cell — making it a flex container destroys the
+     table's column widths. */
+  body.editing .invoice-table td.col-rate,
+  body.editing .invoice-table td.col-cost {
+    display: table-cell;
+    vertical-align: top;
+    height: 1px; /* lets the inner wrapper resolve height:100% against the row */
+  }
+  body.editing [id^="rate-rows-"],
+  body.editing [id^="cost-rows-"] {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+
   /* Rate / cost textareas in edit mode */
   body.editing .rate-edit-ta,
   body.editing .cost-edit-ta {
     width: 100%;
+    box-sizing: border-box;
+    flex: 1 1 auto;
     min-height: 40px;
+    height: 100%;
     background: transparent;
     border: 2px dashed rgba(208,36,27,0.5);
     border-radius: 3px;
@@ -451,9 +592,12 @@
     letter-spacing: 2px;
     text-transform: uppercase;
     line-height: 1.8;
-    padding: 4px 6px;
+    padding: 4px 2px;
     resize: vertical;
     outline: none;
+    text-align: center;
+    /* Rate labels are short; letter-spacing was pushing them to wrap. */
+    letter-spacing: 1px;
   }
   body.editing .rate-edit-ta:focus,
   body.editing .cost-edit-ta:focus {
@@ -478,7 +622,11 @@
   body.editing #title-size-wrap { display: flex; }
   .edit-only { display: none; }
   body.editing .edit-only { display: inline-block !important; }
+  /* Tax row is a flex row — must not be forced to inline-block by .edit-only */
+  body.editing #tax-rate-edit-row { display: flex !important; }
+  #tax-rate-edit-row { display: none; }
   @media print { .edit-only { display: none !important; } }
+  @media print { #tax-rate-edit-row { display: none !important; } }
   #title-size-slider {
     -webkit-appearance: none;
     appearance: none;
@@ -693,7 +841,9 @@
   .invoice-table td {
     background: var(--row);
     color: #fff;
-    padding: 26px 20px;
+    /* Horizontal padding kept tight — 20px/side removed 40px from every
+       column's usable width and forced needless text wrapping. */
+    padding: 26px 12px;
     vertical-align: top;
     font-size: 13px;
     line-height: 1.65;
@@ -702,14 +852,21 @@
   }
   .invoice-table td.num { text-align: right; font-feature-settings: "tnum"; }
 
-  .col-service { width: 20%; }
-  .col-details { width: 44%; }
-  .col-rate    { width: 16%; }
+  /* Details was over-fed at 44% while Service and Rate were starved: "Job Rate"
+     needed 65px of a 53px content box and wrapped. Rebalanced so every column
+     fits its content on one line at the default card width. */
+  .col-service { width: 24%; }
+  .col-details { width: 36%; }
+  .col-rate    { width: 20%; }
   .col-cost    { width: 20%; }
 
+  /* Text columns centre; Cost (and all totals) stay right-aligned so figures
+     line up on the decimal for scanning. */
   .invoice-table td.col-service,
-  .invoice-table td.col-rate,
-  .invoice-table td.col-cost { text-align: center; }
+  .invoice-table td.col-details,
+  .invoice-table td.col-rate { text-align: center; }
+  .invoice-table td.col-cost { text-align: right; }
+  .invoice-table th.col-cost { text-align: right; }
 
   .service-name {
     font-family: 'Roboto', sans-serif;
@@ -723,7 +880,7 @@
     flex-direction: column;
     gap: 12px;
   }
-  .rate-rows { align-items: flex-start; }
+  .rate-rows { align-items: center; }
   .cost-rows { align-items: flex-end; }
   .cost-rows[data-tip] { cursor: help; }
   .cost-rows[data-tip]:hover::after {
@@ -1940,6 +2097,13 @@
   .toast.info { background: #14202e; }
   .toast .toast-close { background:none; border:none; color:inherit; opacity:0.6; font-size:16px; cursor:pointer; padding:0; line-height:1; flex-shrink:0; }
   .toast .toast-close:hover { opacity:1; }
+  .toast .toast-undo-btn {
+    background:none; border:1.5px solid currentColor; color:inherit;
+    font-family:'Roboto',sans-serif; font-size:11px; font-weight:600;
+    padding:4px 10px; border-radius:4px; cursor:pointer; margin-right:10px;
+    flex-shrink:0; opacity:0.9;
+  }
+  .toast .toast-undo-btn:hover { opacity:1; background:rgba(255,255,255,0.12); }
   .toast-confirm { background:#14202e; color:#fff; font-family:'Roboto',sans-serif; font-size:12.5px; padding:14px 18px; border-radius:10px; box-shadow:0 4px 24px rgba(0,0,0,0.4); display:flex; flex-direction:column; gap:10px; pointer-events:all; max-width:380px; }
   .toast-confirm .toast-msg { line-height:1.5; }
   .toast-confirm .toast-actions { display:flex; gap:8px; justify-content:flex-end; }
@@ -1951,13 +2115,19 @@
   
   .confirm-overlay .modal { max-width: 400px; text-align: center; }
   .confirm-actions { display: flex; justify-content: center; gap: 12px; margin-top: 24px; }
+  /* Sits INSIDE the row's top-left corner. It used to be at left:-25px —
+     outside the invoice card entirely — which read as "no delete option". */
   .delete-row-btn {
-    position: absolute; left: -25px; top: 12px;
+    position: absolute; left: 6px; top: 6px;
     background: #d0241b; color: white; border: none;
-    border-radius: 50%; width: 18px; height: 18px;
-    font-size: 10px; cursor: pointer;
+    border-radius: 50%; width: 22px; height: 22px;
+    font-size: 11px; line-height: 1; cursor: pointer;
     display: none; align-items: center; justify-content: center;
+    opacity: 0.85; transition: opacity 0.12s, transform 0.12s;
+    z-index: 5;
   }
+  .delete-row-btn:hover { opacity: 1; transform: scale(1.12); }
+  .delete-row-btn:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
   body.editing .delete-row-btn { display: flex; }
   body.editing #add-item-wrap { display: block !important; }
   .drag-handle { display: none; cursor: grab; color: #9aa2ac; font-size: 14px; padding: 0 4px; user-select: none; vertical-align: middle; }
@@ -2011,6 +2181,10 @@
   .print-clone .payment-note { font-size: 12px !important; width: auto !important; }
   .print-clone .total-wrap { position: static !important; box-shadow: none !important; border-top: none !important; padding: 0 !important; }
   .print-clone .status-badge, .print-clone #status-picker, .print-clone .logo-placeholder, .print-clone .logo-remove, .print-clone .edit-only { display: none !important; }
+  /* Beat body.editing .edit-only (higher specificity) so GCT/tax editor never html2pdf's */
+  body.editing .print-clone .edit-only,
+  body.editing .print-clone #tax-rate-edit-row,
+  .print-clone #tax-rate-edit-row { display: none !important; }
   
   @keyframes flashSuccess {
     0% { background-color: rgba(42, 140, 85, 0.5); }
