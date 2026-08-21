@@ -7159,7 +7159,7 @@ async function sheetsRequest(method, path, body, isRetry = false) {
           initGmailAuth(() => {
             sheetsRequest(method, path, body, true).then(resolve);
           });
-          requestGmailSilentRefresh();
+          if (_gmailTokenClient) requestGmailSilentRefresh();
           else resolve({ error: { message: 'Token client not initialized' } });
         } catch(e) {
           resolve({ error: { message: e.message } });
