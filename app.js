@@ -3116,7 +3116,7 @@ const PROVIDERS = {
   gemini:     { label: 'Gemini',     color: '#4285f4', emoji: '✦',
                 url: m => `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
                 authHeader: k => ({ 'x-goog-api-key': k }),
-                defaultModel: 'gemini-2.5-flash-preview-05-20',
+                defaultModel: 'gemini-2.5-flash',
                 listModels: async k => {
                   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(k)}`);
                   const j = await r.json();
@@ -3222,6 +3222,12 @@ function openConnectionsModal() {
 }
 function closeConnectionsModal() {
   document.getElementById('connections-overlay').style.display = 'none';
+  // Overlay is full-screen; apply whatever already synced so the invoice
+  // is populated even if the user closes before setupDrive finishes.
+  if (gmailTokenValid()) {
+    try { if (typeof initBusinessProfile === 'function') initBusinessProfile(); } catch (e) {}
+    try { if (typeof renderDashboard === 'function') renderDashboard(); } catch (e) {}
+  }
 }
 
 function renderConnectionsStatus() {
@@ -4716,6 +4722,9 @@ async function loadProfilesFromSheet() {
     localStorage.setItem('invoice-logo', active.logo);
     renderLogo(active.logo);
   }
+  // Apply From fields now — waiting until the Connections overlay closes
+  // left the invoice blank after a successful sign-in.
+  if (typeof initBusinessProfile === 'function') initBusinessProfile();
 }
 
 // ── Bills ─────────────────────────────────────────────────────
@@ -6771,12 +6780,50 @@ function restoreTokenFromStorage() {
   return false;
 }
 
+let _gmailSilentRefreshPending = false;
+let _gmailSuppressSilentFailureToast = false;
+
+function hadPriorGmailSignIn() {
+  return !!(localStorage.getItem('gmail-token') || localStorage.getItem('gmail-token-exp'));
+}
+
+function notifyGmailSilentRefreshFailed(detail) {
+  if (!_gmailSilentRefreshPending || _gmailSuppressSilentFailureToast) {
+    _gmailSilentRefreshPending = false;
+    _gmailSuppressSilentFailureToast = false;
+    return;
+  }
+  _gmailSilentRefreshPending = false;
+  if (!hadPriorGmailSignIn()) return;
+  console.warn('GIS silent refresh failed:', detail);
+  localStorage.removeItem('gmail-token');
+  localStorage.removeItem('gmail-token-exp');
+  localStorage.removeItem('gmail-token-scopes');
+  _gmailToken = null;
+  _gmailTokenExp = 0;
+  try { showToast('Google sign-in expired. Open Connections to sign in again.', 'info'); } catch (e) {}
+  updateEmailBtn();
+}
+
+function requestGmailSilentRefresh(opts) {
+  if (!_gmailTokenClient) return;
+  _gmailSuppressSilentFailureToast = !!(opts && opts.suppressFailureToast);
+  _gmailSilentRefreshPending = true;
+  _gmailTokenClient.requestAccessToken({ prompt: 'none' });
+}
+
 function initGmailAuth(onToken) {
   _gmailTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: GMAIL_CLIENT_ID,
     scope:     GMAIL_SCOPE,
     callback:  resp => {
-      if (resp.error) { console.error(resp); return; }
+      if (resp.error) {
+        console.error(resp);
+        notifyGmailSilentRefreshFailed(resp.error);
+        return;
+      }
+      _gmailSilentRefreshPending = false;
+      _gmailSuppressSilentFailureToast = false;
       _gmailToken    = resp.access_token;
       _gmailTokenExp = Date.now() + resp.expires_in * 1000;
       saveTokenToStorage();
@@ -6787,6 +6834,10 @@ function initGmailAuth(onToken) {
       try { if (typeof refreshSheetsIdStatus === 'function') refreshSheetsIdStatus(); } catch(e){}
       if (onToken) onToken();
     },
+    error_callback: err => {
+      console.error('GIS error:', err);
+      notifyGmailSilentRefreshFailed(err && err.type ? err.type : err);
+    },
   });
 }
 
@@ -6794,7 +6845,7 @@ function requestGmailToken(onToken) {
   if (gmailTokenValid()) { if (onToken) onToken(); return; }
   // Re-init with callback so onToken fires when token arrives, then try silent refresh
   initGmailAuth(onToken);
-  if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: 'none' });
+  requestGmailSilentRefresh();
 }
 
 function updateEmailBtn() {
@@ -6830,15 +6881,12 @@ function updateEmailBtn() {
 }
 
 function googleSignIn() {
-  initGmailAuth(() => {
+  initGmailAuth(async () => {
     updateEmailBtn();
     refreshSheetsIdStatus();
-    setupDrive();
-    // Repaint the dashboard if it's open so signed-in state shows immediately
-    // instead of only after a manual page refresh.
-    if (document.getElementById('dashboard-overlay')?.style.display === 'flex') {
-      try { renderDashboard(); } catch(e){}
-    }
+    await setupDrive();
+    if (typeof initBusinessProfile === 'function') initBusinessProfile();
+    if (typeof renderConnectionsStatus === 'function') renderConnectionsStatus();
   });
   if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: '' });
 }
@@ -7069,13 +7117,24 @@ async function promptForSheetsId() {
 
 let _driveFolderId = localStorage.getItem('drive-folder-id') || '';
 
-async function driveRequest(method, path, body, isUpload) {
+async function driveRequest(method, path, body, isUpload, isRetry = false) {
   const base = isUpload ? 'https://www.googleapis.com/upload/drive/v3' : 'https://www.googleapis.com/drive/v3';
   const res = await fetch(base + path, {
     method,
     headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined
   });
+  if ((res.status === 401 || res.status === 403) && !isRetry) {
+    console.warn('Drive API auth error, attempting silent token refresh...');
+    await new Promise((resolve) => {
+      try {
+        initGmailAuth(() => resolve());
+        requestGmailSilentRefresh();
+      } catch (e) { resolve(); }
+      setTimeout(resolve, 3000);
+    });
+    return driveRequest(method, path, body, isUpload, true);
+  }
   return res.json();
 }
 
@@ -7100,7 +7159,7 @@ async function sheetsRequest(method, path, body, isRetry = false) {
           initGmailAuth(() => {
             sheetsRequest(method, path, body, true).then(resolve);
           });
-          if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: 'none' });
+          requestGmailSilentRefresh();
           else resolve({ error: { message: 'Token client not initialized' } });
         } catch(e) {
           resolve({ error: { message: e.message } });
@@ -7511,7 +7570,7 @@ async function openDashboard() {
     if (!gmailTokenValid() && _gmailTokenClient) {
       await new Promise(resolve => {
         initGmailAuth(() => resolve());
-        try { _gmailTokenClient.requestAccessToken({ prompt: 'none' }); } catch (e) { resolve(); }
+        try { requestGmailSilentRefresh({ suppressFailureToast: true }); } catch (e) { resolve(); }
         setTimeout(resolve, 3000);
       });
     }
@@ -9449,7 +9508,7 @@ window.addEventListener('load', () => {
     });
     // If stored token is expired/missing, try silent re-auth (no popup if still signed into Google)
     if (!gmailTokenValid() && _gmailTokenClient) {
-      _gmailTokenClient.requestAccessToken({ prompt: 'none' });
+      requestGmailSilentRefresh();
     }
   } catch(e) {}
 });
@@ -9483,6 +9542,8 @@ if ('serviceWorker' in navigator) {
         activeOverlays.forEach(el => {
           if (el.id === 'chat-settings-panel') {
             document.getElementById('chat-settings-panel').classList.remove('open');
+          } else if (el.id === 'connections-overlay') {
+            closeConnectionsModal();
           } else {
             el.style.display = 'none';
           }
