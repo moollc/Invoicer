@@ -6848,6 +6848,20 @@ function requestGmailToken(onToken) {
   requestGmailSilentRefresh();
 }
 
+function refreshProfileSigninNote() {
+  const note = document.getElementById('profile-signin-note');
+  if (!note) return;
+  const exp = parseInt(localStorage.getItem('gmail-token-exp') || '0');
+  const expiresIn = Math.round((exp - Date.now()) / 60000);
+  if (gmailTokenValid()) {
+    note.innerHTML = `✓ Signed in · token expires in ${expiresIn} min`;
+    note.style.color = '#2a8c55';
+  } else {
+    note.textContent = '⚠ Not signed in';
+    note.style.color = '#d0241b';
+  }
+}
+
 function updateEmailBtn() {
   const profileIcon = document.getElementById('profile-icon');
   if (profileIcon) {
@@ -6878,6 +6892,7 @@ function updateEmailBtn() {
   const calBtn = document.getElementById('btn-calendar');
   if (calBtn) calBtn.classList.toggle('hidden', !gmailTokenValid());
   if (typeof renderConnectionsStatus === 'function') renderConnectionsStatus();
+  refreshProfileSigninNote();
 }
 
 function googleSignIn() {
@@ -6887,6 +6902,10 @@ function googleSignIn() {
     await setupDrive();
     if (typeof initBusinessProfile === 'function') initBusinessProfile();
     if (typeof renderConnectionsStatus === 'function') renderConnectionsStatus();
+    const overlay = document.getElementById('profile-overlay');
+    if (overlay && overlay.style.display === 'flex' && typeof openProfileModal === 'function') {
+      openProfileModal();
+    }
   });
   if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: '' });
 }
@@ -9021,18 +9040,7 @@ function openProfileModal() {
   document.getElementById('prof-email').value   = active.email   || '';
   document.getElementById('prof-phone').value   = active.phone   || '';
   
-  const note = document.getElementById('profile-signin-note');
-  if (note) {
-    const exp = parseInt(localStorage.getItem('gmail-token-exp') || '0');
-    const expiresIn = Math.round((exp - Date.now()) / 60000);
-    if (gmailTokenValid()) {
-      note.innerHTML = `✓ Signed in · token expires in ${expiresIn} min`;
-      note.style.color = '#2a8c55';
-    } else {
-      note.textContent = '⚠ Not signed in';
-      note.style.color = '#d0241b';
-    }
-  }
+  refreshProfileSigninNote();
   document.getElementById('profile-overlay').style.display = 'flex';
 }
 
