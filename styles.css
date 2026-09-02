@@ -518,20 +518,43 @@
     box-sizing: border-box;
     text-align: center;
   }
-  /* Clear the delete button that sits in the service cell's top-left. */
-  body.editing .invoice-table td.col-service { padding-top: 34px; }
+  /* Row chrome (delete / move / drag) is absolutely positioned in the service
+     cell by startEdit(). Do not pad the whole cell — that pushed Service ~28px
+     below Details / Rate / Cost. Drag handle was inline in flow; pin it too. */
+  body.editing .invoice-table td.col-service {
+    position: relative;
+    padding-top: 26px;
+  }
+  body.editing .col-service .drag-handle {
+    position: absolute;
+    left: 112px;
+    top: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    margin: 0;
+    z-index: 4;
+  }
   /* The details cell IS the editable (data-field on the <td>), unlike every
      other field which wraps an inner element — so it never picked up the
-     dashed edit outline. Give it the same affordance. */
+     dashed edit outline. Pull the outline inside cell padding so the box lines
+     up with rate/cost textareas (which sit below the same 26px padding). */
   body.editing .invoice-table td.col-details[data-field] {
     outline: 2px dashed rgba(255,255,255,0.35);
-    outline-offset: -4px;
+    outline-offset: -26px;
     border-radius: 3px;
     cursor: text;
+    background: var(--row);
+  }
+  body.editing .invoice-table td.col-details[data-field]:hover {
+    background: var(--row);
   }
   body.editing .invoice-table td.col-details[data-field]:focus {
     outline: 2px solid var(--red);
-    background: rgba(208,36,27,0.06);
+    background: var(--row);
   }
   body.editing [data-field]:focus {
     outline: 2px solid var(--red);
@@ -573,6 +596,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    align-self: stretch;
   }
 
   /* Rate / cost textareas in edit mode */
@@ -1136,13 +1160,10 @@
       backdrop-filter: blur(8px);
       z-index: 1000;
     }
+    /* Groups unwrap so every icon shares the bar. Equal flex on .tb-group
+       left a hole: profile is its own group, so it sat alone in a third of the width. */
     .tb-group {
-      flex-direction: row;
-      flex: 1 1 0;
-      min-width: 0;
-      gap: 2px;
-      align-items: stretch;
-      justify-content: stretch;
+      display: contents;
     }
     .tb-divider {
       width: 1px;
@@ -2181,6 +2202,31 @@
   .print-clone .payment-note { font-size: 12px !important; width: auto !important; }
   .print-clone .total-wrap { position: static !important; box-shadow: none !important; border-top: none !important; padding: 0 !important; }
   .print-clone .status-badge, .print-clone #status-picker, .print-clone .logo-placeholder, .print-clone .logo-remove, .print-clone .edit-only { display: none !important; }
+  /* Print/PDF clone must not inherit edit-mode row chrome offsets. */
+  .print-clone .invoice-table td.col-service,
+  body.editing .print-clone .invoice-table td.col-service {
+    padding-top: 26px !important;
+  }
+  .print-clone .invoice-table td.col-rate,
+  .print-clone .invoice-table td.col-cost,
+  body.editing .print-clone .invoice-table td.col-rate,
+  body.editing .print-clone .invoice-table td.col-cost {
+    height: auto !important;
+  }
+  .print-clone .invoice-table td.col-details[data-field],
+  body.editing .print-clone .invoice-table td.col-details[data-field] {
+    outline: none !important;
+  }
+  .print-clone .rate-edit-ta,
+  .print-clone .cost-edit-ta,
+  body.editing .print-clone .rate-edit-ta,
+  body.editing .print-clone .cost-edit-ta {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+  }
   /* Beat body.editing .edit-only (higher specificity) so GCT/tax editor never html2pdf's */
   body.editing .print-clone .edit-only,
   body.editing .print-clone #tax-rate-edit-row,

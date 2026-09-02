@@ -1054,10 +1054,12 @@ function formatCurrencyField(el) {
   if (!document.body.classList.contains('editing')) return;
   let text = el.innerText.trim();
   if (!text) return;
-  const match = text.match(/^([^\d\.\-]*)([\d\.\-]+)(.*)$/);
+  // Include commas in the number group so pre-formatted values like
+  // "USD 100,000.00" survive a blur instead of truncating at the comma.
+  const match = text.match(/^([^\d\.\-]*)([\d\.,\-]+)(.*)$/);
   if (match) {
     let symbol = match[1].trim() || '$';
-    let numStr = match[2];
+    let numStr = match[2].replace(/,/g, '');
     let suffix = match[3].trim();
     let num = parseFloat(numStr);
     if (!isNaN(num)) {
@@ -1703,12 +1705,14 @@ function updateAutoSumHint() {
   if (!hint) return;
   const tas = document.querySelectorAll('.cost-edit-ta');
   if (!tas.length) { hint.style.display = 'none'; return; }
-  let total = 0;
+  // Build the current line items from the edit textareas (same shape as
+  // extractEditData) so InvoiceTotals sees live costs, not the stored JSON.
+  const lineItems = [];
   tas.forEach(ta => {
-    ta.value.split('\n').forEach(line => {
-      total += parseFloat(line.replace(/[^0-9.]/g, '')) || 0;
-    });
+    const costs = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
+    lineItems.push({ costs: costs.length ? costs : ['0'] });
   });
+  const total = InvoiceTotals.sumLineItemsTotal({ lineItems });
   const currencyEl = document.querySelector('[data-field="currency"]');
   // In edit mode this span holds a <select>; read its value, not the concatenated
   // option-list text (which would be "USDJMDEURGBPCADAUDTTD").
@@ -1728,6 +1732,23 @@ function updateAutoSumHint() {
     ptEl.classList.remove('flash-success');
     void ptEl.offsetWidth; // trigger reflow
     ptEl.classList.add('flash-success');
+  }
+
+  // Live-mirror the amount due on the red card. Intent is explicit only:
+  // payments[] or amountDueOverride reduce the due; otherwise it is the line
+  // sum. A nonzero stored due is never guessed to be a deposit.
+  const dueData = { ...getData(), lineItems, currency: currencyCode };
+  const due = InvoiceTotals.expectedAmountDue(dueData);
+  const dueStr = InvoiceTotals.formatTotalAmountDisplay(due, dueData);
+  const taEl = document.querySelector('[data-field="totalAmount"]');
+  if (taEl && document.body.classList.contains('editing')) {
+    // Drift-based, like the save path — don't reformat a due that is already right.
+    if (Math.abs(InvoiceTotals.parseMoneyNum(taEl.textContent) - due) > 0.01) {
+      taEl.textContent = dueStr;
+      taEl.classList.remove('flash-success');
+      void taEl.offsetWidth; // trigger reflow
+      taEl.classList.add('flash-success');
+    }
   }
 }
 
@@ -3396,11 +3417,23 @@ function renderProviderList() {
       typeSel.appendChild(o);
     });
     typeSel.onchange = () => {
+      const next = PROVIDERS[typeSel.value];
+      const prevLabel = PROVIDERS[list[i].type]?.label || '';
+      const stockLabels = Object.values(PROVIDERS).map(v => v.label);
       list[i].type  = typeSel.value;
-      list[i].model = PROVIDERS[typeSel.value]?.defaultModel || '';
+      list[i].model = next?.defaultModel || '';
       modelIn.value = list[i].model;
+      // Stock or empty display names follow the provider. Custom names stay.
+      // Otherwise the row can stay labeled Gemini while running Anthropic.
+      const name = (list[i].name || '').trim();
+      if (!name || name === prevLabel || stockLabels.includes(name)) {
+        list[i].name = next?.label || typeSel.value;
+      }
       saveChatProviders(list);
       renderProviderList();
+      updateActiveProviderPill();
+      renderProviderListMini();
+      toggleProviderExpand(i);
     };
     typeRow.appendChild(typeSel);
 
@@ -5647,6 +5680,7 @@ function switchDashTab(tab) {
 }
 
 function renderBillsList() {
+  tickBillCycles(); // tick on every bills-list render, not just dashboard open
   const el = document.getElementById('dash-bills-list');
   if (!el) return;
   el.innerHTML = '';
@@ -9509,6 +9543,7 @@ window.addEventListener('load', () => {
     }
   } catch(e) {}
   try { migrateLegacyClientExpenses(); } catch(e) {}
+  try { tickBillCycles(); } catch(e) {} // tick on app boot, not just dashboard open
   try {
     initGmailAuth(() => {
       updateEmailBtn();

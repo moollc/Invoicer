@@ -1,4 +1,4 @@
-﻿const CACHE = 'app-1784057000'; // __CACHE_VERSION__
+﻿const CACHE = 'app-1756752000'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +7,8 @@ const ASSETS = [
   '/terms.html',
   '/boot/invoice-totals.js',
   '/source/shared/invoice-totals.mjs',
+  '/source/shared/invoice-totals-money.mjs',
+  '/source/shared/invoice-totals-sync.mjs',
   '/source/shared/permissions.js',
   '/source/shared/file-bridge.js',
   '/source/shared/sync.js'

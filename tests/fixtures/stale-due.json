@@ -1,9 +1,9 @@
 {
-  "receiptOverride": "20250702B",
-  "dateOverride": "07 / 02 / 2026",
+  "receiptOverride": "20250704D",
+  "dateOverride": "07 / 04 / 2026",
   "currency": "USD",
   "from": { "name": "moo LLC", "address": "", "email": "", "phone": "" },
-  "to": { "name": "Deposit Client", "address": "", "email": "", "phone": "" },
+  "to": { "name": "Stale Due Client", "address": "", "email": "", "phone": "" },
   "lineItems": [
     {
       "service": "Event",
@@ -12,11 +12,8 @@
       "costs": ["100000"]
     }
   ],
-  "payments": [
-    { "label": "Deposit", "amount": "50000" }
-  ],
   "projectTotal": "0",
   "totalAmount": "$50,000.00",
-  "totalLabelTop": "Deposit",
+  "totalLabelTop": "Total",
   "totalLabelBottom": "Due"
 }
