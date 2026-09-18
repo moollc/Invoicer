@@ -188,7 +188,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       <span class="tb-label">Calendar</span>
     </button>
-    <button id="btn-expenses" onclick="openExpenseLogger()" title="Log client expenses for rebilling" aria-label="Expense Logger">
+    <button id="btn-expenses" onclick="openExpenseLogger()" title="Expense inbox, CSV import, and client rebills" aria-label="Expense Logger">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 0 20A10 10 0 0 0 12 2z"/><path d="M12 8v4l3 3"/></svg>
       <span class="tb-label">Expenses</span>
     </button>
@@ -712,7 +712,7 @@
     <div class="dash-tab-bar">
       <div class="dash-tabs">
         <button id="dash-tab-goals" class="dash-tab dash-tab--active" onclick="switchDashTab('goals')">Goals</button>
-        <button id="dash-tab-bills" class="dash-tab" onclick="switchDashTab('bills')">Expenses</button>
+        <button id="dash-tab-bills" class="dash-tab" onclick="switchDashTab('bills')">Bills</button>
       </div>
       <div class="sp-btn-row">
         <button onclick="openDashboard()" class="dash-filter-btn">⟳ Sync</button>
@@ -1024,6 +1024,13 @@
         <input id="pay-bill-file" type="file" accept="application/pdf,image/*" style="display:none;" onchange="onPayBillFileChange(this)">
       </label>
       <button id="pay-bill-file-clear" onclick="clearPayBillFile()" style="display:none;background:none;border:none;color:#9aa2ac;font-size:11px;cursor:pointer;padding:4px 0;">✕ Remove</button>
+    </div>
+    <div class="modal-form-group" style="margin-top:8px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:#14202e;cursor:pointer;">
+        <input id="pay-bill-as-project-cost" type="checkbox" style="width:14px;height:14px;">
+        Also log as project cost?
+      </label>
+      <div style="font-size:10px;color:#9aa2ac;margin-top:4px;">Off by default — does not change the income pool when left unchecked.</div>
     </div>
     <div class="modal-btn-row">
       <button onclick="confirmPayBill()">Mark Paid</button>

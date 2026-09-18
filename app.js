@@ -5124,6 +5124,8 @@ function markBillPaid(id) {
   document.getElementById('pay-bill-file-name').textContent = 'Choose file…';
   document.getElementById('pay-bill-file').value = '';
   document.getElementById('pay-bill-file-clear').style.display = 'none';
+  const pc = document.getElementById('pay-bill-as-project-cost');
+  if (pc) pc.checked = false; // default OFF
   overlay.style.display = 'flex';
   requestAnimationFrame(() => overlay.classList.add('modal-open'));
 }
@@ -5504,6 +5506,7 @@ async function confirmPayBill() {
   const billId = bill.id;
   const amount = parseFloat(bill.amount) || 0;
   const docSnapshot = _payBillDoc ? { ..._payBillDoc } : null;
+  const alsoProjectCost = !!(document.getElementById('pay-bill-as-project-cost') || {}).checked;
 
   const btn = document.querySelector('#pay-bill-overlay .modal-btn-row button');
   if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
@@ -5523,6 +5526,17 @@ async function confirmPayBill() {
 
   saveBills(bills);
   await syncBillsToSheet();
+
+  if (alsoProjectCost && amount) {
+    const data = getData();
+    addProjectCost({
+      receipt: data.receiptNumber || '',
+      client: data.to?.name && data.to.name !== 'John Doe' ? data.to.name : '',
+      desc: `Bill paid: ${bill.name}`,
+      amount,
+    });
+  }
+
   closePayBillModal(true);
   renderBillsList();
 
@@ -6008,10 +6022,405 @@ function promptRebillExpenses(clientName, pending) {
   );
 }
 
-function openExpenseLogger() {
+
+// ── Expense Inbox (v1) ────────────────────────────────────────────────────
+// Pending classify → confirm → write. No silent auto-post. No Ledger outflows.
+const EXPENSE_INBOX_KEY = 'invoice-expense-inbox';
+
+function loadExpenseInbox() {
+  try { return JSON.parse(localStorage.getItem(EXPENSE_INBOX_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveExpenseInbox(list) {
+  try { localStorage.setItem(EXPENSE_INBOX_KEY, JSON.stringify(list)); } catch (e) {}
+}
+function pendingExpenseInbox() {
+  return loadExpenseInbox().filter(r => r.status === 'pending');
+}
+function addExpenseInboxItem( partial ) {
+  const item = {
+    id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+    amount: String(parseFloat(partial.amount) || 0),
+    date: (partial.date || new Date().toISOString().slice(0, 10)),
+    description: (partial.description || partial.desc || '').trim(),
+    vendor: (partial.vendor || '').trim(),
+    bucket: partial.bucket || '', // 'client' | 'project' | 'bill' | ''
+    client: (partial.client || '').trim(),
+    receipt: (partial.receipt || '').trim(),
+    status: 'pending',
+    source: partial.source || 'manual',
+    createdAt: new Date().toISOString(),
+  };
+  const list = loadExpenseInbox();
+  list.unshift(item);
+  saveExpenseInbox(list);
+  return item;
+}
+function updateExpenseInboxItem(id, patch) {
+  const list = loadExpenseInbox();
+  const idx = list.findIndex(r => r.id === id);
+  if (idx < 0) return null;
+  list[idx] = { ...list[idx], ...patch };
+  saveExpenseInbox(list);
+  return list[idx];
+}
+function skipExpenseInboxItem(id) {
+  updateExpenseInboxItem(id, { status: 'skipped' });
+  showToast('Skipped inbox item', 'info');
+}
+function acceptExpenseInboxItem(id) {
+  const list = loadExpenseInbox();
+  const item = list.find(r => r.id === id);
+  if (!item || item.status !== 'pending') return;
+  const bucket = item.bucket || 'project';
+  const desc = item.description || item.vendor || 'Expense';
+  const amount = parseFloat(item.amount) || 0;
+  if (!amount) { showToast('Amount required', 'error'); return; }
+
+  if (bucket === 'client') {
+    const client = (item.client || '').trim();
+    if (!client || client === 'John Doe') {
+      showToast('Set a client before accepting as rebill expense', 'error');
+      return;
+    }
+    addClientExpense({
+      receipt: item.receipt || '',
+      client,
+      description: desc,
+      amount,
+    });
+  } else if (bucket === 'bill') {
+    const bills = loadBills();
+    bills.push({
+      id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+      name: desc,
+      amount: String(amount),
+      recurrence: 'monthly',
+      dueDay: '',
+      customDays: '',
+      allocationPct: '0',
+      recipient: item.vendor || '',
+      funded: '0',
+      paid: false,
+      cycleStart: item.date || new Date().toISOString().slice(0, 10),
+      history: [],
+    });
+    saveBills(bills);
+    syncBillsToSheet();
+    renderBillsList();
+    showToast('✓ Bill created from inbox', 'success');
+  } else {
+    // project (default) — absorbed cost, never on client invoice
+    addProjectCost({
+      receipt: item.receipt || '',
+      client: item.client || '',
+      desc,
+      amount,
+      date: item.date,
+    });
+    showToast('✓ Project cost logged from inbox', 'success');
+  }
+  updateExpenseInboxItem(id, { status: 'accepted', bucket });
+}
+
+/** Heuristic CSV / bank-export parse → pending inbox rows only. */
+function parseExpenseCsv(text) {
+  const raw = (text || '').replace(/^\uFEFF/, '').trim();
+  if (!raw) return [];
+  const lines = raw.split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+
+  function splitRow(line) {
+    const out = [];
+    let cur = '', inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+        else inQ = !inQ;
+      } else if ((ch === ',' || ch === '\t' || ch === ';') && !inQ) {
+        out.push(cur.trim()); cur = '';
+      } else cur += ch;
+    }
+    out.push(cur.trim());
+    return out;
+  }
+
+  const rows = lines.map(splitRow);
+  const header = rows[0].map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const looksHeader = header.some(h =>
+    /amount|debit|credit|description|memo|narration|vendor|payee|date|posted|details/.test(h));
+
+  function colIndex(cands) {
+    for (const c of cands) {
+      const i = header.findIndex(h => h.includes(c));
+      if (i >= 0) return i;
+    }
+    return -1;
+  }
+
+  let iDate = -1, iAmt = -1, iDesc = -1, iVendor = -1;
+  let dataRows = rows;
+  if (looksHeader) {
+    iDate = colIndex(['date', 'posted', 'transactiondate', 'trandate']);
+    iAmt = colIndex(['amount', 'debit', 'withdrawal', 'value', 'sum']);
+    iDesc = colIndex(['description', 'memo', 'narration', 'details', 'particulars', 'reference']);
+    iVendor = colIndex(['vendor', 'payee', 'merchant', 'name', 'counterparty']);
+    dataRows = rows.slice(1);
+  }
+
+  const parsed = [];
+  for (const cols of dataRows) {
+    if (!cols.length || cols.every(c => !c)) continue;
+    let amount = '', date = '', description = '', vendor = '';
+
+    if (looksHeader) {
+      if (iAmt >= 0) amount = cols[iAmt] || '';
+      if (iDate >= 0) date = cols[iDate] || '';
+      if (iDesc >= 0) description = cols[iDesc] || '';
+      if (iVendor >= 0) vendor = cols[iVendor] || '';
+      if (!description && !vendor) description = cols.filter(Boolean).join(' · ');
+    } else {
+      // Free-form: find money-like token + date-like + rest as description
+      for (const c of cols) {
+        const cleaned = c.replace(/[$£€,]/g, '').trim();
+        if (!amount && /^-?\d+(\.\d{1,2})?$/.test(cleaned)) { amount = cleaned; continue; }
+        if (!date && /\d{1,4}[-\/]\d{1,2}[-\/]\d{1,4}/.test(c)) { date = c; continue; }
+        if (!description) description = c;
+        else if (!vendor) vendor = c;
+      }
+    }
+
+    const amtNum = parseFloat(String(amount).replace(/[$£€,]/g, ''));
+    if (!amtNum || isNaN(amtNum)) continue;
+    // Prefer outflows as positive expense amounts
+    const absAmt = Math.abs(amtNum);
+
+    let iso = new Date().toISOString().slice(0, 10);
+    if (date) {
+      const d = new Date(date);
+      if (!isNaN(d.getTime())) iso = d.toISOString().slice(0, 10);
+      else {
+        const m = String(date).match(/(\d{1,4})[-\/](\d{1,2})[-\/](\d{1,4})/);
+        if (m) {
+          let a = +m[1], b = +m[2], c = +m[3];
+          if (a > 31) iso = `${a}-${String(b).padStart(2,'0')}-${String(c).padStart(2,'0')}`;
+          else if (c > 31) iso = `${c}-${String(a).padStart(2,'0')}-${String(b).padStart(2,'0')}`;
+        }
+      }
+    }
+
+    parsed.push({
+      amount: absAmt,
+      date: iso,
+      description: (description || vendor || 'Imported expense').trim(),
+      vendor: (vendor || '').trim(),
+      source: 'csv',
+    });
+  }
+  return parsed;
+}
+
+function importExpensesToInbox(text) {
+  const rows = parseExpenseCsv(text);
+  if (!rows.length) { showToast('No expense rows found in CSV/paste', 'error'); return 0; }
+  rows.forEach(r => addExpenseInboxItem(r));
+  showToast(`✓ ${rows.length} row${rows.length > 1 ? 's' : ''} added to expense inbox`, 'success');
+  return rows.length;
+}
+
+function openExpenseInboxUI(opts = {}) {
+  const existing = document.getElementById('expense-inbox-overlay');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'expense-inbox-overlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:22px;width:460px;max-width:94vw;font-family:Roboto,sans-serif;max-height:86vh;overflow-y:auto;';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:4px;';
+  title.textContent = 'Expense Inbox';
+  const sub = document.createElement('div');
+  sub.style.cssText = 'font-size:11px;color:#6c7682;margin-bottom:12px;';
+  sub.textContent = 'Classify pending imports — Accept writes to Client / Project / Bills. Nothing posts silently.';
+
+  // CSV file + paste
+  const importRow = document.createElement('div');
+  importRow.style.cssText = 'display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;';
+  const fileLbl = document.createElement('label');
+  fileLbl.style.cssText = 'flex:1;min-width:140px;padding:8px;border:1.5px dashed #ccc;border-radius:6px;font-size:11px;text-align:center;cursor:pointer;color:#6c7682;';
+  fileLbl.textContent = 'Import CSV / bank export…';
+  const fileInp = document.createElement('input');
+  fileInp.type = 'file';
+  fileInp.accept = '.csv,text/csv,text/plain';
+  fileInp.style.display = 'none';
+  fileLbl.appendChild(fileInp);
+  fileInp.onchange = () => {
+    const f = fileInp.files && fileInp.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = e => { importExpensesToInbox(String(e.target.result || '')); refresh(); };
+    reader.readAsText(f);
+  };
+
+  const pasteBtn = document.createElement('button');
+  pasteBtn.textContent = 'Paste CSV';
+  pasteBtn.style.cssText = 'padding:8px 12px;border:1.5px solid #ddd;border-radius:6px;background:#f9f9f9;font-size:11px;cursor:pointer;font-family:Roboto,sans-serif;';
+  pasteBtn.onclick = async () => {
+    let text = '';
+    try { text = await navigator.clipboard.readText(); } catch (e) {}
+    if (!text) {
+      text = prompt('Paste CSV / bank export text:') || '';
+    }
+    if (text.trim()) { importExpensesToInbox(text); refresh(); }
+  };
+  importRow.append(fileLbl, pasteBtn);
+
+  // Quick add (unassigned → inbox)
+  const quick = document.createElement('div');
+  quick.style.cssText = 'border:1px solid #eee;border-radius:8px;padding:10px;margin-bottom:12px;background:#fafafa;';
+  const qTitle = document.createElement('div');
+  qTitle.style.cssText = 'font-size:10px;font-weight:700;color:#6c7682;letter-spacing:0.4px;margin-bottom:6px;';
+  qTitle.textContent = 'QUICK ADD → INBOX';
+  const qDesc = document.createElement('input');
+  qDesc.placeholder = 'Description / vendor';
+  qDesc.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 8px;border:1.5px solid #ddd;border-radius:6px;font-size:12px;margin-bottom:6px;font-family:Roboto,sans-serif;';
+  const qAmt = document.createElement('input');
+  qAmt.type = 'number';
+  qAmt.placeholder = 'Amount';
+  qAmt.style.cssText = 'width:100%;box-sizing:border-box;padding:7px 8px;border:1.5px solid #ddd;border-radius:6px;font-size:12px;margin-bottom:6px;font-family:Roboto,sans-serif;';
+  const qAdd = document.createElement('button');
+  qAdd.textContent = '+ Add pending';
+  qAdd.style.cssText = 'width:100%;padding:8px;background:#14202e;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;font-family:Roboto,sans-serif;';
+  qAdd.onclick = () => {
+    const description = qDesc.value.trim();
+    const amount = qAmt.value.trim();
+    if (!description || !amount) { showToast('Enter description and amount', 'error'); return; }
+    const data = getData();
+    const clientName = data.to?.name || '';
+    const realClient = clientName && clientName !== 'John Doe' ? clientName : '';
+    addExpenseInboxItem({
+      description,
+      amount,
+      vendor: description,
+      client: realClient,
+      receipt: realClient ? (data.receiptNumber || '') : '',
+      bucket: realClient ? 'client' : '',
+      source: 'logger',
+    });
+    qDesc.value = ''; qAmt.value = '';
+    showToast('✓ Added to expense inbox', 'success');
+    refresh();
+  };
+  quick.append(qTitle, qDesc, qAmt, qAdd);
+
+  const listTitle = document.createElement('div');
+  listTitle.style.cssText = 'font-size:11px;font-weight:700;color:#6c7682;letter-spacing:0.5px;margin-bottom:6px;';
+  const listEl = document.createElement('div');
+
+  function refresh() {
+    const pending = pendingExpenseInbox();
+    listTitle.textContent = `PENDING · ${pending.length}`;
+    listEl.innerHTML = '';
+    if (!pending.length) {
+      listEl.innerHTML = '<div style="font-size:11px;color:#9aa2ac;padding:10px 0;">Inbox empty. Import a CSV or quick-add above.</div>';
+      return;
+    }
+    pending.forEach(item => {
+      const row = document.createElement('div');
+      row.style.cssText = 'border:1px solid #eee;border-radius:8px;padding:10px;margin-bottom:8px;';
+      const head = document.createElement('div');
+      head.style.cssText = 'display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600;';
+      head.innerHTML = `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.description || item.vendor || 'Expense'}</span><span style="flex-shrink:0;">${item.amount}</span>`;
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-size:10px;color:#9aa2ac;margin:4px 0 8px;';
+      meta.textContent = [item.date, item.vendor && item.vendor !== item.description ? item.vendor : '', item.source].filter(Boolean).join(' · ');
+
+      const bucketSel = document.createElement('select');
+      bucketSel.style.cssText = 'width:100%;font-size:11px;padding:5px 6px;border:1.5px solid #ddd;border-radius:6px;margin-bottom:6px;background:#fff;font-family:Roboto,sans-serif;';
+      [['', 'Bucket…'], ['project', 'Project cost (absorbed)'], ['client', 'Client rebill expense'], ['bill', 'Bill (overhead)']].forEach(([v, t]) => {
+        const o = document.createElement('option');
+        o.value = v; o.textContent = t;
+        if ((item.bucket || '') === v) o.selected = true;
+        bucketSel.appendChild(o);
+      });
+      bucketSel.onchange = () => updateExpenseInboxItem(item.id, { bucket: bucketSel.value });
+
+      const clientInp = document.createElement('input');
+      clientInp.placeholder = 'Client (required for rebill)';
+      clientInp.value = item.client || '';
+      clientInp.style.cssText = 'width:100%;box-sizing:border-box;padding:5px 6px;border:1.5px solid #ddd;border-radius:6px;font-size:11px;margin-bottom:6px;font-family:Roboto,sans-serif;';
+      clientInp.onchange = () => updateExpenseInboxItem(item.id, { client: clientInp.value.trim() });
+
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;gap:6px;';
+      const accept = document.createElement('button');
+      accept.textContent = 'Accept';
+      accept.style.cssText = 'flex:1;padding:7px;background:#2a8c55;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:Roboto,sans-serif;';
+      accept.onclick = () => {
+        const latest = loadExpenseInbox().find(r => r.id === item.id);
+        if (latest) {
+          latest.bucket = bucketSel.value || latest.bucket || 'project';
+          latest.client = clientInp.value.trim() || latest.client;
+          updateExpenseInboxItem(item.id, { bucket: latest.bucket, client: latest.client });
+        }
+        acceptExpenseInboxItem(item.id);
+        refresh();
+      };
+      const skip = document.createElement('button');
+      skip.textContent = 'Skip';
+      skip.style.cssText = 'padding:7px 10px;background:none;border:1.5px solid #ddd;border-radius:6px;font-size:11px;cursor:pointer;font-family:Roboto,sans-serif;';
+      skip.onclick = () => { skipExpenseInboxItem(item.id); refresh(); };
+      actions.append(accept, skip);
+
+      row.append(head, meta, bucketSel, clientInp, actions);
+      listEl.appendChild(row);
+    });
+  }
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = 'Close';
+  closeBtn.style.cssText = 'width:100%;padding:8px;background:none;border:1.5px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;margin-top:10px;font-family:Roboto,sans-serif;';
+  closeBtn.onclick = () => overlay.remove();
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+  // Optional: link to classic client logger when a real client is on the invoice
   const data = getData();
   const clientName = data.to?.name;
-  if (!clientName || clientName === 'John Doe') { showToast('Apply a client first to log expenses', 'error'); return; }
+  const hasClient = clientName && clientName !== 'John Doe';
+  if (hasClient) {
+    const link = document.createElement('button');
+    link.textContent = `Open classic rebill logger · ${clientName}`;
+    link.style.cssText = 'width:100%;padding:8px;background:#f0f4f8;border:1.5px solid #dde3ea;border-radius:6px;font-size:11px;cursor:pointer;margin-bottom:10px;font-family:Roboto,sans-serif;color:#14202e;';
+    link.onclick = () => { overlay.remove(); openExpenseLoggerClassic(); };
+    box.append(title, sub, importRow, quick, link, listTitle, listEl, closeBtn);
+  } else {
+    box.append(title, sub, importRow, quick, listTitle, listEl, closeBtn);
+  }
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  refresh();
+  if (opts.focusQuick) qDesc.focus();
+}
+
+function openExpenseLogger() {
+  // v1: always open inbox (CSV + pending). Classic rebill logger available when a real client is set.
+  openExpenseInboxUI({ focusQuick: true });
+}
+
+function openExpenseLoggerClassic() {
+  const data = getData();
+  const clientName = data.to?.name;
+  if (!clientName || clientName === 'John Doe') {
+    // No hard gate — queue unassigned inbox item flow instead of blocking toast
+    openExpenseInboxUI({ focusQuick: true });
+    showToast('No client on invoice — logging to expense inbox', 'info');
+    return;
+  }
   const currentReceipt = data.receiptNumber || '';
 
   const overlay = document.createElement('div');
@@ -8424,9 +8833,25 @@ function applyAddProjectCost(items, data, actionNotes) {
   valid.forEach(v => {
     if (!v.receipt || !known.has(v.receipt)) v.receipt = data.receiptNumber || '';
     const row = rows.find(r => r.receipt === v.receipt);
-    addProjectCost({ receipt: v.receipt, client: row ? row.client : (data.to?.name || ''), desc: v.desc, amount: v.amount });
+    const client = row ? row.client : (data.to?.name || '');
+    // Explicit chat command with a known receipt → direct add; otherwise inbox
+    if (v.receipt && known.has(v.receipt)) {
+      addProjectCost({ receipt: v.receipt, client, desc: v.desc, amount: v.amount });
+    } else {
+      addExpenseInboxItem({
+        description: v.desc,
+        amount: v.amount,
+        receipt: v.receipt || '',
+        client: client && client !== 'John Doe' ? client : '',
+        bucket: 'project',
+        source: 'chat',
+      });
+    }
   });
-  actionNotes.push(`Project cost${valid.length > 1 ? 's' : ''} recorded: ${valid.map(i => `${i.desc} (${i.amount})`).join(', ')} — see Ledger → expand row`);
+  const viaInbox = valid.filter(v => !v.receipt || !known.has(v.receipt));
+  const direct = valid.length - viaInbox.length;
+  if (direct) actionNotes.push(`Project cost${direct > 1 ? 's' : ''} recorded: ${valid.filter(v => v.receipt && known.has(v.receipt)).map(i => `${i.desc} (${i.amount})`).join(', ')} — see Ledger → expand row`);
+  if (viaInbox.length) actionNotes.push(`${viaInbox.length} project cost${viaInbox.length > 1 ? 's' : ''} queued in Expense Inbox (no matching receipt)`);
 }
 
 function applyAddClientExpense(items, data, actionNotes) {
@@ -8443,9 +8868,22 @@ function applyAddClientExpense(items, data, actionNotes) {
   valid.forEach(v => {
     if (!v.receipt || !known.has(v.receipt)) v.receipt = data.receiptNumber || '';
     const row = rows.find(r => r.receipt === v.receipt);
-    addClientExpense({ receipt: v.receipt, client: row ? row.client : (data.to?.name || ''), description: v.description, amount: v.amount });
+    const client = row ? row.client : (data.to?.name || '');
+    const realClient = client && client !== 'John Doe' ? client : '';
+    if (realClient && v.receipt) {
+      addClientExpense({ receipt: v.receipt, client: realClient, description: v.description, amount: v.amount });
+    } else {
+      addExpenseInboxItem({
+        description: v.description,
+        amount: v.amount,
+        receipt: v.receipt || '',
+        client: realClient,
+        bucket: realClient ? 'client' : '',
+        source: 'chat',
+      });
+    }
   });
-  actionNotes.push(`Rebill expense${valid.length > 1 ? 's' : ''} logged: ${valid.map(v => `${v.description} (${v.amount})`).join(', ')} — pending in the Expenses toolbar`);
+  actionNotes.push(`Rebill expense${valid.length > 1 ? 's' : ''} logged: ${valid.map(v => `${v.description} (${v.amount})`).join(', ')} — check Expenses toolbar / inbox`);
 }
 
 const VALID_STATUSES = ['⬜ Unpaid', '💰 Deposit', '📤 Sent', '✅ Paid'];
