@@ -4807,8 +4807,15 @@ function billCurrentCycle(bill) {
   return { dueDate, cycleStart, cycleEnd };
 }
 
+// Active bill = positive amount still owed this cycle. Zero-amount rows are ghosts
+// (paid leftovers / bad sheet merges) and must never show as overdue.
+function billHasActiveAmount(bill) {
+  return (parseFloat(bill && bill.amount) || 0) > 0;
+}
+
 function billStatus(bill) {
   if (bill.paid) return 'paid';
+  if (!billHasActiveAmount(bill)) return 'idle';
   const { dueDate } = billCurrentCycle(bill);
   const now = new Date();
   const diff = Math.ceil((dueDate - now) / 86400000);
@@ -4822,6 +4829,7 @@ function allocateToBills(incomeUSD) {
   const bills = loadBills();
   let changed = false;
   bills.forEach(b => {
+    if (!billHasActiveAmount(b) || b.paid) return;
     const pct = parseFloat(b.allocationPct) || 0;
     if (!pct) return;
     const contribution = incomeUSD * (pct / 100);
@@ -4873,7 +4881,7 @@ function calcIncomePool(rows) {
     if (b.paid && b.history?.length) return s + b.history.reduce((hs, h) => hs + (parseFloat(h.amount) || 0), 0);
     return s;
   }, 0);
-  const billsFunded   = allBills.reduce((s, b) => b.paid ? s : s + (parseFloat(b.funded) || 0), 0);
+  const billsFunded   = allBills.reduce((s, b) => (b.paid || !billHasActiveAmount(b)) ? s : s + (parseFloat(b.funded) || 0), 0);
   const billsUsed     = billsPaid + billsFunded;
   const taxReserved = rows
     .filter(r => r.status === '✅ Paid' && parseFloat(r.taxRate) > 0)
@@ -5049,19 +5057,30 @@ async function saveBillModal() {
   const errEl     = document.getElementById('bill-modal-error');
 
   if (!name)   { errEl.textContent = 'Name is required.'; return; }
-  if (!amount || isNaN(parseFloat(amount))) { errEl.textContent = 'Valid amount required.'; return; }
+  const amountNum = parseFloat(amount);
+  if (!amount || isNaN(amountNum) || amountNum <= 0) {
+    errEl.textContent = 'Amount must be greater than zero.';
+    return;
+  }
+  let allocNum = parseFloat(alloc);
+  if (alloc && (isNaN(allocNum) || allocNum < 0 || allocNum > 100)) {
+    errEl.textContent = 'Allocation must be between 0 and 100.';
+    return;
+  }
+  const amountStr = String(amountNum);
+  const allocStr = alloc ? String(Math.min(100, Math.max(0, allocNum))) : '0';
 
   const bills = loadBills();
   if (_editingBillId) {
     const idx = bills.findIndex(b => b.id === _editingBillId);
     if (idx !== -1) {
-      bills[idx] = { ...bills[idx], name, amount, recurrence, dueDay, customDays,
-        allocationPct: alloc || '0', recipient };
+      bills[idx] = { ...bills[idx], name, amount: amountStr, recurrence, dueDay, customDays,
+        allocationPct: allocStr, recipient };
       saveBills(bills);
     }
   } else {
-    bills.push({ id: String(Date.now()), name, amount, recurrence, dueDay, customDays,
-      allocationPct: alloc || '0', recipient, funded: '0', paid: false,
+    bills.push({ id: String(Date.now()), name, amount: amountStr, recurrence, dueDay, customDays,
+      allocationPct: allocStr, recipient, funded: '0', paid: false,
       cycleStart: new Date().toISOString().slice(0, 10), history: [] });
     saveBills(bills);
   }
@@ -5709,10 +5728,31 @@ function renderBillsList() {
     return;
   }
 
-  // Sort: overdue first, then by due date, paid last
-  const sorted = [...bills].sort((a, b) => {
+  // Active bills only in the main list. Zero-amount leftovers are ghosts — hide from
+  // overdue/due chrome (optional collapsed note if any remain in storage).
+  const active = bills.filter(billHasActiveAmount);
+  const ghosts = bills.filter(b => !billHasActiveAmount(b));
+  if (!active.length) {
+    const empty = document.createElement('p');
+    empty.className = 'bills-empty';
+    empty.textContent = ghosts.length
+      ? 'No active bills. Zero-amount leftovers are hidden — delete them from Edit or clear ghosts.'
+      : 'No bills yet. Add one to start tracking.';
+    el.appendChild(empty);
+    if (ghosts.length) {
+      const note = document.createElement('p');
+      note.className = 'bills-empty';
+      note.style.opacity = '0.7';
+      note.textContent = `${ghosts.length} zero-amount leftover(s) hidden (not real balances).`;
+      el.appendChild(note);
+    }
+    return;
+  }
+
+  // Sort: overdue first, then by due date, paid last (idle should not appear in active)
+  const sorted = [...active].sort((a, b) => {
     const sa = billStatus(a), sb = billStatus(b);
-    const order = { overdue: 0, due: 1, upcoming: 2, paid: 3 };
+    const order = { overdue: 0, due: 1, upcoming: 2, paid: 3, idle: 4 };
     if (order[sa] !== order[sb]) return order[sa] - order[sb];
     const { dueDate: da } = billCurrentCycle(a);
     const { dueDate: db } = billCurrentCycle(b);
@@ -5724,6 +5764,10 @@ function renderBillsList() {
     const amount = parseFloat(bill.amount) || 0;
     const funded = parseFloat(bill.funded) || 0;
     const pct    = amount > 0 ? Math.min(100, Math.round((funded / amount) * 100)) : 0;
+    const allocPct = parseFloat(bill.allocationPct) || 0;
+    const allocTxt = (amount > 0 && allocPct > 0 && allocPct <= 100)
+      ? `<span class="bill-alloc">${allocPct}% allocated</span>`
+      : '';
     const { dueDate } = billCurrentCycle(bill);
     const daysLeft = Math.ceil((dueDate - new Date()) / 86400000);
     const dueTxt = status === 'paid' ? 'Paid this cycle'
@@ -5748,7 +5792,7 @@ function renderBillsList() {
       <div class="bill-meta">
         <span class="bill-amount">${fmt(amount)}</span>
         <span class="bill-due bill-due--${status}">${dueTxt}</span>
-        ${bill.allocationPct ? `<span class="bill-alloc">${bill.allocationPct}% allocated</span>` : ''}
+        ${allocTxt}
       </div>
       <div class="goal-bar-wrap">
         <div class="goal-bar-fill bill-bar-fill" style="width:0%"></div>
