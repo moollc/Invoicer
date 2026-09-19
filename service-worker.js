@@ -1,4 +1,4 @@
-﻿const CACHE = 'app-1789824600'; // __CACHE_VERSION__
+﻿const CACHE = 'app-1789850000'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',

@@ -5523,13 +5523,77 @@ async function loadProjectCostsFromSheet() {
   if (localOnly.length) await syncProjectCostsToSheet();
 }
 
+/**
+ * Shared paid commit for confirmPayBill modal and gmail bill-pay inbox accept.
+ * Sets paid + history + paidTotal, reduces funded, syncs sheet, optional receipt Drive upload.
+ * Never called silently — only from explicit Confirm / Accept.
+ */
+async function commitBillPaid(billId, opts = {}) {
+  const bills = loadBills();
+  const idx = bills.findIndex(b => String(b.id) === String(billId));
+  if (idx === -1) return { success: false, error: 'Bill not found' };
+  const bill = bills[idx];
+  const amount = opts.amount != null ? (parseFloat(opts.amount) || 0) : (parseFloat(bill.amount) || 0);
+  const payDate = opts.date || new Date().toISOString().slice(0, 10);
+  const docSnapshot = opts.docSnapshot || null;
+  const amountStr = opts.amount != null ? String(opts.amount) : String(bill.amount);
+
+  bill.history = bill.history || [];
+  bill.history.push({ date: payDate, amount: amountStr });
+  bill.paidTotal = String((parseFloat(bill.paidTotal) || 0) + amount);
+  bill.paid = true;
+  bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
+  if (docSnapshot) {
+    bill.receiptDocName = docSnapshot.name;
+  }
+  saveBills(bills);
+  await syncBillsToSheet();
+  try { renderBillsList(); } catch (e) {}
+
+  if (docSnapshot && gmailTokenValid() && _driveFolderId) {
+    try {
+      const uploaded = await uploadBillFileToDrive({
+        bill,
+        dataUrl: docSnapshot.dataUrl,
+        originalName: docSnapshot.name,
+        kind: 'Receipt',
+      });
+      await applyBillDriveDoc(billId, 'Receipt', uploaded);
+      if (opts.toastDrive !== false) showToast(`Doc saved to Drive: ${uploaded.name}`, 'success');
+      try { renderBillsList(); } catch (e) {}
+      return { success: true, bill, uploaded };
+    } catch (err) {
+      const savedBills = loadBills();
+      const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
+      if (savedIdx !== -1) {
+        savedBills[savedIdx].receiptDoc = docSnapshot.dataUrl;
+        savedBills[savedIdx].receiptDocName = docSnapshot.name;
+        saveBills(savedBills);
+        try { renderBillsList(); } catch (e) {}
+      }
+      const label = err.name === 'AbortError' ? 'Upload timed out' : err.message;
+      if (opts.toastDrive !== false) showToast(`${label} — doc saved locally`, 'info');
+      return { success: true, bill, localOnly: true, error: label };
+    }
+  } else if (docSnapshot) {
+    const savedBills = loadBills();
+    const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
+    if (savedIdx !== -1) {
+      savedBills[savedIdx].receiptDoc = docSnapshot.dataUrl;
+      savedBills[savedIdx].receiptDocName = docSnapshot.name;
+      saveBills(savedBills);
+      try { renderBillsList(); } catch (e) {}
+    }
+  }
+  return { success: true, bill };
+}
+
 async function confirmPayBill() {
   if (!_payBillId) return;
+  const billId = _payBillId;
   const bills = loadBills();
-  const idx = bills.findIndex(b => b.id === _payBillId);
-  if (idx === -1) return;
-  const bill = bills[idx];
-  const billId = bill.id;
+  const bill = bills.find(b => b.id === billId);
+  if (!bill) return;
   const amount = parseFloat(bill.amount) || 0;
   const docSnapshot = _payBillDoc ? { ..._payBillDoc } : null;
   const alsoProjectCost = !!(document.getElementById('pay-bill-as-project-cost') || {}).checked;
@@ -5537,21 +5601,7 @@ async function confirmPayBill() {
   const btn = document.querySelector('#pay-bill-overlay .modal-btn-row button');
   if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
 
-  // Commit the paid state to localStorage immediately — Drive upload is best-effort
-  bill.history = bill.history || [];
-  bill.history.push({ date: new Date().toISOString().slice(0, 10), amount: bill.amount });
-  bill.paidTotal = String((parseFloat(bill.paidTotal) || 0) + amount);
-  bill.paid = true;
-  bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
-
-  // Name only until Drive URL is known — do not persist PDF base64 before upload
-  // (large dataUrls + full-row sheet sync was leaving N empty while Drive still got the file)
-  if (docSnapshot) {
-    bill.receiptDocName = docSnapshot.name;
-  }
-
-  saveBills(bills);
-  await syncBillsToSheet();
+  await commitBillPaid(billId, { amount, docSnapshot, toastDrive: true });
 
   if (alsoProjectCost && amount) {
     const data = getData();
@@ -5566,38 +5616,9 @@ async function confirmPayBill() {
   closePayBillModal(true);
   renderBillsList();
 
-  // Drive first, then optional html2pdf download — never race sheet write with PDF gen
-  if (docSnapshot && gmailTokenValid() && _driveFolderId) {
-    try {
-      const uploaded = await uploadBillFileToDrive({ bill, dataUrl: docSnapshot.dataUrl, originalName: docSnapshot.name, kind: 'Receipt' });
-      await applyBillDriveDoc(billId, 'Receipt', uploaded);
-      showToast(`Doc saved to Drive: ${uploaded.name}`, 'success');
-      renderBillsList();
-    } catch (err) {
-      // Bill stays paid — keep local file for 📎 Receipt until a later sync
-      const savedBills = loadBills();
-      const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
-      if (savedIdx !== -1) {
-        savedBills[savedIdx].receiptDoc = docSnapshot.dataUrl;
-        savedBills[savedIdx].receiptDocName = docSnapshot.name;
-        saveBills(savedBills);
-        renderBillsList();
-      }
-      const label = err.name === 'AbortError' ? 'Upload timed out' : err.message;
-      showToast(`${label} — doc saved locally`, 'info');
-    }
-  } else if (docSnapshot) {
-    const savedBills = loadBills();
-    const savedIdx = savedBills.findIndex(b => String(b.id) === String(billId));
-    if (savedIdx !== -1) {
-      savedBills[savedIdx].receiptDoc = docSnapshot.dataUrl;
-      saveBills(savedBills);
-      renderBillsList();
-    }
-  }
-
   try {
-    await generatePaymentReceipt(bill);
+    const paidBill = loadBills().find(b => String(b.id) === String(billId)) || bill;
+    await generatePaymentReceipt(paidBill);
   } catch (e) {
     console.warn('[Bills] Payment receipt PDF failed:', e.message);
   }
@@ -6078,6 +6099,355 @@ function promptRebillExpenses(clientName, pending) {
 }
 
 
+
+// ── Gmail API (readonly) + bill payment scan ─────────────────
+
+async function gmailApi(path, opts = {}) {
+  if (!gmailTokenValid()) throw new Error('Sign in with Google first');
+  const url = path.startsWith('http')
+    ? path
+    : `https://gmail.googleapis.com/gmail/v1/users/me${path.startsWith('/') ? path : '/' + path}`;
+  const res = await fetch(url, {
+    method: opts.method || 'GET',
+    headers: {
+      Authorization: `Bearer ${_gmailToken}`,
+      ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(opts.headers || {}),
+    },
+    body: opts.body ? (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body)) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const msg = data.error?.message || res.statusText || 'Gmail API error';
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function gmailListMessages(q, maxResults = 25) {
+  const params = new URLSearchParams({
+    q: q || '',
+    maxResults: String(maxResults),
+  });
+  const data = await gmailApi(`/messages?${params.toString()}`);
+  return data.messages || [];
+}
+
+async function gmailGetMessage(id) {
+  return gmailApi(`/messages/${encodeURIComponent(id)}?format=full`);
+}
+
+function gmailHeader(headers, name) {
+  const h = (headers || []).find(x => (x.name || '').toLowerCase() === name.toLowerCase());
+  return h ? (h.value || '') : '';
+}
+
+function gmailDecodeBodyData(data) {
+  if (!data) return '';
+  try {
+    const b64 = data.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    const bin = atob(b64 + pad);
+    try {
+      return decodeURIComponent(Array.from(bin).map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
+    } catch (e) {
+      return bin;
+    }
+  } catch (e) {
+    return '';
+  }
+}
+
+function gmailStripHtml(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function gmailCollectParts(payload, out) {
+  if (!payload) return;
+  if (payload.filename && payload.body && payload.body.attachmentId) {
+    out.attachments.push({
+      filename: payload.filename,
+      mimeType: payload.mimeType || 'application/octet-stream',
+      attachmentId: payload.body.attachmentId,
+      size: payload.body.size || 0,
+    });
+  }
+  if (payload.mimeType === 'text/plain' && payload.body && payload.body.data && !out.text) {
+    out.text = gmailDecodeBodyData(payload.body.data);
+  }
+  if (payload.mimeType === 'text/html' && payload.body && payload.body.data && !out.html) {
+    out.html = gmailDecodeBodyData(payload.body.data);
+  }
+  (payload.parts || []).forEach(p => gmailCollectParts(p, out));
+}
+
+function gmailParseMessage(msg) {
+  const headers = msg.payload?.headers || [];
+  const collected = { text: '', html: '', attachments: [] };
+  gmailCollectParts(msg.payload, collected);
+  const body = collected.text || gmailStripHtml(collected.html) || '';
+  return {
+    id: msg.id,
+    threadId: msg.threadId,
+    subject: gmailHeader(headers, 'Subject'),
+    from: gmailHeader(headers, 'From'),
+    date: gmailHeader(headers, 'Date'),
+    internalDate: msg.internalDate ? new Date(parseInt(msg.internalDate, 10)) : null,
+    snippet: msg.snippet || '',
+    body,
+    attachments: collected.attachments,
+  };
+}
+
+async function gmailGetAttachment(messageId, attachmentId, mimeType) {
+  const data = await gmailApi(
+    `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`
+  );
+  const raw = data.data || '';
+  const b64 = raw.replace(/-/g, '+').replace(/_/g, '/');
+  const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+  const mime = mimeType || 'application/octet-stream';
+  return `data:${mime};base64,${b64 + pad}`;
+}
+
+function gmailBillNameTokens(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(t => t.length >= 3 && !/^(the|and|for|inc|llc|ltd|bill|payment)$/.test(t));
+}
+
+function gmailExtractAmounts(text) {
+  const found = [];
+  const re = /(?:USD|JMD|\$|US\$)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/g;
+  let m;
+  const s = String(text || '');
+  while ((m = re.exec(s)) !== null) {
+    const n = parseFloat(m[1].replace(/,/g, ''));
+    if (!isNaN(n) && n > 0) found.push(n);
+  }
+  return found;
+}
+
+function gmailAmountNear(mailAmt, billAmt) {
+  const b = parseFloat(billAmt) || 0;
+  const a = parseFloat(mailAmt) || 0;
+  if (!b || !a) return false;
+  const tol = Math.max(50, 0.05 * b);
+  return Math.abs(a - b) <= tol;
+}
+
+function gmailScoreBillMatch(bill, parsed) {
+  const hay = `${parsed.from} ${parsed.subject} ${parsed.snippet} ${parsed.body}`.toLowerCase();
+  const tokens = gmailBillNameTokens(bill.name);
+  const nameHit = tokens.length
+    ? tokens.some(t => hay.includes(t)) || hay.includes(String(bill.name || '').toLowerCase())
+    : hay.includes(String(bill.name || '').toLowerCase());
+
+  const amounts = gmailExtractAmounts(`${parsed.subject} ${parsed.snippet} ${parsed.body}`);
+  const billAmt = parseFloat(bill.amount) || 0;
+  const amountHit = amounts.some(a => gmailAmountNear(a, billAmt));
+  const matchedAmount = amounts.find(a => gmailAmountNear(a, billAmt));
+
+  let dateHit = false;
+  const msgDate = parsed.internalDate || (parsed.date ? new Date(parsed.date) : null);
+  const now = Date.now();
+  if (msgDate && !isNaN(msgDate.getTime())) {
+    const ageDays = (now - msgDate.getTime()) / 86400000;
+    if (ageDays >= 0 && ageDays <= 30) dateHit = true;
+    try {
+      const { dueDate } = billCurrentCycle(bill);
+      if (dueDate && Math.abs((msgDate - dueDate) / 86400000) <= 14) dateHit = true;
+    } catch (e) {}
+  }
+
+  let score = 0;
+  if (nameHit) score += 2;
+  if (amountHit) score += 2;
+  if (dateHit) score += 1;
+  if (!nameHit && !amountHit) return null;
+  const confidence = (nameHit && amountHit) ? 'high' : 'medium';
+  return {
+    score,
+    confidence,
+    nameHit,
+    amountHit,
+    dateHit,
+    matchedAmount: matchedAmount != null ? matchedAmount : billAmt,
+  };
+}
+
+function pendingGmailScanCount() {
+  return pendingExpenseInbox().filter(r => r.source === 'gmail-scan' || r.bucket === 'bill-pay').length;
+}
+
+function updateGmailScanBadge() {
+  try {
+    const n = pendingGmailScanCount();
+    const btn = document.getElementById('btn-expenses');
+    if (!btn) return;
+    let badge = document.getElementById('gmail-scan-badge');
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.id = 'gmail-scan-badge';
+      badge.style.cssText = 'position:absolute;top:2px;right:2px;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:#d0241b;color:#fff;font-size:9px;font-weight:700;line-height:14px;text-align:center;display:none;';
+      if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
+      btn.appendChild(badge);
+    }
+    if (n > 0) {
+      badge.textContent = String(n);
+      badge.style.display = 'inline-block';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {}
+}
+
+async function scanGmailForBillPayments() {
+  if (!gmailTokenValid()) {
+    showToast('Sign in with Google first (Connections)', 'info');
+    return 0;
+  }
+  const bills = loadBills().filter(b => billHasActiveAmount(b) && !b.paid);
+  if (!bills.length) {
+    showToast('No unpaid bills with an amount to match', 'info');
+    return 0;
+  }
+
+  showToast('Scanning Gmail for payment receipts…', 'info');
+
+  const keywords = '(receipt OR invoice OR payment OR paid OR confirmation OR statement)';
+  const allTokens = [];
+  bills.forEach(b => gmailBillNameTokens(b.name).forEach(t => {
+    if (!allTokens.includes(t)) allTokens.push(t);
+  }));
+
+  // Prefer few searches: broad keyword + optional name-token OR clause (keep under Gmail limits)
+  let q = `newer_than:45d ${keywords}`;
+  if (allTokens.length) {
+    const tokenOr = allTokens.slice(0, 12).map(t => (t.includes(' ') ? `"${t}"` : t)).join(' OR ');
+    const combined = `newer_than:45d ${keywords} (${tokenOr})`;
+    if (combined.length < 1800) q = combined;
+  }
+
+  let messageRefs = [];
+  try {
+    messageRefs = await gmailListMessages(q, 40);
+  } catch (err) {
+    console.warn('[GmailScan] list failed:', err);
+    showToast(err.message || 'Gmail search failed', 'error');
+    return 0;
+  }
+
+  // If thin results, also try keyword-only
+  if (messageRefs.length < 5) {
+    try {
+      const extra = await gmailListMessages(`newer_than:45d ${keywords}`, 40);
+      const seen = new Set(messageRefs.map(m => m.id));
+      extra.forEach(m => { if (!seen.has(m.id)) messageRefs.push(m); });
+    } catch (e) {}
+  }
+
+  const inbox = loadExpenseInbox();
+  const already = new Set(
+    inbox
+      .filter(r => r.messageId && r.billId && (r.status === 'pending' || r.status === 'accepted'))
+      .map(r => `${r.messageId}::${r.billId}`)
+  );
+
+  let found = 0;
+  const parsedCache = new Map();
+
+  for (const ref of messageRefs.slice(0, 40)) {
+    let parsed;
+    try {
+      if (parsedCache.has(ref.id)) {
+        parsed = parsedCache.get(ref.id);
+      } else {
+        const full = await gmailGetMessage(ref.id);
+        parsed = gmailParseMessage(full);
+        parsedCache.set(ref.id, parsed);
+      }
+    } catch (e) {
+      console.warn('[GmailScan] get message failed', ref.id, e);
+      continue;
+    }
+
+    let best = null;
+    for (const bill of bills) {
+      const scored = gmailScoreBillMatch(bill, parsed);
+      if (!scored) continue;
+      if (!best || scored.score > best.scored.score) {
+        best = { bill, scored };
+      }
+    }
+    if (!best || best.scored.score < 2) continue;
+
+    const key = `${parsed.id}::${best.bill.id}`;
+    if (already.has(key)) continue;
+    already.add(key);
+
+    const isoDate = (parsed.internalDate && !isNaN(parsed.internalDate.getTime()))
+      ? parsed.internalDate.toISOString().slice(0, 10)
+      : (parsed.date ? (() => { const d = new Date(parsed.date); return isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10); })() : new Date().toISOString().slice(0, 10));
+
+    addExpenseInboxItem({
+      source: 'gmail-scan',
+      bucket: 'bill-pay',
+      billId: best.bill.id,
+      billName: best.bill.name,
+      messageId: parsed.id,
+      threadId: parsed.threadId || '',
+      gmailSubject: parsed.subject,
+      gmailFrom: parsed.from,
+      gmailDate: isoDate,
+      amount: best.scored.matchedAmount,
+      description: parsed.subject || `Payment: ${best.bill.name}`,
+      vendor: parsed.from,
+      date: isoDate,
+      confidence: best.scored.confidence,
+      attachments: (parsed.attachments || []).map(a => ({
+        filename: a.filename,
+        mimeType: a.mimeType,
+        attachmentId: a.attachmentId,
+        size: a.size,
+      })),
+    });
+    found++;
+  }
+
+  updateGmailScanBadge();
+  if (found) {
+    showToast(`✓ Found ${found} payment match${found === 1 ? '' : 'es'} — confirm in Expense Inbox`, 'success');
+    const overlay = document.getElementById('expense-inbox-overlay');
+    if (overlay) {
+      // UI already open; caller refresh handles redraw
+    }
+  } else {
+    showToast('No new payment matches found in recent mail', 'info');
+  }
+  return found;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ── Expense Inbox (v1) ────────────────────────────────────────────────────
 // Pending classify → confirm → write. No silent auto-post. No Ledger outflows.
 const EXPENSE_INBOX_KEY = 'invoice-expense-inbox';
@@ -6099,16 +6469,27 @@ function addExpenseInboxItem( partial ) {
     date: (partial.date || new Date().toISOString().slice(0, 10)),
     description: (partial.description || partial.desc || '').trim(),
     vendor: (partial.vendor || '').trim(),
-    bucket: partial.bucket || '', // 'client' | 'project' | 'bill' | ''
+    bucket: partial.bucket || '', // 'client' | 'project' | 'bill' | 'bill-pay' | ''
     client: (partial.client || '').trim(),
     receipt: (partial.receipt || '').trim(),
     status: 'pending',
     source: partial.source || 'manual',
     createdAt: new Date().toISOString(),
   };
+  // Gmail bill-pay scan extras (metadata only until Accept)
+  if (partial.billId) item.billId = String(partial.billId);
+  if (partial.billName) item.billName = String(partial.billName);
+  if (partial.messageId) item.messageId = String(partial.messageId);
+  if (partial.threadId) item.threadId = String(partial.threadId);
+  if (partial.gmailSubject) item.gmailSubject = String(partial.gmailSubject);
+  if (partial.gmailFrom) item.gmailFrom = String(partial.gmailFrom);
+  if (partial.gmailDate) item.gmailDate = String(partial.gmailDate);
+  if (partial.confidence) item.confidence = String(partial.confidence);
+  if (partial.attachments) item.attachments = partial.attachments;
   const list = loadExpenseInbox();
   list.unshift(item);
   saveExpenseInbox(list);
+  updateGmailScanBadge();
   return item;
 }
 function updateExpenseInboxItem(id, patch) {
@@ -6121,15 +6502,65 @@ function updateExpenseInboxItem(id, patch) {
 }
 function skipExpenseInboxItem(id) {
   updateExpenseInboxItem(id, { status: 'skipped' });
+  updateGmailScanBadge();
   showToast('Skipped inbox item', 'info');
 }
-function acceptExpenseInboxItem(id) {
+async function acceptExpenseInboxItem(id) {
   const list = loadExpenseInbox();
   const item = list.find(r => r.id === id);
   if (!item || item.status !== 'pending') return;
   const bucket = item.bucket || 'project';
   const desc = item.description || item.vendor || 'Expense';
   const amount = parseFloat(item.amount) || 0;
+
+  // ── Gmail scan → mark bill paid + attach receipt (explicit Accept only) ──
+  if (bucket === 'bill-pay') {
+    const billId = item.billId;
+    const bill = loadBills().find(b => String(b.id) === String(billId));
+    if (!bill) {
+      showToast('Bill not found for this match', 'error');
+      return;
+    }
+    if (!gmailTokenValid()) {
+      showToast('Sign in with Google to attach receipt and mark paid', 'error');
+      return;
+    }
+    let docSnapshot = null;
+    const atts = Array.isArray(item.attachments) ? item.attachments : [];
+    const suitable = atts.find(a => {
+      const name = (a.filename || '').toLowerCase();
+      const mime = (a.mimeType || '').toLowerCase();
+      return /\.(pdf|png|jpe?g|webp)$/i.test(name)
+        || /pdf|png|jpe?g|webp/.test(mime);
+    });
+    if (suitable && item.messageId && suitable.attachmentId) {
+      try {
+        showToast('Downloading receipt from Gmail…', 'info');
+        const dataUrl = await gmailGetAttachment(item.messageId, suitable.attachmentId, suitable.mimeType);
+        docSnapshot = { dataUrl, name: suitable.filename || 'receipt.pdf' };
+      } catch (err) {
+        console.warn('[GmailScan] attachment download failed:', err);
+        showToast('Could not download attachment — marking paid without file', 'info');
+      }
+    }
+    const payAmt = amount || parseFloat(bill.amount) || 0;
+    const payDate = (item.gmailDate || item.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const result = await commitBillPaid(billId, {
+      amount: payAmt,
+      date: payDate,
+      docSnapshot,
+      toastDrive: !!docSnapshot,
+    });
+    if (!result.success) {
+      showToast(result.error || 'Could not mark bill paid', 'error');
+      return;
+    }
+    updateExpenseInboxItem(id, { status: 'accepted', bucket });
+    updateGmailScanBadge();
+    showToast(`✓ Marked paid: ${bill.name}`, 'success');
+    return;
+  }
+
   if (!amount) { showToast('Amount required', 'error'); return; }
 
   if (bucket === 'client') {
@@ -6176,6 +6607,7 @@ function acceptExpenseInboxItem(id) {
     showToast('✓ Project cost logged from inbox', 'success');
   }
   updateExpenseInboxItem(id, { status: 'accepted', bucket });
+  updateGmailScanBadge();
 }
 
 /** Heuristic CSV / bank-export parse → pending inbox rows only. */
@@ -6334,6 +6766,16 @@ function openExpenseInboxUI(opts = {}) {
   };
   importRow.append(fileLbl, pasteBtn);
 
+  const scanBtn = document.createElement('button');
+  scanBtn.textContent = 'Scan mail for payments';
+  scanBtn.title = 'Match Gmail receipts/invoices to unpaid recurring bills (confirm before mark paid)';
+  scanBtn.style.cssText = 'padding:8px 12px;border:1.5px solid #2a8c55;border-radius:6px;background:#f0f7f3;color:#1a5c38;font-size:11px;cursor:pointer;font-family:Roboto,sans-serif;font-weight:600;';
+  scanBtn.onclick = async () => {
+    scanBtn.disabled = true;
+    try { await scanGmailForBillPayments(); } finally { scanBtn.disabled = false; refresh(); }
+  };
+  importRow.appendChild(scanBtn);
+
   // Quick add (unassigned → inbox)
   const quick = document.createElement('div');
   quick.style.cssText = 'border:1px solid #eee;border-radius:8px;padding:10px;margin-bottom:12px;background:#fafafa;';
@@ -6387,43 +6829,71 @@ function openExpenseInboxUI(opts = {}) {
     pending.forEach(item => {
       const row = document.createElement('div');
       row.style.cssText = 'border:1px solid #eee;border-radius:8px;padding:10px;margin-bottom:8px;';
+      const isBillPay = item.bucket === 'bill-pay' || item.source === 'gmail-scan';
+      let matchInfo = null;
       const head = document.createElement('div');
       head.style.cssText = 'display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:600;';
-      head.innerHTML = `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.description || item.vendor || 'Expense'}</span><span style="flex-shrink:0;">${item.amount}</span>`;
+      const titleTxt = isBillPay
+        ? (item.billName || item.description || 'Bill payment match')
+        : (item.description || item.vendor || 'Expense');
+      head.innerHTML = `<span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(titleTxt)}</span><span style="flex-shrink:0;">${escapeHtml(item.amount)}</span>`;
       const meta = document.createElement('div');
       meta.style.cssText = 'font-size:10px;color:#9aa2ac;margin:4px 0 8px;';
-      meta.textContent = [item.date, item.vendor && item.vendor !== item.description ? item.vendor : '', item.source].filter(Boolean).join(' · ');
+      if (isBillPay) {
+        const conf = item.confidence ? ` · ${item.confidence}` : '';
+        const subj = item.gmailSubject ? ` · ${item.gmailSubject}` : '';
+        meta.textContent = [`Gmail match${conf}`, item.gmailFrom, item.gmailDate && String(item.gmailDate).slice(0, 10)].filter(Boolean).join(' · ') + subj;
+      } else {
+        meta.textContent = [item.date, item.vendor && item.vendor !== item.description ? item.vendor : '', item.source].filter(Boolean).join(' · ');
+      }
 
-      const bucketSel = document.createElement('select');
-      bucketSel.style.cssText = 'width:100%;font-size:11px;padding:5px 6px;border:1.5px solid #ddd;border-radius:6px;margin-bottom:6px;background:#fff;font-family:Roboto,sans-serif;';
-      [['', 'Bucket…'], ['project', 'Project cost (absorbed)'], ['client', 'Client rebill expense'], ['bill', 'Bill (overhead)']].forEach(([v, t]) => {
-        const o = document.createElement('option');
-        o.value = v; o.textContent = t;
-        if ((item.bucket || '') === v) o.selected = true;
-        bucketSel.appendChild(o);
-      });
-      bucketSel.onchange = () => updateExpenseInboxItem(item.id, { bucket: bucketSel.value });
+      let bucketSel = null;
+      let clientInp = null;
+      if (!isBillPay) {
+        bucketSel = document.createElement('select');
+        bucketSel.style.cssText = 'width:100%;font-size:11px;padding:5px 6px;border:1.5px solid #ddd;border-radius:6px;margin-bottom:6px;background:#fff;font-family:Roboto,sans-serif;';
+        [['', 'Bucket…'], ['project', 'Project cost (absorbed)'], ['client', 'Client rebill expense'], ['bill', 'Bill (overhead)']].forEach(([v, t]) => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = t;
+          if ((item.bucket || '') === v) o.selected = true;
+          bucketSel.appendChild(o);
+        });
+        bucketSel.onchange = () => updateExpenseInboxItem(item.id, { bucket: bucketSel.value });
 
-      const clientInp = document.createElement('input');
-      clientInp.placeholder = 'Client (required for rebill)';
-      clientInp.value = item.client || '';
-      clientInp.style.cssText = 'width:100%;box-sizing:border-box;padding:5px 6px;border:1.5px solid #ddd;border-radius:6px;font-size:11px;margin-bottom:6px;font-family:Roboto,sans-serif;';
-      clientInp.onchange = () => updateExpenseInboxItem(item.id, { client: clientInp.value.trim() });
+        clientInp = document.createElement('input');
+        clientInp.placeholder = 'Client (required for rebill)';
+        clientInp.value = item.client || '';
+        clientInp.style.cssText = 'width:100%;box-sizing:border-box;padding:5px 6px;border:1.5px solid #ddd;border-radius:6px;font-size:11px;margin-bottom:6px;font-family:Roboto,sans-serif;';
+        clientInp.onchange = () => updateExpenseInboxItem(item.id, { client: clientInp.value.trim() });
+      } else {
+        matchInfo = document.createElement('div');
+        matchInfo.style.cssText = 'font-size:10px;color:#6c7682;background:#f0f7f3;border-radius:6px;padding:6px 8px;margin-bottom:6px;';
+        const attCount = Array.isArray(item.attachments) ? item.attachments.length : 0;
+        matchInfo.textContent = `Bill: ${item.billName || '—'} · Attachments: ${attCount} · Accept marks paid + uploads receipt to Drive Bills/`;
+      }
 
       const actions = document.createElement('div');
       actions.style.cssText = 'display:flex;gap:6px;';
       const accept = document.createElement('button');
-      accept.textContent = 'Accept';
+      accept.textContent = isBillPay ? 'Mark paid + attach' : 'Accept';
       accept.style.cssText = 'flex:1;padding:7px;background:#2a8c55;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;font-family:Roboto,sans-serif;';
-      accept.onclick = () => {
-        const latest = loadExpenseInbox().find(r => r.id === item.id);
-        if (latest) {
-          latest.bucket = bucketSel.value || latest.bucket || 'project';
-          latest.client = clientInp.value.trim() || latest.client;
-          updateExpenseInboxItem(item.id, { bucket: latest.bucket, client: latest.client });
+      accept.onclick = async () => {
+        if (!isBillPay && bucketSel && clientInp) {
+          const latest = loadExpenseInbox().find(r => r.id === item.id);
+          if (latest) {
+            latest.bucket = bucketSel.value || latest.bucket || 'project';
+            latest.client = clientInp.value.trim() || latest.client;
+            updateExpenseInboxItem(item.id, { bucket: latest.bucket, client: latest.client });
+          }
         }
-        acceptExpenseInboxItem(item.id);
-        refresh();
+        accept.disabled = true;
+        try {
+          await acceptExpenseInboxItem(item.id);
+        } finally {
+          accept.disabled = false;
+          refresh();
+          updateGmailScanBadge();
+        }
       };
       const skip = document.createElement('button');
       skip.textContent = 'Skip';
@@ -6431,7 +6901,11 @@ function openExpenseInboxUI(opts = {}) {
       skip.onclick = () => { skipExpenseInboxItem(item.id); refresh(); };
       actions.append(accept, skip);
 
-      row.append(head, meta, bucketSel, clientInp, actions);
+      row.append(head, meta);
+      if (typeof matchInfo !== 'undefined' && matchInfo) row.append(matchInfo);
+      if (bucketSel) row.append(bucketSel);
+      if (clientInp) row.append(clientInp);
+      row.append(actions);
       listEl.appendChild(row);
     });
   }
@@ -6465,6 +6939,7 @@ function openExpenseInboxUI(opts = {}) {
 function openExpenseLogger() {
   // v1: always open inbox (CSV + pending). Classic rebill logger available when a real client is set.
   openExpenseInboxUI({ focusQuick: true });
+  updateGmailScanBadge();
 }
 
 function openExpenseLoggerClassic() {
@@ -6817,7 +7292,7 @@ function toggleClientBook() {
 // Application type: Web application. Add your file:// or localhost origin.
 let GMAIL_CLIENT_ID = localStorage.getItem('gmail-client-id') || '622970529535-p38faf23t1pn0nhrhktam3c8gcf4r303.apps.googleusercontent.com';
 
-const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly';
+const GMAIL_SCOPE = 'https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/gmail.readonly';
 
 // ── Invoice Templates ────────────────────────────────────────
 
@@ -10029,6 +10504,7 @@ if (restoreTokenFromStorage()) {
   updateEmailBtn();
   setupDrive();
 }
+try { updateGmailScanBadge(); } catch (e) {}
 
 window.addEventListener('beforeunload', (e) => {
   if (document.body.classList.contains('editing')) {
