@@ -4807,15 +4807,20 @@ function billCurrentCycle(bill) {
   return { dueDate, cycleStart, cycleEnd };
 }
 
-// Active bill = positive amount still owed this cycle. Zero-amount rows are ghosts
-// (paid leftovers / bad sheet merges) and must never show as overdue.
+// Positive amount still owed this cycle.
 function billHasActiveAmount(bill) {
   return (parseFloat(bill && bill.amount) || 0) > 0;
 }
-
+// Settled for ledger/history: marked paid, or zero amount with prior paidTotal/history.
+function billIsSettledHistory(bill) {
+  if (bill.paid) return true;
+  const paidTotal = parseFloat(bill.paidTotal) || 0;
+  const hist = Array.isArray(bill.history) ? bill.history.length : 0;
+  return !billHasActiveAmount(bill) && (paidTotal > 0 || hist > 0);
+}
 function billStatus(bill) {
   if (bill.paid) return 'paid';
-  if (!billHasActiveAmount(bill)) return 'idle';
+  if (!billHasActiveAmount(bill)) return billIsSettledHistory(bill) ? 'paid' : 'idle';
   const { dueDate } = billCurrentCycle(bill);
   const now = new Date();
   const diff = Math.ceil((dueDate - now) / 86400000);
@@ -4831,7 +4836,7 @@ function allocateToBills(incomeUSD) {
   bills.forEach(b => {
     if (!billHasActiveAmount(b) || b.paid) return;
     const pct = parseFloat(b.allocationPct) || 0;
-    if (!pct) return;
+    if (!pct || pct <= 0 || pct > 100) return;
     const contribution = incomeUSD * (pct / 100);
     b.funded = String(Math.round(((parseFloat(b.funded) || 0) + contribution) * 100) / 100);
     changed = true;
@@ -4907,11 +4912,15 @@ function billToSheetRow(bill) {
 }
 
 function billFromSheetRow(r) {
+  let allocPct = parseFloat(r[6]);
+  if (isNaN(allocPct) || allocPct < 0 || allocPct > 100) allocPct = 0;
+  const paidRaw = r[8];
+  const paid = paidRaw === true || paidRaw === '1' || String(paidRaw).toLowerCase() === 'true';
   return {
     id: r[0], name: r[1] || '', amount: r[2] || '0',
     recurrence: r[3] || 'monthly', customDays: r[4] || '',
-    dueDay: r[5] || '1', allocationPct: r[6] || '0',
-    funded: r[7] || '0', paid: r[8] === '1',
+    dueDay: r[5] || '1', allocationPct: String(allocPct),
+    funded: r[7] || '0', paid,
     history: (() => { try { return JSON.parse(r[9] || '[]'); } catch(e) { return []; } })(),
     paidTotal: r[10] || '0',
     recipient: r[11] || '',
@@ -5058,28 +5067,26 @@ async function saveBillModal() {
 
   if (!name)   { errEl.textContent = 'Name is required.'; return; }
   const amountNum = parseFloat(amount);
-  if (!amount || isNaN(amountNum) || amountNum <= 0) {
-    errEl.textContent = 'Amount must be greater than zero.';
-    return;
-  }
+  if (!amount || isNaN(amountNum) || amountNum <= 0) { errEl.textContent = 'Amount must be greater than zero.'; return; }
   let allocNum = parseFloat(alloc);
   if (alloc && (isNaN(allocNum) || allocNum < 0 || allocNum > 100)) {
     errEl.textContent = 'Allocation must be between 0 and 100.';
     return;
   }
-  const amountStr = String(amountNum);
-  const allocStr = alloc ? String(Math.min(100, Math.max(0, allocNum))) : '0';
+  if (!alloc || isNaN(allocNum)) allocNum = 0;
+  allocNum = Math.max(0, Math.min(100, allocNum));
+  const allocStr = String(allocNum);
 
   const bills = loadBills();
   if (_editingBillId) {
     const idx = bills.findIndex(b => b.id === _editingBillId);
     if (idx !== -1) {
-      bills[idx] = { ...bills[idx], name, amount: amountStr, recurrence, dueDay, customDays,
+      bills[idx] = { ...bills[idx], name, amount, recurrence, dueDay, customDays,
         allocationPct: allocStr, recipient };
       saveBills(bills);
     }
   } else {
-    bills.push({ id: String(Date.now()), name, amount: amountStr, recurrence, dueDay, customDays,
+    bills.push({ id: String(Date.now()), name, amount, recurrence, dueDay, customDays,
       allocationPct: allocStr, recipient, funded: '0', paid: false,
       cycleStart: new Date().toISOString().slice(0, 10), history: [] });
     saveBills(bills);
@@ -5720,64 +5727,47 @@ function renderBillsList() {
 
   const fmt = n => formatCurrencyNative(Math.round(n), window.currentDashCurrency || 'JMD', 0);
   const bills = loadBills();
-  if (!bills.length) {
-    const empty = document.createElement('p');
-    empty.className = 'bills-empty';
-    empty.textContent = 'No bills yet. Add one to start tracking.';
-    el.appendChild(empty);
-    return;
+
+  const active = bills.filter(b => billHasActiveAmount(b) && !b.paid);
+  const historyOnly = bills.filter(b => !active.includes(b) && (b.paid || billIsSettledHistory(b) || billStatus(b) === 'paid' || (!billHasActiveAmount(b) && (parseFloat(b.paidTotal)||0) > 0)));
+
+  function sortBills(list) {
+    return [...list].sort((a, b) => {
+      const sa = billStatus(a), sb = billStatus(b);
+      const order = { overdue: 0, due: 1, upcoming: 2, paid: 3, idle: 4 };
+      if ((order[sa] ?? 9) !== (order[sb] ?? 9)) return (order[sa] ?? 9) - (order[sb] ?? 9);
+      const { dueDate: da } = billCurrentCycle(a);
+      const { dueDate: db } = billCurrentCycle(b);
+      return da - db;
+    });
   }
 
-  // Active bills only in the main list. Zero-amount leftovers are ghosts — hide from
-  // overdue/due chrome (optional collapsed note if any remain in storage).
-  const active = bills.filter(billHasActiveAmount);
-  const ghosts = bills.filter(b => !billHasActiveAmount(b));
-  if (!active.length) {
-    const empty = document.createElement('p');
-    empty.className = 'bills-empty';
-    empty.textContent = ghosts.length
-      ? 'No active bills. Zero-amount leftovers are hidden — delete them from Edit or clear ghosts.'
-      : 'No bills yet. Add one to start tracking.';
-    el.appendChild(empty);
-    if (ghosts.length) {
-      const note = document.createElement('p');
-      note.className = 'bills-empty';
-      note.style.opacity = '0.7';
-      note.textContent = `${ghosts.length} zero-amount leftover(s) hidden (not real balances).`;
-      el.appendChild(note);
-    }
-    return;
-  }
-
-  // Sort: overdue first, then by due date, paid last (idle should not appear in active)
-  const sorted = [...active].sort((a, b) => {
-    const sa = billStatus(a), sb = billStatus(b);
-    const order = { overdue: 0, due: 1, upcoming: 2, paid: 3, idle: 4 };
-    if (order[sa] !== order[sb]) return order[sa] - order[sb];
-    const { dueDate: da } = billCurrentCycle(a);
-    const { dueDate: db } = billCurrentCycle(b);
-    return da - db;
-  });
-
-  sorted.forEach(bill => {
-    const status = billStatus(bill);
+  function appendBillCard(bill, { historyMode = false } = {}) {
+    const status = historyMode ? 'paid' : billStatus(bill);
     const amount = parseFloat(bill.amount) || 0;
     const funded = parseFloat(bill.funded) || 0;
-    const pct    = amount > 0 ? Math.min(100, Math.round((funded / amount) * 100)) : 0;
+    const paidTotal = parseFloat(bill.paidTotal) || 0;
+    const pct = amount > 0 ? Math.min(100, Math.round((funded / amount) * 100)) : 0;
     const allocPct = parseFloat(bill.allocationPct) || 0;
-    const allocTxt = (amount > 0 && allocPct > 0 && allocPct <= 100)
-      ? `<span class="bill-alloc">${allocPct}% allocated</span>`
-      : '';
+    const allocTxt = (!historyMode && amount > 0 && allocPct > 0 && allocPct <= 100)
+      ? `<span class="bill-alloc">${allocPct}% allocated</span>` : '';
     const { dueDate } = billCurrentCycle(bill);
     const daysLeft = Math.ceil((dueDate - new Date()) / 86400000);
-    const dueTxt = status === 'paid' ? 'Paid this cycle'
-      : status === 'overdue' ? `${Math.abs(daysLeft)}d overdue`
-      : daysLeft === 0 ? 'Due today'
-      : daysLeft <= 7 ? `Due in ${daysLeft}d`
-      : `Due ${dueDate.toLocaleDateString('en-US', { month:'short', day:'numeric' })}`;
+    let dueTxt;
+    if (historyMode || status === 'paid') {
+      const last = Array.isArray(bill.history) && bill.history.length ? bill.history[bill.history.length - 1] : null;
+      dueTxt = last && last.date ? `Paid ${last.date}` : (paidTotal > 0 ? `Paid total ${fmt(paidTotal)}` : 'Paid / settled');
+    } else if (status === 'overdue') dueTxt = `${Math.abs(daysLeft)}d overdue`;
+    else if (daysLeft === 0) dueTxt = 'Due today';
+    else if (daysLeft <= 7) dueTxt = `Due in ${daysLeft}d`;
+    else dueTxt = `Due ${dueDate.toLocaleDateString('en-US', { month:'short', day:'numeric' })}`;
+
+    const amountTxt = historyMode
+      ? (paidTotal > 0 ? fmt(paidTotal) : fmt(amount))
+      : fmt(amount);
 
     const card = document.createElement('div');
-    card.className = `bill-card bill-card--${status}`;
+    card.className = `bill-card bill-card--${historyMode ? 'paid' : status}`;
     card.innerHTML = `
       <div class="bill-card-header">
         <div>
@@ -5790,34 +5780,55 @@ function renderBillsList() {
         </div>
       </div>
       <div class="bill-meta">
-        <span class="bill-amount">${fmt(amount)}</span>
-        <span class="bill-due bill-due--${status}">${dueTxt}</span>
+        <span class="bill-amount">${amountTxt}</span>
+        <span class="bill-due bill-due--${historyMode ? 'paid' : status}">${dueTxt}</span>
         ${allocTxt}
       </div>
-      <div class="goal-bar-wrap">
-        <div class="goal-bar-fill bill-bar-fill" style="width:0%"></div>
-      </div>
+      ${historyMode ? '' : `<div class="goal-bar-wrap"><div class="goal-bar-fill bill-bar-fill" style="width:0%"></div></div>`}
       <div class="bill-funded-row">
-        <span class="bill-funded-label">Funded: ${fmt(funded)} of ${fmt(amount)}</span>
-        ${status !== 'paid' ? `<div class="bill-action-btns">
+        <span class="bill-funded-label">${historyMode
+          ? `Lifetime total: ${fmt(paidTotal)}${bill.recipient ? ' · ' + bill.recipient : ''}`
+          : `Funded: ${fmt(funded)} of ${fmt(amount)}`}</span>
+        ${(!historyMode && status !== 'paid') ? `<div class="bill-action-btns">
           <button onclick="openInvoiceBillModal('${bill.id}')" class="goal-btn-edit">Attach Invoice</button>
           <button onclick="markBillPaid('${bill.id}')" class="goal-claim-btn ${pct < 100 ? 'goal-claim-btn--warn' : ''}">
             ${pct >= 100 ? 'Pay & Receipt' : 'Pay Anyway'}
           </button>
           ${(bill.invoiceDocUrl || bill.invoiceDoc) ? `<button onclick="viewBillDoc('${bill.id}', 'invoice')" class="bill-doc-btn">📎 Invoice</button>` : ''}
         </div>` : `<div class="bill-action-btns">
-          <span class="goal-claimed-label">✓ Paid</span>
+          <span class="goal-claimed-label">✓ ${historyMode ? 'History' : 'Paid'}</span>
           ${(bill.receiptDocUrl || bill.receiptDoc) ? `<button onclick="viewBillDoc('${bill.id}', 'receipt')" class="bill-doc-btn">📎 Receipt</button>` : ''}
           ${(bill.invoiceDocUrl || bill.invoiceDoc) ? `<button onclick="viewBillDoc('${bill.id}', 'invoice')" class="bill-doc-btn">📎 Invoice</button>` : ''}
         </div>`}
       </div>`;
     el.appendChild(card);
-    // Animate bar
-    requestAnimationFrame(() => {
-      const fill = card.querySelector('.bill-bar-fill');
-      if (fill) fill.style.width = pct + '%';
-    });
-  });
+    if (!historyMode) {
+      requestAnimationFrame(() => {
+        const fill = card.querySelector('.bill-bar-fill');
+        if (fill) fill.style.width = pct + '%';
+      });
+    }
+  }
+
+  const activeSorted = sortBills(active);
+  activeSorted.forEach(b => appendBillCard(b, { historyMode: false }));
+
+  if (historyOnly.length) {
+    const hdr = document.createElement('p');
+    hdr.className = 'bills-empty';
+    hdr.style.marginTop = '16px';
+    hdr.style.fontWeight = '600';
+    hdr.textContent = 'Paid / history (ledger)';
+    el.appendChild(hdr);
+    sortBills(historyOnly).forEach(b => appendBillCard(b, { historyMode: true }));
+  }
+
+  if (!activeSorted.length && !historyOnly.length) {
+    const empty = document.createElement('p');
+    empty.className = 'bills-empty';
+    empty.textContent = 'No bills yet. Add one to start tracking.';
+    el.appendChild(empty);
+  }
 }
 
 const SYNCED_SETTINGS_KEYS = [
@@ -7630,7 +7641,7 @@ async function driveRequest(method, path, body, isUpload, isRetry = false) {
     headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined
   });
-  if ((res.status === 401 || res.status === 403) && !isRetry) {
+  if (res.status === 401 && !isRetry) {
     console.warn('Drive API auth error, attempting silent token refresh...');
     await new Promise((resolve) => {
       try {
@@ -7640,6 +7651,17 @@ async function driveRequest(method, path, body, isUpload, isRetry = false) {
       setTimeout(resolve, 3000);
     });
     return driveRequest(method, path, body, isUpload, true);
+  }
+  if (res.status === 403) {
+    let errBody = null;
+    try { errBody = await res.json(); } catch (e) {}
+    const reasons = ((errBody && errBody.error && errBody.error.errors) || []).map(e => e.reason || '').join(' ');
+    const msg = ((errBody && errBody.error && errBody.error.message) || '') + ' ' + reasons;
+    const lower = msg.toLowerCase();
+    if (lower.includes('storagequotaexceeded') || lower.includes('storage quota') || (lower.includes('quota') && lower.includes('storage')) || lower.includes('storagequota')) {
+      throw new Error('Google Drive storage is full — free space or upgrade, then retry.');
+    }
+    throw new Error((errBody && errBody.error && errBody.error.message) || 'Drive API forbidden (403)');
   }
   return res.json();
 }
@@ -7658,7 +7680,7 @@ async function sheetsRequest(method, path, body, isRetry = false) {
       body: body ? JSON.stringify(body) : undefined
     });
 
-    if ((res.status === 401 || res.status === 403) && !isRetry) {
+    if (res.status === 401 && !isRetry) {
       console.warn('Sheets API auth error, attempting silent token refresh...');
       return new Promise((resolve) => {
         try {
@@ -7671,6 +7693,20 @@ async function sheetsRequest(method, path, body, isRetry = false) {
           resolve({ error: { message: e.message } });
         }
       });
+    }
+
+    if (res.status === 403) {
+      let errBody = null;
+      try { errBody = await res.json(); } catch (e) {}
+      const msg = (errBody && errBody.error && errBody.error.message) || 'Sheets API forbidden (403)';
+      const lower = String(msg).toLowerCase();
+      const reasons = ((errBody && errBody.error && errBody.error.errors) || []).map(e => e.reason || '').join(' ');
+      const blob = (lower + ' ' + reasons).toLowerCase();
+      if (blob.includes('storagequotaexceeded') || blob.includes('storage quota') || (blob.includes('quota') && blob.includes('storage'))) {
+        return { error: { message: 'Google Drive storage is full — free space or upgrade, then retry.' } };
+      }
+      console.error('Sheets API Error:', msg);
+      return { error: errBody && errBody.error ? errBody.error : { message: msg } };
     }
 
     const data = await res.json();
@@ -7948,7 +7984,16 @@ async function setupDrive() {
     renderDashboard();
   } catch (e) {
     console.error('[Drive] Setup failed:', e);
-    if (statusEl) { statusEl.textContent = '✗ Drive setup failed. Check permissions.'; statusEl.style.color = '#d0241b'; }
+    const msg = (e && e.message) ? String(e.message) : 'Drive setup failed';
+    const lower = msg.toLowerCase();
+    const isQuota = lower.includes('storage') || lower.includes('quota');
+    if (typeof showToast === 'function') {
+      showToast(isQuota ? msg : ('Drive setup failed: ' + msg), isQuota ? 'error' : 'error');
+    }
+    if (statusEl) {
+      statusEl.textContent = isQuota ? ('✗ ' + msg) : '✗ Drive setup failed. Check permissions.';
+      statusEl.style.color = '#d0241b';
+    }
   }
 }
 
