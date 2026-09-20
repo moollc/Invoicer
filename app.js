@@ -1817,6 +1817,19 @@ function loadLedgerRows() {
         healed = true;
       }
     }
+    // Reclassify LFMC / budget / quotation rows that were saved as Unpaid invoices.
+    if (r.status !== '📋 Quote' && typeof isQuoteLedgerRow === 'function' && isQuoteLedgerRow(r)) {
+      r.status = '📋 Quote';
+      r.docType = 'quote';
+      healed = true;
+    } else {
+      const blob = `${r.client || ''} ${r.service || ''} ${r.description || ''} ${r.receipt || ''}`.toLowerCase();
+      if (r.status !== '📋 Quote' && (/\blfmcs?\b/.test(blob) || /budget draft|quotation|\bquote\b/.test(blob))) {
+        r.status = '📋 Quote';
+        r.docType = 'quote';
+        healed = true;
+      }
+    }
   }
   if (healed) { try { localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows)); } catch(e) {} }
   return rows;
