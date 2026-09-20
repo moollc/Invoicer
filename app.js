@@ -6342,24 +6342,40 @@ function gmailIsQuoteOrBudgetMail(parsed) {
 }
 
 
+function gmailAmountNear(mailAmt, billAmt) {
+  const b = parseFloat(billAmt) || 0;
+  const a = parseFloat(mailAmt) || 0;
+  if (!b || !a) return false;
+  // Small bills (GitHub $4 etc.): old Math.max(50,…) made every tiny amount “near” huge JMD bills
+  // and blocked $4↔$4 only when paired wrong. Scale tolerance to the bill size.
+  const tol = b <= 25 ? Math.max(0.5, 0.15 * b) : Math.max(5, 0.05 * b);
+  if (Math.abs(a - b) <= tol) return true;
+  // USD mail vs JMD bill (or reverse): try ~JMD 155–165 per USD
+  const rates = [150, 155, 160, 165, 170];
+  for (const r of rates) {
+    if (Math.abs(a * r - b) <= Math.max(tol, 0.08 * b)) return true;
+    if (Math.abs(a - b * r) <= Math.max(tol, 0.08 * a)) return true;
+  }
+  return false;
+}
+
+/** Prefer currency-tagged amounts from mail (e.g. "$4.00 USD") so we don't grab random numbers. */
 function gmailExtractAmounts(text) {
   const found = [];
-  const re = /(?:USD|JMD|\$|US\$)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/g;
-  let m;
   const s = String(text || '');
+  const tagged = /(?:USD|US\$|\$)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)|(?:JMD|JA\$)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/gi;
+  let m;
+  while ((m = tagged.exec(s)) !== null) {
+    const n = parseFloat((m[1] || m[2] || '').replace(/,/g, ''));
+    if (!isNaN(n) && n > 0) found.push(n);
+  }
+  if (found.length) return found;
+  const re = /(?:USD|JMD|\$|US\$)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/g;
   while ((m = re.exec(s)) !== null) {
     const n = parseFloat(m[1].replace(/,/g, ''));
     if (!isNaN(n) && n > 0) found.push(n);
   }
   return found;
-}
-
-function gmailAmountNear(mailAmt, billAmt) {
-  const b = parseFloat(billAmt) || 0;
-  const a = parseFloat(mailAmt) || 0;
-  if (!b || !a) return false;
-  const tol = Math.max(50, 0.05 * b);
-  return Math.abs(a - b) <= tol;
 }
 
 function gmailScoreBillMatch(bill, parsed) {
@@ -6374,9 +6390,18 @@ function gmailScoreBillMatch(bill, parsed) {
   const fullNameHit = !!(billName && hay.includes(billName));
   const strongHits = strongTokens.filter(t => hay.includes(t)).length;
   const weakHits = weakTokens.filter(t => hay.includes(t)).length;
-  // Need full name, OR a strong token, OR ALL weak tokens (e.g. equipment+transport together)
+  // Vendor domains (GitHub $4 receipts come from noreply@github.com)
+  const vendorHit = (
+    (billName.includes('github') && /github\.com/.test(hay))
+    || (billName.includes('grok') && /(x\.ai|grok\.com|xai)/.test(hay))
+    || (billName.includes('starlink') && /starlink\.com/.test(hay))
+    || (billName.includes('claude') && /(anthropic|claude\.ai)/.test(hay))
+    || (billName.includes('eleven') && /(elevenlabs|stripe\.com)/.test(hay))
+  );
+  // Need full name, OR a strong token, OR vendor domain, OR ALL weak tokens
   const nameHit = fullNameHit
     || strongHits >= 1
+    || vendorHit
     || (weakTokens.length >= 2 && weakHits === weakTokens.length);
 
   const amounts = gmailExtractAmounts(`${parsed.subject} ${parsed.snippet} ${parsed.body}`);
