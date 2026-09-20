@@ -1781,7 +1781,28 @@ const STATUSES = [
   { value: '💰 Deposit', label: '◑ Deposit'  },
   { value: '📤 Sent',    label: '📤 Sent'    },
   { value: '✅ Paid',    label: '✅ Paid'    },
+  { value: '📋 Quote',   label: '📋 Quote'   },
 ];
+
+/** True when invoice-data is a quote/estimate, not a billable invoice. */
+function isQuoteDocument(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (String(data.docType || '').toLowerCase() === 'quote') return true;
+  const pp = String(data.payPeriod || '').trim();
+  if (/valid\s*\d*\s*days/i.test(pp) || /^valid\b/i.test(pp)) return true;
+  const note = `${data.paymentNote || ''} ${data.invoiceNotes || ''}`;
+  if (/this is a quote|not a final invoice|\bquotation\b/i.test(note)) return true;
+  if (String(data.totalLabelTop || '').trim() === 'Estimate') return true;
+  if (String(data.templateId || data._templateId || '') === 'film-quote') return true;
+  return false;
+}
+
+function isQuoteLedgerRow(row) {
+  if (!row) return false;
+  if (row.status === '📋 Quote') return true;
+  const blob = `${row.service || ''} ${row.description || ''} ${row.payPeriod || ''} ${row.status || ''}`;
+  return /\bquote\b|\bquotation\b|\bbudget draft\b|\bvalid\s+\d+\s+days\b/i.test(blob);
+}
 
 // Ledger lives entirely in localStorage as an array of row objects
 function loadLedgerRows() {
@@ -1803,6 +1824,53 @@ function loadLedgerRows() {
 function saveLedgerRows(rows) {
   localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows));
 }
+
+/** Scan ledger rows for messed-up cells. Returns { ok, issues[] }. */
+function auditLedgerRows(rows) {
+  const list = rows || loadLedgerRows();
+  const issues = [];
+  const seen = new Map();
+  const okStatus = new Set(STATUSES.map(s => s.value));
+  list.forEach((r, i) => {
+    const rec = r.receipt || `(row ${i})`;
+    if (!r.receipt || !String(r.receipt).trim()) issues.push({ receipt: rec, issue: 'missing receipt #' });
+    if (r.receipt) {
+      const k = String(r.receipt).trim();
+      if (seen.has(k)) issues.push({ receipt: rec, issue: `duplicate receipt (also at ${seen.get(k)})` });
+      else seen.set(k, i);
+    }
+    if (r.date && isNaN(new Date(normalizeLedgerDate(r.date)).valueOf()) && isNaN(new Date(r.date).valueOf())) {
+      issues.push({ receipt: rec, issue: `bad date: ${r.date}` });
+    }
+    if (r.status && !okStatus.has(r.status)) issues.push({ receipt: rec, issue: `unknown status: ${r.status}` });
+    for (const k of ['projectTotal', 'amountDue']) {
+      const v = r[k];
+      if (v == null || v === '') continue;
+      const s = String(v);
+      if (s.includes('{') || s.includes('[') || /USDJMDEURGBP/i.test(s)) {
+        issues.push({ receipt: rec, issue: `${k} looks corrupted` });
+      }
+    }
+    if (typeof r.taxRate === 'string' && /https?:|drive\.google/i.test(r.taxRate)) {
+      issues.push({ receipt: rec, issue: 'taxRate looks like a URL (column shift?)' });
+    }
+    if (typeof r.goalAllocations === 'string' && r.goalAllocations.length > 2 && !r.goalAllocations.trim().startsWith('{') && /https?:/.test(r.goalAllocations)) {
+      issues.push({ receipt: rec, issue: 'goalAllocations looks shifted' });
+    }
+  });
+  return { ok: issues.length === 0, issues };
+}
+
+function reportLedgerAudit() {
+  const result = auditLedgerRows();
+  console.log('[LedgerAudit]', result);
+  if (typeof showToast === 'function') {
+    showToast(result.ok ? '✓ Ledger cells look clean' : `Ledger issues: ${result.issues.length} (see console)`, result.ok ? 'success' : 'info');
+  }
+  return result;
+}
+
+
 
 // Full-invoice archive, keyed by receipt number. The ledger only keeps a 7-field
 // summary; this stores the complete invoice object so a past invoice can be
@@ -1900,7 +1968,7 @@ function loadInvoiceIntoEditor(receipt) {
     // render the derived data so date/receiptNumber come from the overrides —
     // rendering the raw object leaves stale spans when a field is undefined
     render(getData());
-    showToast(`Invoice ${receipt} loaded`, 'success');
+    showToast(`${(restored && isQuoteDocument(restored)) ? 'Quote' : 'Invoice'} ${receipt} loaded`, 'success');
     return;
   }
   const row = loadLedgerRows().find(r => r.receipt === receipt);
@@ -1911,11 +1979,12 @@ function loadInvoiceIntoEditor(receipt) {
   if (typeof closeDialog === 'function') closeDialog();
   render(getData());
   const hasDesc = !!(row.description);
+  const kind = (row.status === '📋 Quote' || isQuoteLedgerRow(row)) ? 'Quote' : 'Invoice';
   const msg = (clientMatch && hasDesc)
-    ? `Invoice ${receipt} loaded`
+    ? `${kind} ${receipt} loaded`
     : clientMatch
-      ? `Invoice ${receipt} loaded (summary)`
-      : `Invoice ${receipt} loaded (summary only)`;
+      ? `${kind} ${receipt} loaded (summary)`
+      : `${kind} ${receipt} loaded (summary only)`;
   showToast(msg, 'info');
 }
 
@@ -1927,13 +1996,20 @@ function markReceiptAsSent() {
   const rows = loadLedgerRows();
   const idx = rows.findIndex(r => r.receipt === receipt);
   if (idx >= 0) {
-    if (rows[idx].status !== '✅ Paid') rows[idx].status = '📤 Sent';
+    if (rows[idx].status !== '✅ Paid' && rows[idx].status !== '📋 Quote' && !isQuoteDocument(data)) {
+      rows[idx].status = '📤 Sent';
+    }
+    if (isQuoteDocument(data)) {
+      rows[idx].status = '📋 Quote';
+      rows[idx].docType = 'quote';
+    }
     if (!rows[idx].description) {
       rows[idx].description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
     }
   } else {
     const services = data.lineItems.map(l => l.service).join(', ');
     const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
+    const quoteDoc = isQuoteDocument(data);
     rows.push({
       receipt:      receipt,
       date:         normalizeLedgerDate(data.date),
@@ -1942,7 +2018,9 @@ function markReceiptAsSent() {
       description:  description,
       projectTotal: `${data.currency} ${data.projectTotal}`,
       amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
-      status:       '📤 Sent',
+      status:       quoteDoc ? '📋 Quote' : '📤 Sent',
+      payPeriod:    data.payPeriod || '',
+      docType:      quoteDoc ? 'quote' : 'invoice',
       _dirty:       true,
     });
   }
@@ -1957,6 +2035,7 @@ async function confirmPrint() {
   const data = syncTotalsFromLineItems(getData());
   const services = data.lineItems.map(l => l.service).join(', ');
   const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
+  const quoteDoc = isQuoteDocument(data);
   _pendingRow = {
     receipt:      data.receiptNumber,
     date:         normalizeLedgerDate(data.date),
@@ -1965,7 +2044,9 @@ async function confirmPrint() {
     description:  description,
     projectTotal: `${data.currency} ${data.projectTotal}`,
     amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
-    status:       '⬜ Unpaid',
+    status:       quoteDoc ? '📋 Quote' : '⬜ Unpaid',
+    payPeriod:    data.payPeriod || '',
+    docType:      quoteDoc ? 'quote' : 'invoice',
   };
 
   archiveInvoice(data.receiptNumber, data);
@@ -2384,7 +2465,7 @@ async function renderLedgerHistory() {
   sorted.forEach(({ row, idx: realIdx }) => {
 
     const rowDate = typeof parseRowDate === 'function' ? parseRowDate(row.date) : new Date(row.date);
-    const isOverdue = row.status !== '✅ Paid' && rowDate && !isNaN(rowDate.valueOf()) &&
+    const isOverdue = row.status !== '✅ Paid' && row.status !== '📋 Quote' && !isQuoteLedgerRow(row) && rowDate && !isNaN(rowDate.valueOf()) &&
       (new Date() - rowDate) / (1000 * 60 * 60 * 24) > (parseInt(row.payPeriod) || 30);
 
     const wrap = document.createElement('div');
@@ -7348,6 +7429,7 @@ const TMPL_DIT_JOB = {
 };
 
 const TMPL_FILM_QUOTE = {
+  docType: 'quote',
   receiptOverride: '', dateOverride: '', payPeriod: 'Valid 30 Days', currency: 'USD',
   to: { name: '', address: '', email: '', phone: '' },
   lineItems: [
