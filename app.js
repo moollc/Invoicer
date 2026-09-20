@@ -372,16 +372,26 @@ function getData() {
       raw.projectTotal.startsWith(raw.currency + ' ')) {
     raw.projectTotal = raw.projectTotal.slice(raw.currency.length + 1).trim();
   }
-  if (!document.body.classList.contains('editing')) syncTotalsFromLineItems(raw);
+  if (!document.body.classList.contains('editing')) {
+    try { syncTotalsFromLineItems(raw); }
+    catch (e) { console.warn('[totals] sync skipped:', e.message || e); }
+  }
   return raw;
 }
 
 // Totals sync lives in source/shared/invoice-totals.mjs (loaded via boot/invoice-totals.js).
-function parseMoneyNum(s) { return InvoiceTotals.parseMoneyNum(s); }
-function sumLineItemsTotal(data) { return InvoiceTotals.sumLineItemsTotal(data); }
-function syncTotalsFromLineItems(data) { return InvoiceTotals.syncTotalsFromLineItems(data); }
-function formatTotalAmountDisplay(amount, data) { return InvoiceTotals.formatTotalAmountDisplay(amount, data); }
-function prepareInvoiceForArchive(data) { return InvoiceTotals.prepareInvoiceForArchive(data); }
+// Always go through window — bare InvoiceTotals throws ReferenceError if the module
+// has not assigned yet (or failed to load), which used to abort setupDrive mid-sync.
+function getInvoiceTotals() {
+  const api = (typeof window !== 'undefined' && window.InvoiceTotals) ? window.InvoiceTotals : null;
+  if (!api) throw new Error('InvoiceTotals not loaded — hard refresh (Cmd+Shift+R) or check boot/invoice-totals.js');
+  return api;
+}
+function parseMoneyNum(s) { return getInvoiceTotals().parseMoneyNum(s); }
+function sumLineItemsTotal(data) { return getInvoiceTotals().sumLineItemsTotal(data); }
+function syncTotalsFromLineItems(data) { return getInvoiceTotals().syncTotalsFromLineItems(data); }
+function formatTotalAmountDisplay(amount, data) { return getInvoiceTotals().formatTotalAmountDisplay(amount, data); }
+function prepareInvoiceForArchive(data) { return getInvoiceTotals().prepareInvoiceForArchive(data); }
 
 function get(obj, path) {
   if (!obj) return undefined;
@@ -1712,7 +1722,7 @@ function updateAutoSumHint() {
     const costs = ta.value.split('\n').map(s => s.trim()).filter(Boolean);
     lineItems.push({ costs: costs.length ? costs : ['0'] });
   });
-  const total = InvoiceTotals.sumLineItemsTotal({ lineItems });
+  const total = getInvoiceTotals().sumLineItemsTotal({ lineItems });
   const currencyEl = document.querySelector('[data-field="currency"]');
   // In edit mode this span holds a <select>; read its value, not the concatenated
   // option-list text (which would be "USDJMDEURGBPCADAUDTTD").
@@ -1738,12 +1748,12 @@ function updateAutoSumHint() {
   // payments[] or amountDueOverride reduce the due; otherwise it is the line
   // sum. A nonzero stored due is never guessed to be a deposit.
   const dueData = { ...getData(), lineItems, currency: currencyCode };
-  const due = InvoiceTotals.expectedAmountDue(dueData);
-  const dueStr = InvoiceTotals.formatTotalAmountDisplay(due, dueData);
+  const due = getInvoiceTotals().expectedAmountDue(dueData);
+  const dueStr = getInvoiceTotals().formatTotalAmountDisplay(due, dueData);
   const taEl = document.querySelector('[data-field="totalAmount"]');
   if (taEl && document.body.classList.contains('editing')) {
     // Drift-based, like the save path — don't reformat a due that is already right.
-    if (Math.abs(InvoiceTotals.parseMoneyNum(taEl.textContent) - due) > 0.01) {
+    if (Math.abs(getInvoiceTotals().parseMoneyNum(taEl.textContent) - due) > 0.01) {
       taEl.textContent = dueStr;
       taEl.classList.remove('flash-success');
       void taEl.offsetWidth; // trigger reflow
@@ -8498,14 +8508,21 @@ async function setupDrive() {
     // loadLedgerFromSheet already merges + saves to localStorage internally
 
     seedClientsFromLedger();
-    renderClientChips();
+    try { renderClientChips(); } catch (chipErr) { console.warn('[Drive] renderClientChips:', chipErr); }
     
     if (statusEl) {
       statusEl.innerHTML = '✓ <strong class="text-success">mooInvoicer/</strong> folder ready : Ledger connected';
       statusEl.className = 'text-success';
     }
     refreshSheetsIdStatus();
-    renderDashboard();
+    try {
+      renderDashboard();
+    } catch (dashErr) {
+      console.warn('[Drive] renderDashboard after setup:', dashErr);
+      if (typeof showToast === 'function') {
+        showToast('Drive ready, but dashboard refresh failed: ' + (dashErr.message || dashErr), 'info');
+      }
+    }
   } catch (e) {
     console.error('[Drive] Setup failed:', e);
     const msg = (e && e.message) ? String(e.message) : 'Drive setup failed';

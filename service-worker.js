@@ -1,7 +1,8 @@
-﻿const CACHE = 'app-1789900000'; // __CACHE_VERSION__
+﻿const CACHE = 'app-1789910000'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
+  '/app.js',
   '/manifest.json',
   '/privacy.html',
   '/terms.html',
