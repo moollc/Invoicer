@@ -5562,9 +5562,24 @@ function addProjectCost({ receipt, client, desc, amount, date }) {
   return cost;
 }
 
+async function clearProjectCostRow(id) {
+  if (!_gmailToken || !_sheetsSpreadsheetId || !id) return;
+  try {
+    let existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+    if (existing === null) return;
+    const rowIdx = existing.findIndex(r => r[0] === id);
+    if (rowIdx === -1) return;
+    await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${rowIdx + 2}:F${rowIdx + 2}`, [['', '', '', '', '', '']]);
+  } catch (e) {
+    console.warn('[Costs] clearProjectCostRow failed:', e.message);
+  }
+}
+
 function deleteProjectCost(id) {
   saveProjectCosts(loadProjectCosts().filter(c => c.id !== id));
-  syncProjectCostsToSheet();
+  clearProjectCostRow(id).then(() => {
+    /* sheet row cleared; no full sync blanking */
+  }).catch(() => {});
 }
 
 function projectCostToRow(c) {
@@ -5581,8 +5596,7 @@ function projectCostFromRow(r) {
   };
 }
 
-// Upsert by id (Bills pattern); rows whose id no longer exists locally are
-// blanked so a delete on this device doesn't resurrect on reload here.
+// Upsert by id (Bills pattern). Sheet-only rows are kept — blanking moved to clearProjectCostRow/deleteProjectCost.
 async function syncProjectCostsToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
   const costs = loadProjectCosts();
@@ -5592,7 +5606,6 @@ async function syncProjectCostsToSheet() {
     existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
   }
   if (existing === null) return { success: false, error: 'ProjectCosts tab read failed' };
-  const localIds = new Set(costs.map(c => c.id));
   let failures = 0;
   for (const cost of costs) {
     const newRow = projectCostToRow(cost);
@@ -5607,11 +5620,6 @@ async function syncProjectCostsToSheet() {
     } catch (e) {
       failures++;
       console.warn(`[Costs] Sheet write failed for "${cost.desc}":`, e.message);
-    }
-  }
-  for (let i = 0; i < existing.length; i++) {
-    if (existing[i][0] && !localIds.has(existing[i][0])) {
-      try { await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${i + 2}:F${i + 2}`, [['', '', '', '', '', '']]); } catch (e) {}
     }
   }
   return failures ? { success: false, error: `${failures} cost(s) failed to sync` } : { success: true };
@@ -5827,9 +5835,20 @@ async function generatePaymentReceipt(bill) {
 function tickBillCycles() {
   const bills = loadBills();
   let changed = false;
+  const now = new Date();
   bills.forEach(b => {
+    // Paid + amount still set (e.g. Google Workspace 1592.76): keep in Paid/history
+    // for the calendar month of the last payment — do not clear paid mid-cycle.
+    if (b.paid && (parseFloat(b.amount) || 0) > 0) {
+      const last = Array.isArray(b.history) && b.history.length ? b.history[b.history.length - 1] : null;
+      const anchor = (last && last.date) ? new Date(last.date) : (b.cycleStart ? new Date(b.cycleStart) : null);
+      if (anchor && !isNaN(anchor.getTime())
+          && anchor.getFullYear() === now.getFullYear()
+          && anchor.getMonth() === now.getMonth()) {
+        return;
+      }
+    }
     const { cycleEnd } = billCurrentCycle(b);
-    const now = new Date();
     // If cycle has ended and bill was paid → clean reset
     // If cycle has ended and bill was NOT paid → compound (carry deficit)
     if (now > cycleEnd) {
@@ -6884,6 +6903,68 @@ function importExpensesToInbox(text) {
   return rows.length;
 }
 
+
+function queueBankSeptSortToInbox() {
+  const pending = pendingExpenseInbox();
+  const hasSimilar = (amount, dateHint, re) => pending.some(p => {
+    const amt = Math.abs((parseFloat(p.amount) || 0) - amount) < 0.02;
+    const dateOk = !dateHint || String(p.date || '') === dateHint;
+    const text = `${p.description || ''} ${p.vendor || ''}`;
+    return amt && dateOk && re.test(text);
+  });
+
+  let added = 0;
+  const google = (loadBills() || []).find(b => /google/i.test(b.name || ''));
+  if (!hasSimilar(1592.76, '2026-09-21', /google/i)) {
+    if (google) {
+      addExpenseInboxItem({
+        source: 'bank-sept',
+        bucket: 'bill-pay',
+        billId: google.id,
+        billName: google.name,
+        amount: 1592.76,
+        date: '2026-09-21',
+        description: 'Google*g1sk003m Mountain View',
+        vendor: 'Google',
+        gmailDate: '2026-09-21',
+        confidence: 'high',
+      });
+      added++;
+    } else {
+      console.warn('[bank-sept] No Google bill found in loadBills()');
+      showToast('No Google bill found — add/sync Bills first', 'error');
+    }
+  }
+  if (!hasSimilar(3200.34, '2026-09-07', /openai|chatgpt/i)) {
+    addExpenseInboxItem({
+      source: 'bank-sept',
+      bucket: 'project',
+      amount: 3200.34,
+      date: '2026-09-07',
+      description: 'OpenAI ChatGPT subscription',
+      vendor: 'OpenAI',
+      receipt: '',
+    });
+    added++;
+  }
+  if (!hasSimilar(15198.81, '2026-09-10', /amazon/i)) {
+    addExpenseInboxItem({
+      source: 'bank-sept',
+      bucket: 'project',
+      amount: 15198.81,
+      date: '2026-09-10',
+      description: 'Amazon Marketplace purchase',
+      vendor: 'Amazon',
+      receipt: '',
+    });
+    added++;
+  }
+  if (added) showToast(`✓ Queued ${added} Sept bank-sort item${added > 1 ? 's' : ''} in inbox`, 'success');
+  else showToast('Sept bank-sort items already in inbox', 'info');
+  return added;
+}
+window.queueBankSeptSort = queueBankSeptSortToInbox;
+
 function openExpenseInboxUI(opts = {}) {
   const existing = document.getElementById('expense-inbox-overlay');
   if (existing) existing.remove();
@@ -6932,7 +7013,12 @@ function openExpenseInboxUI(opts = {}) {
     }
     if (text.trim()) { importExpensesToInbox(text); refresh(); }
   };
-  importRow.append(fileLbl, pasteBtn);
+  const bankBtn = document.createElement('button');
+  bankBtn.textContent = 'Load bank sort draft';
+  bankBtn.title = 'Queue Google / OpenAI / Amazon Sept bank items';
+  bankBtn.style.cssText = 'padding:8px 12px;border:1.5px solid #14202e;border-radius:6px;background:#14202e;color:#fff;font-size:11px;cursor:pointer;font-family:Roboto,sans-serif;';
+  bankBtn.onclick = () => { queueBankSeptSortToInbox(); refresh(); refreshAbsorbed(); };
+  importRow.append(fileLbl, pasteBtn, bankBtn);
 
   const scanBtn = document.createElement('button');
   scanBtn.textContent = 'Scan mail for payments';
@@ -7084,6 +7170,46 @@ function openExpenseInboxUI(opts = {}) {
   closeBtn.onclick = () => overlay.remove();
   overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
 
+  // Absorbed / unlinked project costs (blank receipt or BANK-SEP) — visible outside receipt filter
+  const absorbedTitle = document.createElement('div');
+  absorbedTitle.style.cssText = 'font-size:11px;font-weight:700;color:#6c7682;letter-spacing:0.5px;margin:14px 0 6px;';
+  absorbedTitle.textContent = 'ABSORBED COSTS (UNLINKED)';
+  const absorbedEl = document.createElement('div');
+  absorbedEl.id = 'expense-inbox-absorbed';
+
+  function refreshAbsorbed() {
+    const rows = loadProjectCosts().filter(c => !c.receipt || c.receipt === 'BANK-SEP');
+    absorbedEl.innerHTML = '';
+    if (!rows.length) {
+      absorbedEl.innerHTML = '<div style="font-size:11px;color:#9aa2ac;padding:6px 0;">No unlinked project costs. Accept inbox items as project (blank receipt) to land them here.</div>';
+      return;
+    }
+    rows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    rows.forEach(c => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid #eee;border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;';
+      const left = document.createElement('div');
+      left.style.cssText = 'min-width:0;flex:1;';
+      left.innerHTML = `<div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.desc || 'Cost'}</div>`
+        + `<div style="font-size:10px;color:#9aa2ac;margin-top:2px;">${[c.date, c.receipt || '(no receipt)', c.client].filter(Boolean).join(' · ')}</div>`;
+      const amt = document.createElement('span');
+      amt.style.cssText = 'flex-shrink:0;font-weight:600;';
+      amt.textContent = c.amount;
+      const del = document.createElement('button');
+      del.textContent = '✕';
+      del.title = 'Delete cost';
+      del.style.cssText = 'background:none;border:none;color:#9aa2ac;cursor:pointer;font-size:12px;flex-shrink:0;';
+      del.onclick = () => {
+        if (!confirm(`Delete absorbed cost "${c.desc || c.amount}"?`)) return;
+        deleteProjectCost(c.id);
+        refreshAbsorbed();
+        showToast('Cost deleted', 'info');
+      };
+      row.append(left, amt, del);
+      absorbedEl.appendChild(row);
+    });
+  }
+
   // Optional: link to classic client logger when a real client is on the invoice
   const data = getData();
   const clientName = data.to?.name;
@@ -7093,11 +7219,12 @@ function openExpenseInboxUI(opts = {}) {
     link.textContent = `Open classic rebill logger · ${clientName}`;
     link.style.cssText = 'width:100%;padding:8px;background:#f0f4f8;border:1.5px solid #dde3ea;border-radius:6px;font-size:11px;cursor:pointer;margin-bottom:10px;font-family:Roboto,sans-serif;color:#14202e;';
     link.onclick = () => { overlay.remove(); openExpenseLoggerClassic(); };
-    box.append(title, sub, importRow, quick, link, listTitle, listEl, closeBtn);
+    box.append(title, sub, importRow, quick, link, listTitle, listEl, absorbedTitle, absorbedEl, closeBtn);
   } else {
-    box.append(title, sub, importRow, quick, listTitle, listEl, closeBtn);
+    box.append(title, sub, importRow, quick, listTitle, listEl, absorbedTitle, absorbedEl, closeBtn);
   }
 
+  refreshAbsorbed();
   overlay.appendChild(box);
   document.body.appendChild(overlay);
   refresh();

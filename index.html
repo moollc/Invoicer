@@ -736,6 +736,7 @@
         <a href="#" onclick="exportBillsCsv(); return false;" class="address-book-csv-link" title="Export bills as CSV">Export CSV</a>
         <div style="display:flex;gap:8px;align-items:center;">
           <button onclick="scanGmailForBillPayments()" class="sp-btn-secondary" style="font-size:11px;padding:6px 10px;" title="Match Gmail receipts to unpaid bills">Scan mail for payments</button>
+          <button onclick="queueBankSeptSortToInbox()" class="sp-btn-secondary" style="font-size:11px;padding:6px 10px;" title="Queue Google / OpenAI / Amazon from Sept bank sort">Import Sept bank sort</button>
           <button onclick="openBillModal()" class="dash-add-btn">+ Add Bill</button>
         </div>
       </div>
@@ -937,6 +938,7 @@
       </button>
       <div class="sp-hint" style="margin-top:10px;">Scan Gmail for receipts matching unpaid recurring bills. Matches land in Expense Inbox — nothing is marked paid until you confirm.</div>
       <button onclick="scanGmailForBillPayments()" class="sp-btn-secondary sp-btn-full" style="margin-top:6px;">Scan mail for payments</button>
+      <button onclick="queueBankSeptSortToInbox()" class="sp-btn-secondary sp-btn-full" style="margin-top:6px;">Import Sept bank sort</button>
     </div>
 
     <!-- Sheet & Drive card -->
