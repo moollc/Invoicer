@@ -8138,7 +8138,11 @@ async function driveRequest(method, path, body, isUpload, isRetry = false) {
     }
     throw new Error((errBody && errBody.error && errBody.error.message) || 'Drive API forbidden (403)');
   }
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data && data.error && data.error.message) || (`Drive API ${res.status}`));
+  }
+  return data;
 }
 
 async function sheetsRequest(method, path, body, isRetry = false) {
@@ -8215,7 +8219,17 @@ async function sheetsRead(spreadsheetId, range) {
 }
 
 async function ensureDriveFolder() {
-  if (_driveFolderId) return _driveFolderId;
+  if (_driveFolderId) {
+    try {
+      const meta = await driveRequest('GET', `/files/${_driveFolderId}?fields=id,name,trashed`);
+      if (meta && meta.id && !meta.trashed && !meta.error) return _driveFolderId;
+      console.warn('[Drive] Cached folder id stale/inaccessible — clearing', _driveFolderId, meta);
+    } catch (e) {
+      console.warn('[Drive] Cached folder probe failed — clearing', _driveFolderId, e);
+    }
+    _driveFolderId = '';
+    localStorage.removeItem('drive-folder-id');
+  }
 
   // Search for existing folder
   const query = "name = 'mooInvoicer' and mimeType = 'application/vnd.google-apps.folder' and trashed = false";
@@ -8414,6 +8428,41 @@ async function ensureLedgerSheet(folderId) {
   // ensureAllTabs() called immediately after in setupDrive will rename Sheet1 → Ledger
 
   return _sheetsSpreadsheetId;
+}
+
+async function clearDriveCacheAndRetry() {
+  if (!gmailTokenValid()) {
+    showToast('Sign in with Google first.', 'info');
+    return;
+  }
+  const pinned = localStorage.getItem('sheets-id-pinned') === '1';
+  const pinnedSheet = pinned ? (_sheetsSpreadsheetId || localStorage.getItem('sheets-spreadsheet-id') || '') : '';
+
+  _driveFolderId = '';
+  localStorage.removeItem('drive-folder-id');
+
+  // Drop unpinned sheet cache so Drive can re-resolve under drive.file.
+  // Keep a user-pinned Sheet ID (same ledger across browsers).
+  if (!pinned) {
+    _sheetsSpreadsheetId = '';
+    localStorage.removeItem('sheets-spreadsheet-id');
+  } else if (pinnedSheet) {
+    _sheetsSpreadsheetId = pinnedSheet;
+    localStorage.setItem('sheets-spreadsheet-id', pinnedSheet);
+  }
+
+  const statusEl = document.getElementById('drive-setup-status');
+  if (statusEl) {
+    statusEl.textContent = pinned
+      ? 'Cleared Drive folder cache (pinned Sheet kept). Re-running setup…'
+      : 'Cleared Drive folder + sheet cache. Re-running setup…';
+    statusEl.style.color = '';
+  }
+  showToast(pinned
+    ? 'Cleared Drive folder cache — keeping pinned Sheet ID, retrying setup…'
+    : 'Cleared Drive cache — retrying setup…', 'info');
+  if (typeof refreshSheetsIdStatus === 'function') refreshSheetsIdStatus();
+  await setupDrive();
 }
 
 async function setupDrive() {
