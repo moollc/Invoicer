@@ -5831,6 +5831,15 @@ async function generatePaymentReceipt(bill) {
   }
 }
 
+/** Pure: retain paid bill in Paid/history for calendar month of last payment (or cycleStart). */
+function shouldRetainPaidBillThisMonth(b, now = new Date()) {
+  if (!(b && b.paid && (parseFloat(b.amount) || 0) > 0)) return false;
+  const last = Array.isArray(b.history) && b.history.length ? b.history[b.history.length - 1] : null;
+  const anchor = (last && last.date) ? new Date(last.date) : (b.cycleStart ? new Date(b.cycleStart) : null);
+  if (!anchor || isNaN(anchor.getTime())) return false;
+  return anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
+}
+
 // Check each bill for cycle rollovers — call on dashboard open
 function tickBillCycles() {
   const bills = loadBills();
@@ -5839,15 +5848,7 @@ function tickBillCycles() {
   bills.forEach(b => {
     // Paid + amount still set (e.g. Google Workspace 1592.76): keep in Paid/history
     // for the calendar month of the last payment — do not clear paid mid-cycle.
-    if (b.paid && (parseFloat(b.amount) || 0) > 0) {
-      const last = Array.isArray(b.history) && b.history.length ? b.history[b.history.length - 1] : null;
-      const anchor = (last && last.date) ? new Date(last.date) : (b.cycleStart ? new Date(b.cycleStart) : null);
-      if (anchor && !isNaN(anchor.getTime())
-          && anchor.getFullYear() === now.getFullYear()
-          && anchor.getMonth() === now.getMonth()) {
-        return;
-      }
-    }
+    if (shouldRetainPaidBillThisMonth(b, now)) return;
     const { cycleEnd } = billCurrentCycle(b);
     // If cycle has ended and bill was paid → clean reset
     // If cycle has ended and bill was NOT paid → compound (carry deficit)
@@ -6079,9 +6080,24 @@ function addClientExpense({ receipt, client, description, amount }) {
   return exp;
 }
 
+async function clearClientExpenseRow(id) {
+  if (!_gmailToken || !_sheetsSpreadsheetId || !id) return;
+  try {
+    let existing = await sheetsRead(_sheetsSpreadsheetId, 'ClientExpenses!A2:H');
+    if (existing === null) return;
+    const rowIdx = existing.findIndex(r => r[0] === id);
+    if (rowIdx === -1) return;
+    await sheetsWrite(_sheetsSpreadsheetId, `ClientExpenses!A${rowIdx + 2}:H${rowIdx + 2}`, [['', '', '', '', '', '', '', '']]);
+  } catch (e) {
+    console.warn('[Rebill] clearClientExpenseRow failed:', e.message);
+  }
+}
+
 function deleteClientExpense(id) {
   saveClientExpensesAll(loadClientExpensesAll().filter(e => e.id !== id));
-  syncClientExpensesToSheet();
+  clearClientExpenseRow(id).then(() => {
+    /* sheet row cleared; no full sync blanking */
+  }).catch(() => {});
 }
 
 function clientExpenseToRow(e) {
@@ -6100,7 +6116,7 @@ function clientExpenseFromRow(r) {
   };
 }
 
-// Upsert by id; blank rows whose id no longer exists locally (ProjectCosts pattern)
+// Upsert by id (Bills / ProjectCosts pattern). Sheet-only rows are kept — blanking moved to clearClientExpenseRow/deleteClientExpense.
 async function syncClientExpensesToSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
   const list = loadClientExpensesAll();
@@ -6110,7 +6126,6 @@ async function syncClientExpensesToSheet() {
     existing = await sheetsRead(_sheetsSpreadsheetId, 'ClientExpenses!A2:H');
   }
   if (existing === null) return { success: false, error: 'ClientExpenses tab read failed' };
-  const localIds = new Set(list.map(e => e.id));
   let failures = 0;
   for (const exp of list) {
     const newRow = clientExpenseToRow(exp);
@@ -6125,11 +6140,6 @@ async function syncClientExpensesToSheet() {
     } catch (e) {
       failures++;
       console.warn(`[Rebill] Sheet write failed for "${exp.description}":`, e.message);
-    }
-  }
-  for (let i = 0; i < existing.length; i++) {
-    if (existing[i][0] && !localIds.has(existing[i][0])) {
-      try { await sheetsWrite(_sheetsSpreadsheetId, `ClientExpenses!A${i + 2}:H${i + 2}`, [['', '', '', '', '', '', '', '']]); } catch (e) {}
     }
   }
   return failures ? { success: false, error: `${failures} expense(s) failed to sync` } : { success: true };
@@ -8775,7 +8785,8 @@ async function setupDrive() {
     
     await ensureAllTabs(_sheetsSpreadsheetId);
 
-    // Pull all data in parallel to warm cache
+    // Pull all data in parallel FIRST (load*FromSheet only). Never sync*ToSheet
+    // before these loads — empty local + blanking sync would wipe sheet-only rows.
     const results = await Promise.allSettled([
       loadLedgerFromSheet(),
       loadClientsFromSheet(),
@@ -8823,6 +8834,54 @@ async function setupDrive() {
     }
   }
 }
+
+/**
+ * Force pull from sheet — ONLY load*FromSheet, never sync*ToSheet first.
+ * Safe when local is empty (avoids wipe-before-load). Load helpers may still
+ * push local-only rows AFTER merge; they no longer blank sheet-only ids.
+ */
+async function forcePullAllFromSheet() {
+  if (!gmailTokenValid()) {
+    if (typeof showToast === 'function') showToast('Sign in with Google first.', 'info');
+    return { ok: 0, fail: 0, error: 'Not signed in' };
+  }
+  if (!_sheetsSpreadsheetId) {
+    try { await setupDrive(); } catch (e) { console.warn('[Pull] setupDrive before pull:', e); }
+  }
+  if (!_sheetsSpreadsheetId) {
+    if (typeof showToast === 'function') showToast('No Sheet ID — run Auto-Setup or pin a Sheet ID first.', 'error');
+    return { ok: 0, fail: 0, error: 'No spreadsheet id' };
+  }
+  const loaders = [
+    ['Bills', loadBillsFromSheet],
+    ['ProjectCosts', loadProjectCostsFromSheet],
+    ['ClientExpenses', loadClientExpensesFromSheet],
+    ['Clients', loadClientsFromSheet],
+    ['Goals', loadGoalsFromSheet],
+    ['Profiles', loadProfilesFromSheet],
+    ['Settings', loadSettingsFromSheet],
+    ['Ledger', loadLedgerFromSheet],
+  ];
+  let ok = 0, fail = 0;
+  const results = await Promise.allSettled(loaders.map(([, fn]) => fn()));
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') ok++;
+    else {
+      fail++;
+      console.error(`[Pull] ${loaders[i][0]} failed:`, r.reason);
+    }
+  });
+  try { seedClientsFromLedger(); } catch (e) {}
+  try { renderClientChips(); } catch (e) {}
+  try { renderDashboard(); } catch (e) {}
+  try { renderBillsList(); } catch (e) {}
+  if (typeof showToast === 'function') {
+    if (fail) showToast(`Pull done: ${ok} ok, ${fail} failed`, 'error');
+    else showToast(`✓ Pulled ${ok} tabs from sheet`, 'success');
+  }
+  return { ok, fail };
+}
+window.forcePullAllFromSheet = forcePullAllFromSheet;
 
 async function savePdfToDrive(pdfBlob, filename) {
   if (!gmailTokenValid() || !_driveFolderId) return null;
