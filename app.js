@@ -5098,7 +5098,18 @@ async function loadBillsFromSheet() {
   }
   const local = loadBills();
   const sheetIds = new Set(sheetBills.map(b => b.id));
-  const localOnly = local.filter(b => !sheetIds.has(b.id));
+  const sheetNames = new Set(sheetBills.map(b => String(b.name || '').trim().toLowerCase()).filter(Boolean));
+  // Keep local-only bills ONLY when that name is not already on the sheet.
+  // Stops cleaned-away Equipment-Transport ghosts (different ids) from syncing back.
+  const localOnly = local.filter(b => {
+    if (sheetIds.has(b.id)) return false;
+    const n = String(b.name || '').trim().toLowerCase();
+    if (n && sheetNames.has(n)) {
+      console.warn('[Bills] Dropping local duplicate name already on sheet:', b.name, b.id);
+      return false;
+    }
+    return true;
+  });
   const merged = sheetBills.map(sb => mergeBillFromLocal(sb, local.find(b => b.id === sb.id)));
   const finalBills = [...merged, ...localOnly];
   saveBills(finalBills);
@@ -6318,6 +6329,19 @@ function gmailBillNameTokens(name) {
     .filter(t => t.length >= 3 && !/^(the|and|for|inc|llc|ltd|bill|payment)$/.test(t));
 }
 
+// Tokens too generic to count as a name hit by themselves (Equipment-Transport, etc.)
+const GMAIL_WEAK_BILL_TOKENS = new Set([
+  'equipment', 'transport', 'rental', 'camera', 'service', 'services', 'monthly',
+  'annual', 'subscription', 'invoice', 'receipt', 'payment', 'account', 'fee',
+]);
+
+function gmailIsQuoteOrBudgetMail(parsed) {
+  const hay = `${parsed.from || ''} ${parsed.subject || ''} ${parsed.snippet || ''} ${parsed.body || ''}`.toLowerCase();
+  return /\b(quotation|quote\b|budget draft|costings? for|this is a quote|not a final invoice|valid\s+\d+\s+days|estimate only)\b/i.test(hay)
+    || /\blfmcs?\b.*\b(budget|quote|quotation|documentary)\b/i.test(hay);
+}
+
+
 function gmailExtractAmounts(text) {
   const found = [];
   const re = /(?:USD|JMD|\$|US\$)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/g;
@@ -6339,11 +6363,21 @@ function gmailAmountNear(mailAmt, billAmt) {
 }
 
 function gmailScoreBillMatch(bill, parsed) {
+  if (gmailIsQuoteOrBudgetMail(parsed)) return null;
+
   const hay = `${parsed.from} ${parsed.subject} ${parsed.snippet} ${parsed.body}`.toLowerCase();
+  const billName = String(bill.name || '').toLowerCase().trim();
   const tokens = gmailBillNameTokens(bill.name);
-  const nameHit = tokens.length
-    ? tokens.some(t => hay.includes(t)) || hay.includes(String(bill.name || '').toLowerCase())
-    : hay.includes(String(bill.name || '').toLowerCase());
+  const strongTokens = tokens.filter(t => !GMAIL_WEAK_BILL_TOKENS.has(t));
+  const weakTokens = tokens.filter(t => GMAIL_WEAK_BILL_TOKENS.has(t));
+
+  const fullNameHit = !!(billName && hay.includes(billName));
+  const strongHits = strongTokens.filter(t => hay.includes(t)).length;
+  const weakHits = weakTokens.filter(t => hay.includes(t)).length;
+  // Need full name, OR a strong token, OR ALL weak tokens (e.g. equipment+transport together)
+  const nameHit = fullNameHit
+    || strongHits >= 1
+    || (weakTokens.length >= 2 && weakHits === weakTokens.length);
 
   const amounts = gmailExtractAmounts(`${parsed.subject} ${parsed.snippet} ${parsed.body}`);
   const billAmt = parseFloat(bill.amount) || 0;
@@ -6355,19 +6389,21 @@ function gmailScoreBillMatch(bill, parsed) {
   const now = Date.now();
   if (msgDate && !isNaN(msgDate.getTime())) {
     const ageDays = (now - msgDate.getTime()) / 86400000;
-    if (ageDays >= 0 && ageDays <= 30) dateHit = true;
+    if (ageDays >= 0 && ageDays <= 45) dateHit = true;
     try {
       const { dueDate } = billCurrentCycle(bill);
       if (dueDate && Math.abs((msgDate - dueDate) / 86400000) <= 14) dateHit = true;
     } catch (e) {}
   }
 
-  let score = 0;
-  if (nameHit) score += 2;
-  if (amountHit) score += 2;
+  // HARD RULE: must have name signal AND amount near bill amount.
+  // (Previously name-only score>=2 re-added Equipment/Transport junk from any payment mail.)
+  if (!nameHit || !amountHit) return null;
+
+  let score = 4; // name + amount
+  if (fullNameHit || strongHits >= 1) score += 1;
   if (dateHit) score += 1;
-  if (!nameHit && !amountHit) return null;
-  const confidence = (nameHit && amountHit) ? 'high' : 'medium';
+  const confidence = (fullNameHit || strongHits >= 1) && amountHit ? 'high' : 'medium';
   return {
     score,
     confidence,
@@ -6417,13 +6453,25 @@ async function scanGmailForBillPayments() {
 
   showToast('Scanning Gmail for payment receipts…', 'info');
 
-  const keywords = '(receipt OR invoice OR payment OR paid OR confirmation OR statement)';
-  const allTokens = [];
-  bills.forEach(b => gmailBillNameTokens(b.name).forEach(t => {
-    if (!allTokens.includes(t)) allTokens.push(t);
-  }));
+  // Drop previous pending gmail matches so a re-scan doesn't stack junk.
+  // Keep accepted/skipped history so we don't re-offer the same message::bill.
+  {
+    const kept = loadExpenseInbox().filter(r =>
+      !(r.source === 'gmail-scan' && r.status === 'pending')
+    );
+    saveExpenseInbox(kept);
+    updateGmailScanBadge();
+  }
 
-  // Prefer few searches: broad keyword + optional name-token OR clause (keep under Gmail limits)
+  const keywords = '(receipt OR invoice OR payment OR paid OR confirmation OR statement) -quotation -quote -"budget draft"';
+  const allTokens = [];
+  bills.forEach(b => {
+    const toks = gmailBillNameTokens(b.name).filter(t => !GMAIL_WEAK_BILL_TOKENS.has(t));
+    const use = toks.length ? toks : gmailBillNameTokens(b.name);
+    use.forEach(t => { if (!allTokens.includes(t)) allTokens.push(t); });
+  });
+
+  // Prefer name tokens + payment keywords. Do NOT fall back to keyword-only flood.
   let q = `newer_than:45d ${keywords}`;
   if (allTokens.length) {
     const tokenOr = allTokens.slice(0, 12).map(t => (t.includes(' ') ? `"${t}"` : t)).join(' OR ');
@@ -6440,19 +6488,10 @@ async function scanGmailForBillPayments() {
     return 0;
   }
 
-  // If thin results, also try keyword-only
-  if (messageRefs.length < 5) {
-    try {
-      const extra = await gmailListMessages(`newer_than:45d ${keywords}`, 40);
-      const seen = new Set(messageRefs.map(m => m.id));
-      extra.forEach(m => { if (!seen.has(m.id)) messageRefs.push(m); });
-    } catch (e) {}
-  }
-
   const inbox = loadExpenseInbox();
   const already = new Set(
     inbox
-      .filter(r => r.messageId && r.billId && (r.status === 'pending' || r.status === 'accepted'))
+      .filter(r => r.messageId && r.billId && (r.status === 'pending' || r.status === 'accepted' || r.status === 'skipped'))
       .map(r => `${r.messageId}::${r.billId}`)
   );
 
@@ -6482,7 +6521,7 @@ async function scanGmailForBillPayments() {
         best = { bill, scored };
       }
     }
-    if (!best || best.scored.score < 2) continue;
+    if (!best || best.scored.score < 4) continue;
 
     const key = `${parsed.id}::${best.bill.id}`;
     if (already.has(key)) continue;
