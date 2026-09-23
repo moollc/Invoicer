@@ -4915,6 +4915,28 @@ function billCurrentCycle(bill) {
 function billHasActiveAmount(bill) {
   return (parseFloat(bill && bill.amount) || 0) > 0;
 }
+/** Last history entry amount (expected cycle amount when bill.amount is 0). */
+function lastHistoryAmount(bill) {
+  const h = Array.isArray(bill && bill.history) ? bill.history : [];
+  if (!h.length) return 0;
+  return parseFloat(h[h.length - 1].amount) || 0;
+}
+function lastHistoryDate(bill) {
+  const h = Array.isArray(bill && bill.history) ? bill.history : [];
+  if (!h.length) return '';
+  const d = h[h.length - 1].date;
+  return d ? String(d).slice(0, 10) : '';
+}
+/** Amount used for Gmail match: live amount, else last paid history amount. */
+function billMatchAmount(bill) {
+  return (parseFloat(bill && bill.amount) || 0) || lastHistoryAmount(bill);
+}
+/** Unpaid with match-amount, or paid+zeroed with history amount (next-cycle bank alerts). */
+function billEligibleForGmailScan(bill) {
+  if (!bill || !(billMatchAmount(bill) > 0)) return false;
+  if (!bill.paid) return true;
+  return (parseFloat(bill.amount) || 0) === 0 && lastHistoryAmount(bill) > 0;
+}
 // Settled for ledger/history: marked paid, or zero amount with prior paidTotal/history.
 function billIsSettledHistory(bill) {
   if (bill.paid) return true;
@@ -5985,6 +6007,39 @@ function renderBillsList() {
     empty.textContent = 'No bills yet. Add one to start tracking.';
     el.appendChild(empty);
   }
+
+  // Absorbed / project costs (blank or BANK-SEP receipt) — same data as Expense Inbox absorbed list.
+  // Do NOT dump into Ledger rows; Ledger stays income-only.
+  const absorbed = loadProjectCosts().filter(c => !c.receipt || c.receipt === 'BANK-SEP');
+  if (absorbed.length) {
+    const hdr = document.createElement('p');
+    hdr.className = 'bills-empty';
+    hdr.style.marginTop = '16px';
+    hdr.style.fontWeight = '600';
+    hdr.textContent = 'Absorbed / project costs';
+    el.appendChild(hdr);
+    const hint = document.createElement('p');
+    hint.className = 'bills-empty';
+    hint.style.fontSize = '11px';
+    hint.style.marginTop = '0';
+    hint.style.marginBottom = '8px';
+    hint.textContent = 'Unlinked ProjectCosts (blank / BANK-SEP receipt) — not Ledger.';
+    el.appendChild(hint);
+    absorbed.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    absorbed.forEach(c => {
+      const row = document.createElement('div');
+      row.className = 'bill-card';
+      row.style.cssText = 'padding:10px 12px;margin-bottom:6px;';
+      const amtNum = parseFloat(c.amount) || 0;
+      row.innerHTML =
+        '<div class="bill-card-header"><div>'
+        + '<strong class="bill-name">' + escapeHtml(c.desc || 'Cost') + '</strong>'
+        + '<span class="bill-recurrence">' + escapeHtml([c.date, c.receipt || '(no receipt)', c.client].filter(Boolean).join(' · ')) + '</span>'
+        + '</div></div>'
+        + '<div class="bill-meta"><span class="bill-amount">' + fmt(amtNum) + '</span></div>';
+      el.appendChild(row);
+    });
+  }
 }
 
 const SYNCED_SETTINGS_KEYS = [
@@ -6409,15 +6464,18 @@ function gmailExtractAmounts(text) {
   let m;
   while ((m = tagged.exec(s)) !== null) {
     const n = parseFloat((m[1] || m[2] || '').replace(/,/g, ''));
-    if (!isNaN(n) && n > 0) found.push(n);
+    if (!isNaN(n) && n >= 0) found.push(n);
   }
-  if (found.length) return found;
-  const re = /(?:USD|JMD|\$|US\$)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/g;
-  while ((m = re.exec(s)) !== null) {
-    const n = parseFloat(m[1].replace(/,/g, ''));
-    if (!isNaN(n) && n > 0) found.push(n);
+  if (!found.length) {
+    const re = /(?:USD|JMD|\$|US\$)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/g;
+    while ((m = re.exec(s)) !== null) {
+      const n = parseFloat(m[1].replace(/,/g, ''));
+      if (!isNaN(n) && n >= 0) found.push(n);
+    }
   }
-  return found;
+  // Ignore $0.00 authorization holds when a larger amount exists in same message
+  const nonzero = found.filter(n => n > 0);
+  return nonzero.length ? nonzero : [];
 }
 
 function gmailScoreBillMatch(bill, parsed) {
@@ -6433,10 +6491,16 @@ function gmailScoreBillMatch(bill, parsed) {
   const strongHits = strongTokens.filter(t => hay.includes(t)).length;
   const weakHits = weakTokens.filter(t => hay.includes(t)).length;
   // Vendor domains (GitHub $4 receipts come from noreply@github.com)
+  // Starlink: also match Scotia bank alerts ("Purchase made outside… STARLINK INTERNET")
+  const starlinkBankHit = billName.includes('starlink')
+    && /\bstarlink\b/.test(hay)
+    && (/scotiabank/.test(hay)
+      || /purchase\s+(made\s+)?outside/.test(hay)
+      || /debit\s+card/.test(hay));
   const vendorHit = (
     (billName.includes('github') && /github\.com/.test(hay))
     || (billName.includes('grok') && /(x\.ai|grok\.com|xai)/.test(hay))
-    || (billName.includes('starlink') && /starlink\.com/.test(hay))
+    || (billName.includes('starlink') && (/starlink\.com/.test(hay) || starlinkBankHit))
     || (billName.includes('claude') && /(anthropic|claude\.ai)/.test(hay))
     || (billName.includes('eleven') && /(elevenlabs|stripe\.com)/.test(hay))
   );
@@ -6446,10 +6510,12 @@ function gmailScoreBillMatch(bill, parsed) {
     || vendorHit
     || (weakTokens.length >= 2 && weakHits === weakTokens.length);
 
-  const amounts = gmailExtractAmounts(`${parsed.subject} ${parsed.snippet} ${parsed.body}`);
-  const billAmt = parseFloat(bill.amount) || 0;
-  const amountHit = amounts.some(a => gmailAmountNear(a, billAmt));
-  const matchedAmount = amounts.find(a => gmailAmountNear(a, billAmt));
+  const amounts = gmailExtractAmounts(`${parsed.subject} ${parsed.snippet} ${parsed.body}`).filter(a => a > 0);
+  const billAmt = billMatchAmount(bill);
+  // Prefer amounts near billMatchAmount; skip 0
+  const nearAmts = billAmt > 0 ? amounts.filter(a => gmailAmountNear(a, billAmt)) : [];
+  const amountHit = nearAmts.length > 0;
+  const matchedAmount = nearAmts.length ? nearAmts[0] : undefined;
 
   let dateHit = false;
   const msgDate = parsed.internalDate || (parsed.date ? new Date(parsed.date) : null);
@@ -6512,9 +6578,9 @@ async function scanGmailForBillPayments() {
     showToast('Sign in with Google first (Connections)', 'info');
     return 0;
   }
-  const bills = loadBills().filter(b => billHasActiveAmount(b) && !b.paid);
+  const bills = loadBills().filter(b => billEligibleForGmailScan(b));
   if (!bills.length) {
-    showToast('No unpaid bills with an amount to match', 'info');
+    showToast('No bills eligible for payment scan (need unpaid amount or history amount)', 'info');
     return 0;
   }
 
@@ -6539,6 +6605,8 @@ async function scanGmailForBillPayments() {
   });
 
   // Prefer name tokens + payment keywords. Do NOT fall back to keyword-only flood.
+  const hasStarlink = bills.some(b => /starlink/i.test(b.name || ''));
+  if (hasStarlink && !allTokens.includes('scotiabank')) allTokens.push('scotiabank');
   let q = `newer_than:45d ${keywords}`;
   if (allTokens.length) {
     const tokenOr = allTokens.slice(0, 12).map(t => (t.includes(' ') ? `"${t}"` : t)).join(' OR ');
@@ -6553,6 +6621,25 @@ async function scanGmailForBillPayments() {
     console.warn('[GmailScan] list failed:', err);
     showToast(err.message || 'Gmail search failed', 'error');
     return 0;
+  }
+  // Dedicated Scotia bank alert search for Starlink (payment evidence is bank alert, not starlink.com).
+  // Prepend so slice(0,40) does not drop them behind keyword-heavy receipt mail.
+  if (hasStarlink) {
+    try {
+      const scotiaQ = 'newer_than:45d from:alerts@scotiabank.com (STARLINK OR starlink)';
+      const scotiaRefs = await gmailListMessages(scotiaQ, 20);
+      const seen = new Set(messageRefs.map(r => r.id));
+      const extra = [];
+      for (const r of scotiaRefs) {
+        if (r && r.id && !seen.has(r.id)) {
+          extra.push(r);
+          seen.add(r.id);
+        }
+      }
+      if (extra.length) messageRefs = extra.concat(messageRefs);
+    } catch (err) {
+      console.warn('[GmailScan] scotia list failed:', err);
+    }
   }
 
   const inbox = loadExpenseInbox();
@@ -6580,10 +6667,28 @@ async function scanGmailForBillPayments() {
       continue;
     }
 
+    const isoDate = (parsed.internalDate && !isNaN(parsed.internalDate.getTime()))
+      ? parsed.internalDate.toISOString().slice(0, 10)
+      : (parsed.date ? (() => { const d = new Date(parsed.date); return isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10); })() : new Date().toISOString().slice(0, 10));
+
     let best = null;
     for (const bill of bills) {
       const scored = gmailScoreBillMatch(bill, parsed);
       if (!scored) continue;
+      // Only auto-queue unpaid bills OR bills whose last history date is older than the mail date
+      if (bill.paid) {
+        const lastDate = lastHistoryDate(bill);
+        if (!lastDate || lastDate >= isoDate) continue;
+      }
+      // Don't re-match already-recorded same-day same amount
+      {
+        const lastDate = lastHistoryDate(bill);
+        const lastAmt = lastHistoryAmount(bill);
+        if (lastDate && lastDate === isoDate && lastAmt > 0
+          && (Math.abs((scored.matchedAmount || 0) - lastAmt) < 0.02 || gmailAmountNear(scored.matchedAmount, lastAmt))) {
+          continue;
+        }
+      }
       if (!best || scored.score > best.scored.score) {
         best = { bill, scored };
       }
@@ -6593,10 +6698,6 @@ async function scanGmailForBillPayments() {
     const key = `${parsed.id}::${best.bill.id}`;
     if (already.has(key)) continue;
     already.add(key);
-
-    const isoDate = (parsed.internalDate && !isNaN(parsed.internalDate.getTime()))
-      ? parsed.internalDate.toISOString().slice(0, 10)
-      : (parsed.date ? (() => { const d = new Date(parsed.date); return isNaN(d.getTime()) ? new Date().toISOString().slice(0, 10) : d.toISOString().slice(0, 10); })() : new Date().toISOString().slice(0, 10));
 
     addExpenseInboxItem({
       source: 'gmail-scan',
