@@ -4893,8 +4893,26 @@ function dedupeBillsByName(bills) {
   }
   return order.map(x => (x && x.__key ? byName.get(x.__key) : x)).filter(Boolean);
 }
+function migrateLocalBillsOnce() {
+  // One-shot: drop Equipment-Transport ghosts, clamp bad allocationPct, collapse same-name.
+  if (localStorage.getItem('migrate-et-ghosts-v1') === '1') return;
+  let raw = [];
+  try { raw = JSON.parse(localStorage.getItem('invoice-bills') || '[]'); } catch (e) { raw = []; }
+  if (!Array.isArray(raw)) raw = [];
+  const cleaned = raw
+    .filter(b => billNameKey(b && b.name) !== 'equipment transport')
+    .map(b => {
+      const a = parseFloat(b.allocationPct);
+      if (isNaN(a) || a < 0 || a > 100) return { ...b, allocationPct: '0' };
+      return b;
+    });
+  const next = dedupeBillsByName(cleaned);
+  localStorage.setItem('invoice-bills', JSON.stringify(next));
+  localStorage.setItem('migrate-et-ghosts-v1', '1');
+}
 function loadBills() {
   try {
+    migrateLocalBillsOnce();
     const raw = JSON.parse(localStorage.getItem('invoice-bills') || '[]');
     return dedupeBillsByName(Array.isArray(raw) ? raw : []);
   } catch (e) { return []; }
