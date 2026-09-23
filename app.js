@@ -4866,11 +4866,41 @@ async function loadProfilesFromSheet() {
 
 // ── Bills ─────────────────────────────────────────────────────
 
+function billNameKey(name) {
+  return String(name || '').toLowerCase().replace(/[\s_\/.–\u2014-]+/g, ' ').trim();
+}
+function billDedupeScore(b) {
+  const hist = Array.isArray(b.history) ? b.history.length : 0;
+  const paidTotal = parseFloat(b.paidTotal) || 0;
+  const amount = parseFloat(b.amount) || 0;
+  const funded = parseFloat(b.funded) || 0;
+  const docs = (b.receiptDocUrl ? 1 : 0) + (b.invoiceDocUrl ? 1 : 0);
+  return hist * 1e9 + paidTotal * 1e3 + amount * 10 + funded + docs;
+}
+function dedupeBillsByName(bills) {
+  const byName = new Map();
+  const order = [];
+  for (const b of bills) {
+    const key = billNameKey(b.name);
+    if (!key) { order.push(b); continue; }
+    if (!byName.has(key)) {
+      byName.set(key, b);
+      order.push({ __key: key });
+      continue;
+    }
+    const cur = byName.get(key);
+    if (billDedupeScore(b) > billDedupeScore(cur)) byName.set(key, b);
+  }
+  return order.map(x => (x && x.__key ? byName.get(x.__key) : x)).filter(Boolean);
+}
 function loadBills() {
-  return JSON.parse(localStorage.getItem('invoice-bills') || '[]');
+  try {
+    const raw = JSON.parse(localStorage.getItem('invoice-bills') || '[]');
+    return dedupeBillsByName(Array.isArray(raw) ? raw : []);
+  } catch (e) { return []; }
 }
 function saveBills(bills) {
-  localStorage.setItem('invoice-bills', JSON.stringify(bills));
+  localStorage.setItem('invoice-bills', JSON.stringify(dedupeBillsByName(Array.isArray(bills) ? bills : [])));
 }
 
 function billCycleLabel(bill) {
@@ -5097,24 +5127,26 @@ async function syncBillsToSheet() {
     try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Bills] ensureAllTabs failed:', e.message); }
     existing = await sheetsRead(_sheetsSpreadsheetId, 'Bills!A2:Q');
   }
+  // Avoid wipe-on-read-fail when local bills are empty
+  if (existing === null && !bills.length) return { success: false, error: 'Bills tab read failed' };
   if (existing === null) return { success: false, error: 'Bills tab read failed' };
-  let failures = 0;
-  for (const bill of bills) {
-    const newRow = billToSheetRow(bill);
-    const rowIdx = existing.findIndex(r => r[0] === bill.id);
-    try {
-      if (rowIdx === -1) {
-        await sheetsAppend(_sheetsSpreadsheetId, 'Bills!A1', [newRow]);
-        existing.push(newRow);
-      } else {
-        await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${rowIdx + 2}:Q${rowIdx + 2}`, [newRow]);
-      }
-    } catch (e) {
-      failures++;
-      console.warn(`[Bills] Sheet write failed for "${bill.name}":`, e.message);
+  try {
+    const rows = bills.map(billToSheetRow);
+    if (rows.length) {
+      await sheetsWrite(_sheetsSpreadsheetId, `Bills!A2:Q${rows.length + 1}`, rows);
     }
+    // Blank leftover rows so deleted / duplicate-id ghosts leave the sheet
+    const existingLen = Array.isArray(existing) ? existing.length : 0;
+    const clearCount = Math.max(existingLen, bills.length) + 20;
+    const clearStart = bills.length + 2;
+    const emptyRow = Array(17).fill('');
+    await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${clearStart}:Q${clearStart + clearCount - 1}`,
+      Array(clearCount).fill(emptyRow));
+    return { success: true };
+  } catch (e) {
+    console.warn('[Bills] Sheet rewrite failed:', e.message);
+    return { success: false, error: e.message || 'Bills sheet rewrite failed' };
   }
-  return failures ? { success: false, error: `${failures} bill(s) failed to sync` } : { success: true };
 }
 
 async function loadBillsFromSheet() {
@@ -5133,12 +5165,12 @@ async function loadBillsFromSheet() {
   }
   const local = loadBills();
   const sheetIds = new Set(sheetBills.map(b => b.id));
-  const sheetNames = new Set(sheetBills.map(b => String(b.name || '').trim().toLowerCase()).filter(Boolean));
+  const sheetNames = new Set(sheetBills.map(b => billNameKey(b.name)).filter(Boolean));
   // Keep local-only bills ONLY when that name is not already on the sheet.
   // Stops cleaned-away Equipment-Transport ghosts (different ids) from syncing back.
   const localOnly = local.filter(b => {
     if (sheetIds.has(b.id)) return false;
-    const n = String(b.name || '').trim().toLowerCase();
+    const n = billNameKey(b.name);
     if (n && sheetNames.has(n)) {
       console.warn('[Bills] Dropping local duplicate name already on sheet:', b.name, b.id);
       return false;
@@ -5146,10 +5178,16 @@ async function loadBillsFromSheet() {
     return true;
   });
   const merged = sheetBills.map(sb => mergeBillFromLocal(sb, local.find(b => b.id === sb.id)));
-  const finalBills = [...merged, ...localOnly];
+  const beforeIds = new Set([...merged, ...localOnly].map(b => b.id));
+  const finalBills = dedupeBillsByName([...merged, ...localOnly]);
   saveBills(finalBills);
+  const afterIds = new Set(finalBills.map(b => b.id));
+  const droppedIds = [...beforeIds].filter(id => !afterIds.has(id));
+  const sheetHadDropped = droppedIds.some(id => sheetIds.has(id));
   const needsRepair = merged.some((mb, i) => billNeedsSheetRepair(mb, sheetBills[i]));
-  if (localOnly.length || needsRepair) await syncBillsToSheet();
+  if (localOnly.length || needsRepair || sheetHadDropped || finalBills.length !== sheetBills.length) {
+    await syncBillsToSheet();
+  }
 }
 
 // Reset a bill for its next cycle (called after marking paid or on overdue rollover)
@@ -5223,10 +5261,18 @@ async function saveBillModal() {
       saveBills(bills);
     }
   } else {
-    bills.push({ id: String(Date.now()), name, amount, recurrence, dueDay, customDays,
-      allocationPct: allocStr, recipient, funded: '0', paid: false,
-      cycleStart: new Date().toISOString().slice(0, 10), history: [] });
-    saveBills(bills);
+    const sameKey = billNameKey(name);
+    const existingIdx = sameKey ? bills.findIndex(b => billNameKey(b.name) === sameKey) : -1;
+    if (existingIdx !== -1) {
+      bills[existingIdx] = { ...bills[existingIdx], name, amount, recurrence, dueDay, customDays,
+        allocationPct: allocStr, recipient };
+      saveBills(bills);
+    } else {
+      bills.push({ id: String(Date.now()), name, amount, recurrence, dueDay, customDays,
+        allocationPct: allocStr, recipient, funded: '0', paid: false,
+        cycleStart: new Date().toISOString().slice(0, 10), history: [] });
+      saveBills(bills);
+    }
   }
   const syncRes = await syncBillsToSheet();
   if (syncRes && !syncRes.success) showToast('Bill saved locally — sheet sync failed. Open dashboard and sync again.', 'info');
