@@ -1012,6 +1012,33 @@
     white-space: nowrap;
   }
 
+  /* Totals grid: the Project Total figure and the big total share one column,
+     so they stay left-aligned together with or without decimals. */
+  .total-block {
+    display: grid;
+    grid-template-columns: 1fr max-content;
+  }
+  .total-block > * { grid-column: 1 / -1; }
+  .total-block .project-total-row,
+  .total-block .total-card,
+  .total-block .total-card .total-amount {
+    display: grid;
+    grid-template-columns: subgrid;
+    grid-column: 1 / -1;
+  }
+  .total-block,
+  .total-block .project-total-row,
+  .total-block .total-card,
+  .total-block .total-card .total-amount {
+    column-gap: 16px;
+  }
+  .total-block .project-total-row .ptv,
+  .total-block .total-card [data-field="totalAmount"] {
+    justify-self: start;
+    text-align: left;
+    font-variant-numeric: tabular-nums;
+  }
+
   .pay-period {
     text-align: right;
     margin-top: 12px;
