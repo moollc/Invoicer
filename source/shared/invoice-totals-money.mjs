@@ -19,10 +19,24 @@ export function sumPayments(data) {
     .reduce((s, p) => s + parseMoneyNum(p && p.amount), 0);
 }
 
+/**
+ * Prefix for the amount due. The invoice currency decides: a JMD invoice
+ * shows "JMD 60,000.00", never "$60,000.00". A "$" is only kept for USD
+ * (or when no currency is set), so existing USD invoices look the same.
+ */
+export function amountPrefixFor(data) {
+  const existing = String((data && data.totalAmount) || '');
+  const m = existing.match(/^([^\d.\-]+)/);
+  const old = m ? m[1].trim() : '';
+  const cur = String((data && data.currency) || '').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(cur)) return old || '$';
+  if (old === cur) return cur;
+  if (cur === 'USD' && (old === '$' || old === 'US$')) return old;
+  return cur;
+}
+
 export function formatTotalAmountDisplay(amount, data) {
-  const existing = String(data.totalAmount || '');
-  const prefixMatch = existing.match(/^([^\d.\-]+)/);
-  const prefix = prefixMatch ? prefixMatch[1].trim() : (data.currency || '$');
+  const prefix = amountPrefixFor(data);
   const num = amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (prefix.length <= 4 && /^[A-Z]+$/.test(prefix)) return `${prefix} ${num}`;
   return `${prefix}${num}`;

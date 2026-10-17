@@ -970,8 +970,10 @@ function render(data) {
     const ratesHtml = rates.map((r, ri) =>
       `<span class="rate-tag" data-field="lineItems.${i}.rates.${ri}">${r}</span>`
     ).join('');
+    // Display with thousands separators (15000 -> 15,000); the stored value
+    // is left as typed.
     const costsHtml = costs.map((c, ci) =>
-      `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${c}</span>`
+      `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${invoiceFormat().formatCostCell(c)}</span>`
     ).join('');
     const tipLines = rates.length > 1
       ? rates.map((r, ri) => `${r}  ×  ${costs[ri] || '—'}`).join('\n')
@@ -1082,7 +1084,13 @@ function formatCurrencyField(el) {
   // "USD 100,000.00" survive a blur instead of truncating at the comma.
   const match = text.match(/^([^\d\.\-]*)([\d\.,\-]+)(.*)$/);
   if (match) {
-    let symbol = match[1].trim() || '$';
+    // No symbol typed (or a bare "$" on a non-USD invoice): use the
+    // invoice currency code, e.g. "JMD 60,000".
+    const curSel = document.querySelector('.meta [data-field="currency"] select');
+    const curCode = (curSel ? curSel.value : (getData().currency || '')).toUpperCase();
+    let symbol = match[1].trim();
+    if (!symbol || (symbol === '$' && curCode && curCode !== 'USD')) symbol = curCode || '$';
+    if (/^[A-Z]{3}$/.test(symbol)) symbol += ' ';
     let numStr = match[2].replace(/,/g, '');
     let suffix = match[3].trim();
     let num = parseFloat(numStr);
@@ -11223,9 +11231,16 @@ window.clearInvoice = async function() {
     const prefId = localStorage.getItem('invoicer-preferred-template') || 'default';
     const tmpl = getTemplateData(prefId);
     
-    // Preserve 'from', auto-increment receipt number
-    const prevReceipt = existing.receiptOverride || existing.receiptNumber || '';
-    const newReceipt = nextReceiptNumber(prevReceipt ? prevReceipt.trim() : '');
+    // Preserve 'from'. Receipt: next letter for today; an old invoice's
+    // date prefix is not carried over (that kept the old date's number).
+    const prevReceipt = (existing.receiptOverride || existing.receiptNumber || '').trim();
+    const autoNext = autoReceiptNumber();
+    const todayPrefix = autoNext.slice(0, -1);
+    let newReceipt = autoNext;
+    if (prevReceipt && prevReceipt.startsWith(todayPrefix) && /^[A-Z]$/.test(prevReceipt.slice(todayPrefix.length))) {
+      const bumped = nextReceiptNumber(prevReceipt);
+      if (bumped.length === autoNext.length && bumped > autoNext) newReceipt = bumped;
+    }
     
     const defaultPayPeriodSetting = localStorage.getItem('invoicer-default-pay-period');
     const payPeriodOverride = defaultPayPeriodSetting !== null 
@@ -11237,13 +11252,17 @@ window.clearInvoice = async function() {
     const merged = Object.assign({}, tmpl, {
       from: existing.from || { name: 'Your Business Name', address: '', email: '', phone: '' },
       receiptOverride: newReceipt,
+      dateOverride: '', // fresh invoice = today's date
       payPeriod: payPeriodOverride,
       currency: defaultCurrency,
     });
+    delete merged.date;
+    delete merged.receiptNumber;
 
-    document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
-    render(merged);
     if (document.body.classList.contains('editing')) stopEdit();
+    document.getElementById('invoice-data').textContent = JSON.stringify(merged, null, 2);
+    // Render derived data so date/receipt are computed (today), not left stale.
+    render(getData());
   }
 };
 
@@ -11568,12 +11587,11 @@ document.getElementById('line-items').addEventListener('keydown', function(e) {
         if (idx < fields.length - 1) {
           fields[idx + 1].focus();
         } else {
-          // Last field in table, add a new row and focus its first field
-          addLineItem();
-          setTimeout(() => {
-            const newFields = Array.from(document.getElementById('line-items').querySelectorAll('.service-name'));
-            if (newFields.length > 0) newFields[newFields.length - 1].focus();
-          }, 50);
+          // Last field: leave the table like a normal Tab. New line items are
+          // added only with the + button (Tab used to add a stray blank row).
+          const addBtn = document.querySelector('[onclick*="addLineItem"]');
+          if (addBtn && addBtn.offsetParent !== null) addBtn.focus();
+          else e.target.blur();
         }
       }
     }

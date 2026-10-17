@@ -193,3 +193,15 @@ test('forced refresh after a 401 that fails drops the rejected token', async () 
   assert.equal(mgr.isValid(), false);
   assert.equal(storage.getItem('gmail-token'), null);
 });
+
+test('no stored account hint: login_hint is left out entirely', async () => {
+  const fg = fakeGoogle(() => ({ token: 't' }));
+  const mgr = createGoogleTokenManager({
+    getGoogle: () => fg.google, getClientId: () => 'cid', scope: 'scope-a',
+    getLoginHint: () => '', now: () => T0, storage: memStorage(),
+    setTimer: () => 0, clearTimer: () => {},
+  });
+  assert.equal(await mgr.ensureToken({ interactive: true }), 't');
+  assert.deepEqual(fg.calls[0], { prompt: '' });
+  assert.equal('login_hint' in fg.calls[0], false);
+});

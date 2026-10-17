@@ -6,6 +6,7 @@
  */
 
 export {
+  amountPrefixFor,
   formatTotalAmountDisplay,
   parseMoneyNum,
   sumLineItemsTotal,

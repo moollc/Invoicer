@@ -41,3 +41,17 @@ test('bill-to: extra line typed after email/phone stays in the address', () => {
   assert.deepEqual(parsePartySub('1 Example St\nbilling@example.com\n000-555-0101\nAttn: Accounts'),
     { address: '1 Example St\nAttn: Accounts', email: 'billing@example.com', phone: '000-555-0101' });
 });
+
+import { formatTotalAmountDisplay, syncTotalsFromLineItems } from '../source/shared/invoice-totals.mjs';
+
+test('amount due uses the invoice currency code (JMD, not $)', () => {
+  assert.equal(formatTotalAmountDisplay(60000, { currency: 'JMD', totalAmount: '$2,500' }), 'JMD 60,000.00');
+  assert.equal(formatTotalAmountDisplay(60000, { currency: 'USD', totalAmount: '$2,500' }), '$60,000.00');
+  assert.equal(formatTotalAmountDisplay(60000, { currency: 'EUR', totalAmount: 'USD 1' }), 'EUR 60,000.00');
+});
+
+test('switching currency heals a stale "$" prefix even when the amount is right', () => {
+  const d = { currency: 'JMD', totalAmount: '$15,000.00', projectTotal: '15,000', lineItems: [{ costs: ['15000'] }] };
+  syncTotalsFromLineItems(d);
+  assert.equal(d.totalAmount, 'JMD 15,000.00');
+});

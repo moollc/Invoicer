@@ -9,6 +9,7 @@
  */
 
 import {
+  amountPrefixFor,
   formatTotalAmountDisplay,
   parseMoneyNum,
   sumLineItemsTotal,
@@ -43,7 +44,9 @@ export function syncTotalsFromLineItems(data) {
   }
 
   const due = expectedAmountDue(data);
-  if (Math.abs(parseMoneyNum(data.totalAmount) - due) > DRIFT_EPSILON) {
+  const shownPrefix = (String(data.totalAmount || '').match(/^([^\d.\-]+)/) || [, ''])[1].trim();
+  if (Math.abs(parseMoneyNum(data.totalAmount) - due) > DRIFT_EPSILON ||
+      shownPrefix !== amountPrefixFor(data)) {
     data.totalAmount = formatTotalAmountDisplay(due, data);
   }
   return data;
