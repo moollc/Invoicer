@@ -19,6 +19,18 @@
   ul { padding-left: 20px; }
   .updated { font-size: 13px; color: #888; margin-bottom: 40px; }
   a { color: #1a73e8; }
+  .contact-dev-btn, .contact-dev-send, .contact-dev-cancel { font: inherit; font-size: 15px; padding: 8px 16px; border-radius: 6px; border: 1px solid #1a73e8; cursor: pointer; }
+  .contact-dev-btn, .contact-dev-send { background: #1a73e8; color: #fff; }
+  .contact-dev-cancel { background: #fff; color: #1a73e8; }
+  .contact-dev-send:disabled { opacity: 0.6; cursor: default; }
+  .contact-dev-dialog { border: none; border-radius: 10px; padding: 24px; width: min(480px, calc(100vw - 48px)); box-shadow: 0 10px 40px rgba(0,0,0,0.25); }
+  .contact-dev-dialog::backdrop { background: rgba(0,0,0,0.35); }
+  .contact-dev-form h2 { margin-top: 0; }
+  .contact-dev-form label { display: block; font-size: 14px; color: #333; margin-bottom: 12px; }
+  .contact-dev-form input, .contact-dev-form textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px; font: inherit; font-size: 15px; border: 1px solid #ccc; border-radius: 6px; }
+  .contact-dev-honey { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
+  .contact-dev-status { min-height: 1.4em; font-size: 14px; color: #555; margin: 4px 0 12px; }
+  .contact-dev-actions { display: flex; gap: 8px; justify-content: flex-end; }
 </style>
 </head>
 <body>
@@ -47,7 +59,9 @@
 <p>If these terms change materially, the "Last updated" date above will be updated. Continued use of the app constitutes acceptance of the revised terms.</p>
 
 <h2>Contact</h2>
-<p>Questions can be sent to <a href="mailto:jayson.m.y@gmail.com">jayson.m.y@gmail.com</a>.</p>
+<p>Questions about these terms? Send the developer a message.</p>
+<p><button type="button" class="contact-dev-btn" data-contact-developer>Contact developer</button></p>
+<script src="/boot/contact-developer.js" defer></script>
 
 </body>
 </html>
