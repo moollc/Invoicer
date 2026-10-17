@@ -149,6 +149,7 @@ function sanitizePrintClone(clone) {
       const val = get(data, el.dataset.field);
       if (val !== undefined && typeof val !== 'object') el.textContent = val;
     });
+    applyTotalsBlockFormat(clone, data);
   } catch(e) {}
   // Drop line-item rows that have no cost entered, so a half-filled draft
   // doesn't ship with empty lines. Editor and stored data are untouched — this
@@ -912,6 +913,8 @@ function render(data) {
   });
 
   renderPaymentsDisplay(data.payments || [], data);
+  try { applyTotalsBlockFormat(document.getElementById('invoice'), data); }
+  catch (e) { console.warn('[totals] format skipped:', e.message || e); }
 
   const badge = document.getElementById('status-badge');
   const overdueBadge = document.getElementById('overdue-badge');
@@ -1449,20 +1452,53 @@ function renderPaymentsEdit() {
   listEl.appendChild(wrap);
 }
 
+// Payment / deposit rows in the totals block. Each row uses the same grid as
+// Project Total (label column + value column, see .total-block in
+// styles.css) and the same amount format as the rest of the block.
+function totalsAdjustmentRowsHTML(payments, data) {
+  if (!Array.isArray(payments) || !payments.length) return '';
+  const totals = getInvoiceTotals();
+  return payments.map(p => {
+    const amt = totals.parseMoneyNum(p && p.amount);
+    if (!amt) return '';
+    const label = escapeHTML(String((p && p.label) || 'Payment'));
+    return `<div class="adjust-row"><span class="ptl">${label}</span><span class="adjv"><span class="adj-sign">\u2212</span>${escapeHTML(totals.formatTotalsAmount(Math.abs(amt), data))}</span></div>`;
+  }).join('');
+}
+
 function renderPaymentsDisplay(payments, data) {
   const listEl = document.getElementById('payments-list');
   if (!listEl) return;
-  if (!Array.isArray(payments) || !payments.length) { listEl.innerHTML = ''; return; }
-  const parseAmt = s => parseFloat((s || '').toString().replace(/[^0-9.]/g, '')) || 0;
-  const html = payments.map(p => {
-    const amt = parseAmt(p.amount);
-    if (!amt) return '';
-    return `<div style="display:flex;justify-content:space-between;font-size:11.5px;color:#6c7682;padding:3px 0;font-family:Roboto,sans-serif;">
-      <span>${p.label || 'Payment'}</span><span style="color:#2a8c55;">− ${data.currency || ''} ${amt.toLocaleString('en-US',{minimumFractionDigits:2})}</span>
-    </div>`;
-  }).join('');
-  if (html) listEl.innerHTML = `<div style="border-top:1px dashed #ddd;padding:6px 0 2px;margin:4px 0;">${html}</div>`;
-  else listEl.innerHTML = '';
+  // While editing, the list holds the payment inputs; don't wipe them mid-typing.
+  if (document.body.classList.contains('editing') && listEl.querySelector('#payments-edit-wrap')) return;
+  listEl.innerHTML = totalsAdjustmentRowsHTML(payments, data || getData());
+}
+
+// One format for every amount in the totals block: the same prefix as the
+// amount due (JMD, never $ on a JMD invoice) and the same decimals setting
+// (totalsDecimals). Runs on the live page and on every print/PDF clone, since
+// the clone re-applies raw data-field values first.
+function applyTotalsBlockFormat(root, data) {
+  if (!root || !data) return;
+  const totals = getInvoiceTotals();
+  const block = root.querySelector('.total-block');
+  if (!block) return;
+  const editing = document.body.classList.contains('editing') && !root.classList.contains('print-clone');
+  const prefix = totals.amountPrefixFor(data);
+  const ptv = block.querySelector('.project-total-row .ptv');
+  if (ptv && !editing) {
+    const cur = ptv.querySelector('[data-field="currency"]');
+    const num = ptv.querySelector('[data-field="projectTotal"]');
+    const isCode = /^[A-Z]{2,4}$/.test(prefix);
+    if (cur) cur.textContent = prefix;
+    const gap = ptv.querySelector('.ptv-gap');
+    if (gap) gap.textContent = isCode ? ' ' : '';
+    if (num) num.textContent = totals.formatTotalsNumber(totals.parseMoneyNum(data.projectTotal), data);
+  }
+  const list = block.querySelector('#payments-list');
+  if (list && (!editing || root.classList.contains('print-clone'))) {
+    list.innerHTML = totalsAdjustmentRowsHTML(data.payments || [], data);
+  }
 }
 
 const escapeHTML = (str) => {

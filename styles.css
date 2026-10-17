@@ -26,6 +26,7 @@
 
   /* Outline theme — no fills, borders only. Ink-saving for print. */
   body.theme-outline {
+    --totals-cell-border: 1.5px; /* outlined table cells push the COST figures in; the totals follow */
     --red:  #14202e;
     --row:  transparent;
     --rule: rgba(20,32,46,0.2);
@@ -50,6 +51,9 @@
     background: transparent;
     color: var(--ink);
     border: 2px solid var(--ink);
+    /* totals insets minus the 2px border, keeps the totals grid aligned */
+    padding-left: 18px;
+    padding-right: calc(var(--totals-pad-r, 20px) - 2px);
   }
   body.theme-outline .total-card .total-amount,
   body.theme-outline .total-card .qualifier,
@@ -163,8 +167,11 @@
   #invoice.layout-totals-flat .total-card {
     background: transparent !important;
     color: var(--ink) !important;
-    padding: 8px 0 !important;
+    padding: 8px var(--totals-pad-r, 20px) 8px 20px !important; /* keep the totals grid's insets */
     border-radius: 0 !important;
+  }
+  body.theme-outline #invoice.layout-totals-flat .total-card {
+    padding: 8px calc(var(--totals-pad-r, 20px) - 2px) 8px 18px !important; /* minus the outline border */
   }
   #invoice.layout-totals-flat .total-card .qualifier {
     opacity: 0.55;
@@ -957,7 +964,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 20px;
+    padding: 12px var(--totals-pad-r, 20px) 12px 20px;
     background: #fff;
   }
   .project-total-row .ptl {
@@ -980,7 +987,7 @@
   .total-card {
     background: var(--red);
     color: #fff;
-    padding: 16px 20px;
+    padding: 16px var(--totals-pad-r, 20px) 16px 20px;
   }
 
   .total-card .total-amount {
@@ -1012,14 +1019,20 @@
     white-space: nowrap;
   }
 
-  /* Totals grid: the Project Total figure and the big total share one column,
-     so they stay left-aligned together with or without decimals. */
+  /* Totals grid: every row in the block (Project Total, deposits/payments,
+     the big total) shares one label column and one value column. Labels sit
+     left; every amount is right-aligned to one edge (same right inset on
+     every row), with tabular figures so the digits stack. The right inset
+     puts that edge under the COST column figures above. */
   .total-block {
     display: grid;
     grid-template-columns: 1fr max-content;
+    --totals-pad-r: calc(15.5px + var(--totals-cell-border, 0px));
   }
   .total-block > * { grid-column: 1 / -1; }
   .total-block .project-total-row,
+  .total-block #payments-list,
+  .total-block .adjust-row,
   .total-block .total-card,
   .total-block .total-card .total-amount {
     display: grid;
@@ -1028,16 +1041,54 @@
   }
   .total-block,
   .total-block .project-total-row,
+  .total-block #payments-list,
+  .total-block .adjust-row,
   .total-block .total-card,
   .total-block .total-card .total-amount {
     column-gap: 16px;
   }
   .total-block .project-total-row .ptv,
+  .total-block .adjust-row .adjv,
   .total-block .total-card [data-field="totalAmount"] {
-    justify-self: start;
-    text-align: left;
+    justify-self: end;
+    text-align: right;
     font-variant-numeric: tabular-nums;
   }
+  .total-block .project-total-row .ptl,
+  .total-block .adjust-row .ptl { align-self: center; }
+
+  /* Deposit / payment rows: same label style and padding as Project Total,
+     figure in the same column, a step smaller and in a quiet green. */
+  .total-block #payments-list:empty { display: none; }
+  .total-block #payments-list > :not(.adjust-row) { grid-column: 1 / -1; }
+  .total-block #payments-list #payments-edit-wrap { padding: 0 20px; }
+  .total-block #tax-rate-edit-row { padding-left: 20px !important; padding-right: 20px !important; }
+  .total-block .adjust-row {
+    align-items: center;
+    padding: 0 var(--totals-pad-r, 20px) 12px 20px;
+    background: #fff;
+  }
+  .total-block #payments-list { border-top: 1px dashed var(--rule); background: #fff; }
+  .total-block #payments-list .adjust-row:first-child { padding-top: 12px; }
+  .total-block .adjust-row .ptl {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .total-block .adjust-row .adjv {
+    font-family: 'Roboto', sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: -0.3px;
+    color: #2a8c55;
+    white-space: nowrap;
+  }
+  /* The minus sits with its number; the amount's right edge still matches the other rows. */
+  .total-block .adjust-row .adj-sign { padding-right: 0.2em; }
+  .total-block .project-total-row .ptv { white-space: nowrap; }
 
   .pay-period {
     text-align: right;
@@ -1409,6 +1460,10 @@
     .project-total-row .ptv {
       font-size: 15px;
     }
+    .total-block .adjust-row .adjv {
+      font-size: 13px;
+    }
+    .total-block { --totals-pad-r: calc(9.5px + var(--totals-cell-border, 0px)); }
 
     .total-card .total-amount {
       font-size: 28px;

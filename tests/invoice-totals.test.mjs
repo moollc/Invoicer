@@ -116,3 +116,28 @@ test('prepareInvoiceForArchive does not mutate source', () => {
   assert.equal(parseMoneyNum(archived.projectTotal), 50000);
   assert.equal(parseMoneyNum(archived.totalAmount), 50000);
 });
+
+import { formatTotalsAmount, formatTotalsNumber, totalsDecimals } from '../source/shared/invoice-totals.mjs';
+
+test('totals block follows one decimals setting taken from the total due', () => {
+  const base = { currency: 'JMD', lineItems: [{ costs: ['65000'] }], payments: [{ label: 'Deposit', amount: '10000' }] };
+  const on = { ...base, totalAmount: 'JMD 55,000.00' };
+  const off = { ...base, totalAmount: 'JMD 55,000' };
+  assert.equal(totalsDecimals(on), 2);
+  assert.equal(totalsDecimals(off), 0);
+  assert.equal(formatTotalsNumber(65000, on), '65,000.00');
+  assert.equal(formatTotalsNumber(65000, off), '65,000');
+  assert.equal(formatTotalsAmount(10000, on), 'JMD 10,000.00');
+  assert.equal(formatTotalsAmount(10000, off), 'JMD 10,000');
+  // blank / zero total due keeps the default
+  assert.equal(totalsDecimals({ ...base, totalAmount: '' }), 2);
+  assert.equal(totalsDecimals({ ...base, totalAmount: '$0' }), 2);
+  // real cents are never rounded away
+  assert.equal(totalsDecimals({ ...off, payments: [{ amount: '10000.50' }] }), 2);
+  assert.equal(totalsDecimals({ ...off, lineItems: [{ costs: ['65000.25'] }] }), 2);
+});
+
+test('totals block uses the amount-due prefix for every row', () => {
+  assert.equal(formatTotalsAmount(10000, { currency: 'JMD', totalAmount: '$55,000.00' }), 'JMD 10,000.00');
+  assert.equal(formatTotalsAmount(100, { currency: 'USD', totalAmount: '$400.00' }), '$100.00');
+});

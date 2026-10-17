@@ -8,9 +8,12 @@
 export {
   amountPrefixFor,
   formatTotalAmountDisplay,
+  formatTotalsAmount,
+  formatTotalsNumber,
   parseMoneyNum,
   sumLineItemsTotal,
   sumPayments,
+  totalsDecimals,
 } from './invoice-totals-money.mjs';
 
 export {
