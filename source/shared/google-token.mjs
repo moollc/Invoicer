@@ -115,13 +115,25 @@ export function createGoogleTokenManager(opts = {}) {
   }
 
   // Get a usable token.
-  //   interactive false: refresh without UI (prompt 'none'); never a popup.
+  //   interactive false: no GIS call; a valid token or null.
+//   background true:   refresh with prompt 'none' (proactive timer only);
+//                      Google never shows UI for prompt 'none'.
   //   interactive true:  refresh with prompt '' + login_hint (no UI when the
   //   Google session and consent are still there), then fall back to an
   //   account-chooser popup only if that fails.
   // Resolves the token string, or null when the user must sign in.
-  async function ensureToken({ interactive = false, force = false } = {}) {
+  async function ensureToken({ interactive = false, force = false, background = false } = {}) {
     if (!force && isFresh()) return token;
+    // Plain non-interactive callers (sheet pulls, Drive backup, 401 retries
+    // inside background work) never call GIS at all: GIS token requests use
+    // a popup window, which is exactly what must not appear while printing
+    // or opening a dialog. They use a still-valid token or report sign-in.
+    if (!interactive && !background) {
+      if (force) { token = null; exp = 0; store(); }
+      if (isValid()) return token;
+      try { onSignInNeeded('expired', { interactive: false }); } catch (e) {}
+      return null;
+    }
     if (inflight) {
       const r = await inflight;
       if (r && isValid()) return token;
@@ -168,7 +180,7 @@ export function createGoogleTokenManager(opts = {}) {
     const wait = Math.max(0, exp - now() - margin);
     refreshTimer = setTimer(() => {
       refreshTimer = null;
-      ensureToken({ interactive: false, force: true }).catch(() => {});
+      ensureToken({ background: true, force: true }).catch(() => {});
     }, wait);
   }
 

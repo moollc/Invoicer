@@ -2001,6 +2001,19 @@ function loadInvoiceIntoEditor(receipt) {
   showToast(msg, 'info');
 }
 
+// After a draft/compose opens, let the user mark the invoice Sent once they
+// actually send it. Nothing changes status unless they tap the button.
+function offerMarkAsSent(receipt, lead) {
+  const toast = showToast(`${lead} Mark ${escapeHTML(String(receipt || ''))} as Sent once you send it.`, 'info', 12000);
+  if (!toast) return;
+  const btn = document.createElement('button');
+  btn.textContent = '📤 Mark as Sent';
+  btn.className = 'toast-undo-btn';
+  btn.onclick = () => { toast.remove(); markReceiptAsSent(); render(getData()); showToast(`${receipt} marked as Sent`, 'success', 2500); };
+  const closeBtn = toast.querySelector('.toast-close');
+  if (closeBtn) toast.insertBefore(btn, closeBtn); else toast.appendChild(btn);
+}
+
 function markReceiptAsSent() {
   const data = syncTotalsFromLineItems(getData());
   // Read receipt from rendered DOM — avoids autoReceiptNumber() re-incrementing
@@ -2011,6 +2024,8 @@ function markReceiptAsSent() {
   if (idx >= 0) {
     if (rows[idx].status !== '✅ Paid' && rows[idx].status !== '📋 Quote' && !isQuoteDocument(data)) {
       rows[idx].status = '📤 Sent';
+      rows[idx]._dirty = true;
+      rows[idx]._statusDirty = true;
     }
     if (isQuoteDocument(data)) {
       rows[idx].status = '📋 Quote';
@@ -3243,30 +3258,41 @@ async function proceedPrint() {
   window.print();
   setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
 
-  // Save to Drive after print completes, using a clone so live DOM is never touched
-  if (gmailTokenValid() && _driveFolderId) {
-    showToast('Generating PDF backup...', 'info');
-    setTimeout(async () => {
+  // Optional Drive backup after printing. It never asks Google for a new
+  // token or opens any Google window: only an already-valid token is used,
+  // otherwise it is skipped with a toast. Printing never depends on it.
+  if (_driveFolderId) {
+    if (!gmailTokenValid()) {
+      showToast('PDF printed. Drive backup skipped: Google sign-in expired.', 'info', 5000);
+      return;
+    }
+    const runBackup = async () => {
+      _googleNoRefreshDepth++;
+      let clone = null;
       try {
         const data = getData();
         const filename = buildFilename(localStorage.getItem('invoice-filename-preset') || 'hyphen', data) + '.pdf';
-        const clone = document.getElementById('invoice').cloneNode(true);
+        clone = document.getElementById('invoice').cloneNode(true);
         clone.style.cssText = 'margin:0;box-shadow:none;border-radius:0;width:816px;background:#fff;';
         const cs = getComputedStyle(document.body);
         clone.style.setProperty('--red', cs.getPropertyValue('--red').trim());
         clone.style.setProperty('--rule', cs.getPropertyValue('--rule').trim());
-        // Strip edit-mode controls + draft watermark so the PDF backup is clean
         sanitizePrintClone(clone);
         document.body.appendChild(clone);
-        const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        const opt = { margin: 0, filename, pagebreak: { mode: 'css', avoid: ['tr', '.total-card'] }, image: { type: 'jpeg', quality: 0.95 }, html2canvas: { scale: 1.5 }, jsPDF: { unit: 'mm', format: 'letter', orientation: 'portrait' } };
+        if (typeof html2pdf !== 'function') throw new Error('PDF library not loaded');
         const pdfBlob = await html2pdf().set(opt).from(clone).toPdf().output('blob');
-        document.body.removeChild(clone);
-        savePdfToDrive(pdfBlob, filename);
-      } catch(e) { 
-        console.error('Drive PDF save failed:', e.message); 
-        showToast('Drive PDF save failed: ' + e.message, 'error');
+        const id = await savePdfToDrive(pdfBlob, filename);
+        if (!id) showToast('Drive backup failed (PDF was still printed).', 'info', 5000);
+      } catch (e) {
+        console.warn('Drive PDF backup failed:', e && e.message);
+        showToast('Drive backup failed (PDF was still printed).', 'info', 5000);
+      } finally {
+        if (clone && clone.parentNode) clone.parentNode.removeChild(clone);
+        _googleNoRefreshDepth--;
       }
-    }, 3000);
+    };
+    setTimeout(runBackup, 1500);
   }
 }
 
@@ -8423,9 +8449,11 @@ function gmailTokenValid() {
  *   interactive:true is for a click the user just made (Publish, sign in):
  *   refreshes with prompt '' + login_hint, falls back to the popup.
  */
+let _googleNoRefreshDepth = 0; // >0 while a no-Google-UI-at-all task runs (print backup)
 async function ensureGoogleToken(opts = {}) {
   const m = getGoogleTokenManager();
   if (!m) return gmailTokenValid() ? _gmailToken : null;
+  if (opts.noRefresh || _googleNoRefreshDepth > 0) return m.isValid() && !opts.force ? m.token : null;
   const t = await m.ensureToken(opts);
   _syncTokenMirror();
   return t;
@@ -8519,7 +8547,7 @@ function hadPriorGmailSignIn() {
 // Legacy entry points, now thin wrappers over the token manager.
 // Background refresh: never shows Google UI.
 function requestGmailSilentRefresh() {
-  return ensureGoogleToken({ interactive: false, force: true });
+  return ensureGoogleToken({ background: true, force: true });
 }
 
 // Register a one-shot callback for the next token arrival (legacy API).
@@ -8707,7 +8735,8 @@ async function openEmail() {
         throw new Error(json.error?.message || res.statusText);
       }
       window.open(`https://mail.google.com/mail/#drafts/${json.id}`, '_blank');
-      markReceiptAsSent();
+      // A draft is not a sent invoice: status only changes if the user says so.
+      offerMarkAsSent(data.receiptNumber, 'Gmail draft created.');
       restoreBtn();
     } catch (e) {
       console.error('Draft creation failed:', e.message);
@@ -8724,7 +8753,7 @@ async function openEmail() {
 
   const fallbackEmail = () => {
     window.open(`https://mail.google.com/mail/?view=cm&to=${to}&su=${subject}&body=${body}`, '_blank');
-    markReceiptAsSent();
+    offerMarkAsSent(data.receiptNumber, 'Gmail compose opened.');
   };
 
   // Refresh the token first (silent when the Google session is still there,
@@ -8890,6 +8919,8 @@ async function ensureDriveFolder() {
       if (meta && meta.id && !meta.trashed && !meta.error) return _driveFolderId;
       console.warn('[Drive] Cached folder id stale/inaccessible — clearing', _driveFolderId, meta);
     } catch (e) {
+      // Auth problems say nothing about the folder: keep the cached id.
+      if (/sign-in expired|invalid authentication|401/i.test(String(e && e.message))) throw e;
       console.warn('[Drive] Cached folder probe failed — clearing', _driveFolderId, e);
     }
     _driveFolderId = '';
@@ -9263,7 +9294,8 @@ async function savePdfToDrive(pdfBlob, filename) {
       headers: { Authorization: `Bearer ${_gmailToken}` },
       body: form
     });
-    const json = await res.json();
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.id) throw new Error((json.error && json.error.message) || `Drive upload ${res.status}`);
     console.log('✓ PDF saved to Drive:', json.name);
     showToast(`PDF saved to Drive: ${json.name}`, 'success');
     return json.id;
@@ -11250,15 +11282,11 @@ window.addEventListener('load', () => {
   try { migrateLegacyClientExpenses(); } catch(e) {}
   try { tickBillCycles(); } catch(e) {} // tick on app boot, not just dashboard open
   try {
-    // Stored token expired: try a no-UI refresh (prompt 'none'). It never
-    // shows a sign-in page; if Google needs the user, the next Google action
-    // they click asks then. A valid token schedules its own refresh ~5 min
-    // before expiry.
-    if (!gmailTokenValid() && hadPriorGmailSignIn()) {
-      ensureGoogleToken({ interactive: false }).then(t => {
-        if (t) { updateEmailBtn(); setupDrive(); }
-      }).catch(() => {});
-    }
+    // Stored token expired: do NOT call Google here. Any GIS request opens a
+    // window, and on page load there is no click to attach it to (that is
+    // how a sign-in tab used to appear by itself). The next Google action the
+    // user clicks refreshes it (silently when the Google session is alive).
+    if (!gmailTokenValid() && hadPriorGmailSignIn()) updateEmailBtn();
   } catch(e) {}
 });
 
@@ -11327,13 +11355,20 @@ if ('serviceWorker' in navigator) {
       }
     }
 
-    if ((isCtrl && isP) || (isP && !isCtrl && !isInField)) {
-      e.preventDefault();
+    if ((isCtrl && isP && !e.shiftKey && !e.altKey) || (isP && !isCtrl && !isInField)) {
       const hasOpenModal = Array.from(document.querySelectorAll('div[id$="-overlay"]')).some(el => {
         const s = window.getComputedStyle(el);
         return s.display === 'flex' || s.display === 'block';
       });
-      if (!hasOpenModal && !document.body.classList.contains('editing')) confirmPrint();
+      // First Ctrl+P opens Publish. With Publish (or any modal) already open,
+      // or while editing, Ctrl+P is left to the browser so native print works
+      // (overlays are hidden in print CSS).
+      if (!hasOpenModal && !document.body.classList.contains('editing')) {
+        e.preventDefault();
+        confirmPrint();
+      } else if (!isCtrl) {
+        e.preventDefault();
+      }
     }
 
     if (e.key === 'Escape' && document.body.classList.contains('editing')) {

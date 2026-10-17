@@ -78,8 +78,31 @@ test('token with < 5 min left is refreshed before use', async () => {
   const storage = memStorage({ 'gmail-token': 'old', 'gmail-token-exp': String(T0 + 4 * 60e3), 'gmail-token-scopes': 'scope-a' });
   const { mgr, calls } = makeMgr({ behaviour: () => ({ token: 'new' }), nowRef, storage });
   mgr.restore();
-  assert.equal(await mgr.ensureToken({ interactive: false }), 'new');
-  assert.equal(calls[0].prompt, 'none');
+  assert.equal(await mgr.ensureToken({ interactive: true }), 'new');
+  assert.equal(calls[0].prompt, '');
+});
+
+test('background refresh (timer) uses prompt none', async () => {
+  const nowRef = { t: T0 };
+  const storage = memStorage({ 'gmail-token': 'old', 'gmail-token-exp': String(T0 + 4 * 60e3), 'gmail-token-scopes': 'scope-a' });
+  const { mgr, calls } = makeMgr({ behaviour: () => ({ token: 'new' }), nowRef, storage });
+  mgr.restore();
+  assert.equal(await mgr.ensureToken({ background: true }), 'new');
+  assert.equal(calls[calls.length - 1].prompt, 'none');
+});
+
+test('plain non-interactive use never calls GIS (print / dialog paths)', async () => {
+  const nowRef = { t: T0 };
+  const storage = memStorage({ 'gmail-token': 'old', 'gmail-token-exp': String(T0 - 1), 'gmail-token-scopes': 'scope-a' });
+  const { mgr, calls } = makeMgr({ behaviour: () => ({ token: 'new' }), nowRef, storage });
+  mgr.restore();
+  assert.equal(await mgr.ensureToken({ interactive: false }), null);
+  assert.equal(calls.length, 0);
+  // near expiry but still valid: returned as-is, no GIS call
+  mgr.setToken('soon', 200);
+  calls.length = 0;
+  assert.equal(await mgr.ensureToken({ interactive: false }), 'soon');
+  assert.equal(calls.filter(c => c.prompt !== 'none').length, 0);
 });
 
 test('silent failure -> popup fallback, then caller retries and succeeds', async () => {
@@ -100,10 +123,10 @@ test('silent failure -> popup fallback, then caller retries and succeeds', async
   assert.deepEqual(calls.map(c => c.prompt), ['', 'select_account']);
 });
 
-test('background (non-interactive) failure never opens the popup', async () => {
+test('background refresh failure never opens the popup', async () => {
   const nowRef = { t: T0 };
   const { mgr, calls, signIn } = makeMgr({ behaviour: () => ({ error: 'interaction_required' }), nowRef, storage: memStorage() });
-  assert.equal(await mgr.ensureToken({ interactive: false }), null);
+  assert.equal(await mgr.ensureToken({ background: true }), null);
   assert.deepEqual(calls.map(c => c.prompt), ['none']);
   assert.equal(signIn.length, 1);
 });
@@ -148,7 +171,7 @@ test('withToken retries once on 401 with a forced refresh', async () => {
   let n = 0;
   const { mgr } = makeMgr({ behaviour: () => ({ token: 't' + (++n) }), nowRef, storage: memStorage() });
   const seen = [];
-  const res = await mgr.withToken(async t => { seen.push(t); return { status: seen.length === 1 ? 401 : 200, ok: seen.length > 1 }; });
+  const res = await mgr.withToken(async t => { seen.push(t); return { status: seen.length === 1 ? 401 : 200, ok: seen.length > 1 }; }, { interactive: true });
   assert.equal(res.status, 200);
   assert.deepEqual(seen, ['t1', 't2']);
 });
@@ -166,7 +189,7 @@ test('forced refresh after a 401 that fails drops the rejected token', async () 
   const { mgr } = makeMgr({ behaviour: () => ({ error: 'interaction_required' }), nowRef, storage });
   mgr.restore();
   assert.equal(mgr.isValid(), true);
-  assert.equal(await mgr.ensureToken({ interactive: false, force: true }), null);
+  assert.equal(await mgr.ensureToken({ background: true, force: true }), null);
   assert.equal(mgr.isValid(), false);
   assert.equal(storage.getItem('gmail-token'), null);
 });
