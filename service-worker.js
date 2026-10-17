@@ -1,4 +1,4 @@
-const CACHE = 'app-1792223083'; // __CACHE_VERSION__
+const CACHE = 'app-1792223213'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
@@ -9,6 +9,8 @@ const ASSETS = [
   '/boot/invoice-totals.js',
   '/boot/google-token.js',
   '/boot/ledger-sync.js',
+  '/boot/invoice-format.js',
+  '/source/shared/invoice-format.mjs',
   '/source/shared/ledger-sync.mjs',
   '/source/shared/google-token.mjs',
   '/source/shared/invoice-totals.mjs',

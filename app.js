@@ -393,6 +393,18 @@ function syncTotalsFromLineItems(data) { return getInvoiceTotals().syncTotalsFro
 function formatTotalAmountDisplay(amount, data) { return getInvoiceTotals().formatTotalAmountDisplay(amount, data); }
 function prepareInvoiceForArchive(data) { return getInvoiceTotals().prepareInvoiceForArchive(data); }
 
+function invoiceFormat() {
+  const api = (typeof window !== 'undefined' && window.InvoiceFormat) ? window.InvoiceFormat : null;
+  if (api) return api;
+  // Fallback if the module failed to load: old behaviour, never throws.
+  return {
+    formatPartySub: p => [p && p.address, p && p.email, p && p.phone].filter(Boolean).join('\n'),
+    parsePartySub: t => { const l = String(t || '').split('\n').map(x => x.trim()).filter(Boolean); return { address: l[0] || '', email: l[1] || '', phone: l[2] || '' }; },
+    formatCostCell: v => v,
+    currencyPrefix: c => c || '$',
+  };
+}
+
 function get(obj, path) {
   if (!obj) return undefined;
   return path.split('.').reduce((o, k) => (o || {})[k], obj);
@@ -878,8 +890,10 @@ function render(data) {
     fromSub.textContent = fromLines.join('\n');
   }
 
+  // Bill-to: address lines, email, phone, one per line (.sub is pre-line, so
+  // the breaks survive into print/PDF).
   const toSub = document.getElementById('to-sub');
-  if (toSub) toSub.textContent = [data.to.address, data.to.email, data.to.phone].filter(Boolean).join(' · ');
+  if (toSub) toSub.textContent = invoiceFormat().formatPartySub(data.to);
 
   const pn = document.getElementById('payment-note-el');
   if (pn) pn.textContent = data.paymentNote || '';
@@ -1130,6 +1144,8 @@ function startEdit() {
       }
     }
   });
+
+  injectClientPicker();
 
   // Ensure prompt text isn't saved as actual data
   const originalExtract = extractEditData;
@@ -1465,7 +1481,7 @@ function extractEditData() {
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
     if (field === 'from._sub') {
-      let text = el.textContent;
+      let text = el.innerText !== undefined ? el.innerText : el.textContent;
       if (text === 'Add address / email...') text = '';
       const lines = escapeHTML(text).split('\n').map(s => s.trim()).filter(Boolean);
       // Last line is "email · phone", everything before is address
@@ -1478,12 +1494,13 @@ function extractEditData() {
       return;
     }
     if (field === 'to._sub') {
-      let text = el.textContent;
-      if (text === 'Add address / email...') text = '';
-      const parts = escapeHTML(text).split(' · ').map(s => s.trim());
-      data.to.address = parts[0] || '';
-      data.to.email   = parts[1] || '';
-      data.to.phone   = parts[2] || '';
+      // innerText keeps the line breaks typed in the editor (textContent drops them)
+      let text = el.innerText !== undefined ? el.innerText : el.textContent;
+      if (text.trim() === 'Add address / email...') text = '';
+      const parsed = invoiceFormat().parsePartySub(text);
+      data.to.address = escapeHTML(parsed.address);
+      data.to.email   = escapeHTML(parsed.email);
+      data.to.phone   = escapeHTML(parsed.phone);
       return;
     }
     if (field === 'date') {
@@ -1695,6 +1712,58 @@ function stopEdit() {
   // left behind in the live DOM that window.print() renders.
   const taxRow = document.getElementById('tax-rate-edit-row');
   if (taxRow) taxRow.remove();
+  const picker = document.getElementById('bill-to-client-picker');
+  if (picker) picker.remove();
+}
+
+// Bill-to client picker (edit mode). Fed from the Clients tab (Name, Address,
+// Email, Phone), synced into the local address book. Picking a client fills
+// the editable Bill-to fields in place, so other unsaved edits are kept.
+function fillClientPickerOptions(sel) {
+  const current = sel.value;
+  const clients = loadClients().filter(c => c && c.name).slice().sort((a, b) => a.name.localeCompare(b.name));
+  sel.innerHTML = '';
+  const ph = document.createElement('option');
+  ph.value = ''; ph.textContent = clients.length ? 'Pick a client…' : 'No saved clients yet';
+  sel.appendChild(ph);
+  clients.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c.name; o.textContent = c.name;
+    sel.appendChild(o);
+  });
+  if (current) sel.value = current;
+}
+
+function injectClientPicker() {
+  const party = document.querySelector('.party.to');
+  if (!party || document.getElementById('bill-to-client-picker')) return;
+  const sel = document.createElement('select');
+  sel.id = 'bill-to-client-picker';
+  sel.className = 'edit-only client-picker';
+  sel.setAttribute('aria-label', 'Pick a client from the Clients tab');
+  sel.title = 'Fill Bill-to from the Clients tab';
+  fillClientPickerOptions(sel);
+  sel.addEventListener('change', () => {
+    const c = loadClients().find(x => x.name === sel.value);
+    if (!c) return;
+    const nameEl = party.querySelector('[data-field="to.name"]');
+    const subEl = document.getElementById('to-sub');
+    if (nameEl) nameEl.textContent = c.name;
+    if (subEl) {
+      subEl.style.color = '';
+      subEl.textContent = invoiceFormat().formatPartySub(c);
+    }
+    const receiptEl = document.querySelector('[data-field="receiptNumber"]');
+    const pending = typeof unbilledClientExpenses === 'function'
+      ? unbilledClientExpenses(c.name, receiptEl ? receiptEl.textContent.trim() : '') : [];
+    if (pending.length && typeof promptRebillExpenses === 'function') promptRebillExpenses(c.name, pending);
+  });
+  const lbl = party.querySelector('.lbl');
+  if (lbl) lbl.after(sel); else party.prepend(sel);
+  // Refresh from the sheet's Clients tab in the background (no sign-in UI).
+  if (gmailTokenValid() && typeof loadClientsFromSheet === 'function') {
+    loadClientsFromSheet().then(() => { if (document.getElementById('bill-to-client-picker') === sel) fillClientPickerOptions(sel); }).catch(() => {});
+  }
 }
 
 function formatCurrencyNative(amount, currencyCode = 'USD', decimals = 2) {

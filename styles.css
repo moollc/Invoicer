@@ -2745,3 +2745,8 @@
   .publish-btn-ghost { padding:8px 16px; background:rgba(255,255,255,0.1); color:#fff; border:1.5px solid rgba(255,255,255,0.2); border-radius:6px; font-family:'Roboto',sans-serif; font-size:12px; cursor:pointer; }
   .status-dot { width:6px; height:6px; border-radius:50%; background:#fff; display:inline-block; }
   .profile-field-label--mb6 { margin-bottom:6px; }
+  /* Bill-to / From blocks keep their line breaks on screen, in print and PDF */
+  .party .sub, .print-clone .party .sub { white-space: pre-line; }
+  .client-picker { display: none; font-family: Roboto, sans-serif; font-size: 11px; margin: 2px 0 6px; padding: 3px 6px; border: 1.5px dashed var(--rule); border-radius: 4px; background: transparent; color: var(--ink); max-width: 100%; }
+  body.editing .client-picker { display: block !important; }
+  @media print { .client-picker { display: none !important; } }
