@@ -140,8 +140,10 @@ export function createGoogleTokenManager(opts = {}) {
     let r;
     try { r = await run; } finally { inflight = null; }
     if (r.ok) return token;
-    // A still-valid (but near-expiry) token is better than nothing.
-    if (isValid()) return token;
+    // A still-valid (but near-expiry) token is better than nothing, unless
+    // the caller forced a refresh because Google already rejected it (401).
+    if (force) { token = null; exp = 0; store(); }
+    else if (isValid()) return token;
     try { onSignInNeeded(r.error, { interactive }); } catch (e) {}
     return null;
   }

@@ -2044,28 +2044,45 @@ function markReceiptAsSent() {
 
 let _pendingRow = null; // the row object for the current invoice, set on dialog open
 
-async function confirmPrint() {
-  const data = syncTotalsFromLineItems(getData());
+// Ledger summary row for an invoice. Status comes from the existing row (set
+// by the user) or is derived: a deposit/payment with a balance left => Deposit.
+function buildLedgerRowFromInvoice(data) {
   const services = data.lineItems.map(l => l.service).join(', ');
   const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
   const quoteDoc = isQuoteDocument(data);
-  _pendingRow = {
-    receipt:      data.receiptNumber,
+  const receipt = String(data.receiptNumber || '').trim();
+  const existing = loadLedgerRows().find(r => String(r.receipt || '').trim() === receipt);
+  const status = LedgerSyncApi().deriveLedgerStatus(data, existing && existing.status, { isQuote: quoteDoc });
+  return {
+    receipt,
     date:         normalizeLedgerDate(data.date),
     client:       data.to.name,
     service:      services,
     description:  description,
     projectTotal: `${data.currency} ${data.projectTotal}`,
-    amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
-    status:       quoteDoc ? '📋 Quote' : '⬜ Unpaid',
+    amountDue:    `${data.currency} ${String(data.totalAmount).replace(/[^0-9.,]/g, '').trim()}`,
+    status,
     payPeriod:    data.payPeriod || '',
     docType:      quoteDoc ? 'quote' : 'invoice',
+    taxRate:      parseFloat(data.taxRate) > 0 ? parseFloat(data.taxRate) : 0,
   };
+}
+
+function LedgerSyncApi() {
+  const api = (typeof window !== 'undefined' && window.LedgerSync) ? window.LedgerSync : null;
+  if (!api) throw new Error('LedgerSync not loaded — hard refresh (Cmd+Shift+R)');
+  return api;
+}
+
+async function confirmPrint() {
+  const data = syncTotalsFromLineItems(getData());
+  _pendingRow = buildLedgerRowFromInvoice(data);
+  const existsAlready = loadLedgerRows().some(r => String(r.receipt || '').trim() === _pendingRow.receipt);
 
   archiveInvoice(data.receiptNumber, data);
 
-  // Show the row that will be added
-  const preview = `| ${_pendingRow.receipt} | ${_pendingRow.date} | ${_pendingRow.client} | ${_pendingRow.service} | ${_pendingRow.projectTotal} | ${_pendingRow.amountDue} | ${_pendingRow.status} |`;
+  // Show the row that will be added (or updated)
+  const preview = `${existsAlready ? 'Updates ' : ''}| ${_pendingRow.receipt} | ${_pendingRow.date} | ${_pendingRow.client} | ${_pendingRow.service} | ${_pendingRow.projectTotal} | ${_pendingRow.amountDue} | ${_pendingRow.status} |`;
   document.getElementById('ledger-preview').textContent = preview;
   document.getElementById('ledger-confirm').style.display = 'none';
 
@@ -2242,6 +2259,7 @@ async function renderLedgerHistory() {
         if (!isNaN(idx) && lrows[idx]) {
           lrows[idx].status = '✅ Paid';
           lrows[idx]._dirty = true;
+          lrows[idx]._statusDirty = true;
           toUpdate.push(lrows[idx]);
         }
       });
@@ -2252,7 +2270,7 @@ async function renderLedgerHistory() {
         if (ok) {
           const current = loadLedgerRows();
           const i = current.findIndex(r => r.receipt === row.receipt);
-          if (i !== -1) { delete current[i]._dirty; saveLedgerRows(current); }
+          if (i !== -1) { delete current[i]._dirty; delete current[i]._statusDirty; saveLedgerRows(current); }
         }
       }
     };
@@ -2602,13 +2620,14 @@ async function renderLedgerHistory() {
           amountSpan.textContent = rows[realIdx].amountDue;
         }
         rows[realIdx]._dirty = true;
+        rows[realIdx]._statusDirty = true;
         wrap.style.background = rowBg(rows[realIdx], false);
         saveLedgerRows(rows);
         const paidAmountDue = sel.value === '✅ Paid' ? rows[realIdx].amountDue : null;
         const _statusOk = await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
         if (_statusOk) {
           const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === rows[realIdx].receipt);
-          if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+          if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
         }
         if (sel.value === '✅ Paid') {
           // Always reload from storage so goalAllocations saved by a prior allocation are visible
@@ -2699,12 +2718,10 @@ async function renderLedgerHistory() {
     delBtn.style.cssText = 'background:none; border:none; cursor:pointer; font-size:12px; color:#9aa2ac; padding:4px; border-radius:4px; flex-shrink:0; transition:color 0.15s; margin-left:4px;';
     delBtn.addEventListener('mouseenter', () => delBtn.style.color = '#d0241b');
     delBtn.addEventListener('mouseleave', () => delBtn.style.color = '#9aa2ac');
-    delBtn.addEventListener('click', () => {
-      if (confirm(`Delete ledger entry for ${row.receipt}?`)) {
-        rows.splice(realIdx, 1);
-        saveLedgerRows(rows);
-        renderLedgerHistory();
-      }
+    delBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete ledger entry for ${row.receipt}${row.client ? ' (' + row.client + ')' : ''}? This removes it here and from the sheet.`)) return;
+      delBtn.disabled = true;
+      try { await deleteLedgerEntry(row); } finally { delBtn.disabled = false; }
     });
 
     // ── Row expand panel (click info to toggle) ──
@@ -2845,14 +2862,27 @@ async function renderLedgerHistory() {
 }
 
 async function updateLedger() {
-  const rows = loadLedgerRows();
-  const data = getData();
+  // Rebuild from the invoice as it is now (it may have been edited since the
+  // Publish dialog opened) and upsert by receipt number: an existing receipt
+  // is updated in place, never appended a second time.
+  const data = syncTotalsFromLineItems(getData());
+  const row = buildLedgerRowFromInvoice(data);
+  _pendingRow = row;
+  const LS = LedgerSyncApi();
+  const { rows: next, action } = LS.upsertLedgerRow(loadLedgerRows(), { ...row, _dirty: true });
+  saveLedgerRows(next);
+  archiveInvoice(row.receipt, data);
 
-  // Add new row if not already present
-  if (!rows.find(r => r.receipt === _pendingRow.receipt)) {
-    rows.push({ ..._pendingRow, _dirty: true });
-    saveLedgerRows(rows);
-  }
+  // Pin receipt + date so the editor keeps showing this receipt after save
+  // (without the pin, the next render would auto-number the next letter).
+  try {
+    const raw = JSON.parse(document.getElementById('invoice-data').textContent);
+    if (!raw.receiptOverride || !raw.dateOverride) {
+      raw.receiptOverride = raw.receiptOverride || row.receipt;
+      raw.dateOverride = raw.dateOverride || data.date;
+      document.getElementById('invoice-data').textContent = JSON.stringify(raw, null, 2);
+    }
+  } catch (e) {}
 
   // Save client to address book
   if (data.to?.name) {
@@ -2860,26 +2890,139 @@ async function updateLedger() {
     renderClientChips();
   }
 
-  // Sync to Google Sheets if configured. Saving is a click, so the token
-  // refresh may use the popup; "synced" is only claimed on a confirmed write.
+  // Write to the sheet. Saving is a click, so the token refresh may use the
+  // popup. "Synced" is only claimed when the sheet write is confirmed.
   let synced = false;
   if (_sheetsSpreadsheetId) {
     const tok = await ensureGoogleToken({ interactive: true });
-    if (tok) synced = await syncToGoogleSheets(data);
+    if (tok) synced = await upsertLedgerRowOnSheet(loadLedgerRows().find(r => r.receipt === row.receipt) || row);
+    if (synced) markLedgerRowClean(row.receipt);
   }
 
-  // Re-render history so the new row appears with a status selector
-  renderLedgerHistory();
+  // Re-render from saved data so the list shows the new client/service.
+  await renderLedgerHistory();
 
+  const n = loadLedgerRows().length;
+  const verb = action === 'update' ? 'Updated' : 'Saved';
   const confirmEl = document.getElementById('ledger-confirm');
   confirmEl.style.display = 'block';
-  const n = loadLedgerRows().length;
   if (!_sheetsSpreadsheetId || synced) {
     confirmEl.style.color = '#2a8c55';
-    confirmEl.textContent = `✓ Saved — ${n} entr${n === 1 ? 'y' : 'ies'} in ledger${synced ? ' & synced to Sheets' : ''}.`;
+    confirmEl.textContent = `✓ ${verb} ${row.receipt} — ${n} entr${n === 1 ? 'y' : 'ies'} in ledger${synced ? ' & synced to Sheets' : ''}.`;
   } else {
+    const why = gmailTokenValid() ? 'the sheet write failed' : 'Google sign-in expired';
     confirmEl.style.color = '#b45309';
-    confirmEl.textContent = `⚠ Saved on this device only — NOT synced to Sheets${gmailTokenValid() ? ' (sheet write failed)' : ' (Google sign-in expired)'}. It will retry on the next sync.`;
+    confirmEl.textContent = `⚠ ${verb} ${row.receipt} on this device only — NOT synced to Sheets (${why}). It stays queued and retries on the next sync.`;
+    showToast(`Not synced to Sheets: ${why}. Saved on this device; will retry.`, 'error', 7000);
+  }
+}
+
+function markLedgerRowClean(receipt) {
+  const cur = loadLedgerRows();
+  let changed = false;
+  cur.forEach(r => {
+    if (String(r.receipt || '').trim() === receipt && (r._dirty || r._statusDirty)) {
+      delete r._dirty; delete r._statusDirty; changed = true;
+    }
+  });
+  if (changed) saveLedgerRows(cur);
+}
+
+// ── Ledger delete (explicit, user-initiated) ─────────────────
+// Removes the row on this device and in the sheet. If the sheet can't be
+// reached now, a tombstone is kept so the next sync removes it there instead
+// of bringing it back.
+function loadLedgerTombstones() {
+  try { return JSON.parse(localStorage.getItem('invoice-ledger-deleted') || '[]'); } catch (e) { return []; }
+}
+function saveLedgerTombstones(list) {
+  localStorage.setItem('invoice-ledger-deleted', JSON.stringify(list));
+}
+
+async function deleteLedgerEntry(row) {
+  const LS = LedgerSyncApi();
+  const { rows, removed } = LS.removeLocalRow(loadLedgerRows(), row);
+  if (removed) saveLedgerRows(rows);
+  const tomb = LS.makeTombstone(row);
+  const tombs = loadLedgerTombstones().filter(t => t.sig !== tomb.sig);
+  tombs.push(tomb);
+  saveLedgerTombstones(tombs);
+
+  let sheetOk = !_sheetsSpreadsheetId;
+  if (_sheetsSpreadsheetId) {
+    const tok = await ensureGoogleToken({ interactive: true });
+    if (tok) {
+      const sheet = await readLedgerSheet();
+      if (sheet) {
+        const targets = LS.tombstoneTargets(sheet.rows, tomb);
+        sheetOk = targets.length ? await deleteLedgerSheetRows(targets) : true;
+      }
+    }
+  }
+  if (sheetOk) saveLedgerTombstones(loadLedgerTombstones().filter(t => t.sig !== tomb.sig));
+  await renderLedgerHistory();
+  showToast(sheetOk
+    ? `Deleted ${row.receipt} from the ledger${_sheetsSpreadsheetId ? ' and the sheet' : ''}.`
+    : `Deleted ${row.receipt} on this device. Not removed from the sheet yet (sign-in expired or sheet unreachable); it will be removed on the next sync.`,
+    sheetOk ? 'success' : 'info', 6000);
+}
+
+// ── Ledger sheet I/O ─────────────────────────────────────────
+async function readLedgerSheet() {
+  const res = await sheetsRequest('GET', `/spreadsheets/${_sheetsSpreadsheetId}/values/${encodeURIComponent('Ledger!A:K')}`);
+  if (!res || res.error) return null;
+  const values = res.values || [];
+  const LS = LedgerSyncApi();
+  // Keep one entry per sheet row (blank receipts too) so row numbers line up.
+  const rows = values.slice(1).map(v => LS.sheetValuesToRow(v || []));
+  return { rows, values };
+}
+
+let _ledgerSheetGid = null;
+async function getLedgerSheetGid() {
+  if (_ledgerSheetGid !== null) return _ledgerSheetGid;
+  const meta = await sheetsRequest('GET', `/spreadsheets/${_sheetsSpreadsheetId}?fields=sheets.properties`);
+  if (!meta || meta.error || !meta.sheets) return null;
+  const tab = meta.sheets.find(x => x.properties.title === 'Ledger') || meta.sheets.find(x => x.properties.title === 'Sheet1');
+  if (!tab) return null;
+  _ledgerSheetGid = tab.properties.sheetId;
+  return _ledgerSheetGid;
+}
+
+// rowNumbers: 1-based sheet rows (header is row 1). Deletes bottom-up.
+async function deleteLedgerSheetRows(rowNumbers) {
+  const gid = await getLedgerSheetGid();
+  if (gid === null || gid === undefined) return false;
+  const nums = [...new Set(rowNumbers)].filter(n => n >= 2).sort((a, b) => b - a);
+  if (!nums.length) return true;
+  const requests = nums.map(n => ({ deleteDimension: { range: { sheetId: gid, dimension: 'ROWS', startIndex: n - 1, endIndex: n } } }));
+  const res = await sheetsRequest('POST', `/spreadsheets/${_sheetsSpreadsheetId}:batchUpdate`, { requests });
+  return !!res && !res.error;
+}
+
+// Write one row: update the existing sheet row with that receipt, or append.
+// Goal allocations (col J) are left alone unless the row carries them.
+async function upsertLedgerRowOnSheet(row) {
+  if (!_sheetsSpreadsheetId || !row || !row.receipt) return false;
+  try {
+    const LS = LedgerSyncApi();
+    const colA = await sheetsRead(_sheetsSpreadsheetId, 'Ledger!A:A');
+    if (colA === null) return false;
+    const key = LS.normReceipt(row.receipt);
+    const idx = colA.findIndex((r, i) => i > 0 && LS.normReceipt(r && r[0]) === key);
+    const vals = LS.rowToSheetValues(row);
+    if (idx === -1) {
+      await sheetsAppend(_sheetsSpreadsheetId, 'Ledger!A1', [vals]);
+      return true;
+    }
+    const n = idx + 1;
+    await sheetsWrite(_sheetsSpreadsheetId, `Ledger!A${n}:I${n}`, [vals.slice(0, 9)]);
+    if (row.goalAllocations) await sheetsWrite(_sheetsSpreadsheetId, `Ledger!J${n}`, [[vals[9]]]);
+    await sheetsWrite(_sheetsSpreadsheetId, `Ledger!K${n}`, [[vals[10]]]);
+    return true;
+  } catch (e) {
+    console.warn('[Ledger] sheet upsert failed for', row.receipt, e.message || e);
+    return false;
   }
 }
 
@@ -8600,61 +8743,22 @@ function resetGmailClientId() {
 
 // ── Google Sheets Sync ───────────────────────────────────────
 
+// Write the current invoice's ledger row to the sheet (upsert by receipt).
+// Returns true only when the sheet write is confirmed.
 async function syncToGoogleSheets(invoiceData) {
-  if (!gmailTokenValid()) return false;
   if (!_sheetsSpreadsheetId) {
-    const folderId = await ensureDriveFolder();
-    await ensureLedgerSheet(folderId);
+    try {
+      const folderId = await ensureDriveFolder();
+      await ensureLedgerSheet(folderId);
+    } catch (e) { return false; }
   }
   if (!_sheetsSpreadsheetId) return false;
-
-  try {
-    const services = invoiceData.lineItems.map(l => l.service).join(', ');
-    const description = invoiceData.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
-    const row = [
-      invoiceData.receiptNumber,
-      normalizeLedgerDate(invoiceData.date),
-      invoiceData.to.name,
-      services,
-      invoiceData.currency + ' ' + invoiceData.projectTotal,
-      invoiceData.currency + ' ' + String(invoiceData.totalAmount).replace(/[^0-9.,]/g, '').trim(),
-      '⬜ Unpaid',
-      (invoiceData.from && invoiceData.from.name) || '',
-      description,
-      '', // Goal Alloc (col J) — written separately when allocation fires
-      parseFloat(invoiceData.taxRate) > 0 ? parseFloat(invoiceData.taxRate) : '' // Tax Rate (col K)
-    ];
-
-    const res = await googleFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${_gmailToken}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ values: [row] })
-      }
-    );
-
-    if (!res.ok) {
-      const err = await res.json();
-      console.error('Sheets sync error:', err);
-      showToast('Invoice saved locally — sheet sync failed. Will retry on next open.', 'info');
-      return false;
-    } else {
-      console.log('✓ Invoice synced to Google Sheets');
-      // Row is now in the sheet — remove it from local write buffer
-      const stored = loadLedgerRows();
-      const filtered = stored.filter(r => r.receipt !== invoiceData.receiptNumber);
-      if (filtered.length !== stored.length) saveLedgerRows(filtered);
-      return true;
-    }
-  } catch (e) {
-    console.error('Sheets sync failed:', e.message);
-    showToast('Invoice saved locally — sheet sync failed. Will retry on next open.', 'info');
-    return false;
-  }
+  const receipt = String(invoiceData.receiptNumber || '').trim();
+  const row = loadLedgerRows().find(r => String(r.receipt || '').trim() === receipt) || buildLedgerRowFromInvoice(invoiceData);
+  const ok = await upsertLedgerRowOnSheet(row);
+  if (ok) markLedgerRowClean(receipt);
+  else showToast('Invoice saved locally — sheet sync failed. Will retry on next sync.', 'info');
+  return ok;
 }
 
 async function promptForSheetsId() {
@@ -9896,7 +10000,7 @@ async function undoGoalAllocation(row, container) {
       const _allocOk = await updateGoalAllocOnSheet(row.receipt, null);
       if (_allocOk) {
         const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === row.receipt);
-        if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+        if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
       }
     }
 
@@ -10124,12 +10228,13 @@ async function applyUpdateStatus(statusData, data, actionNotes) {
   if (rowIdx >= 0) {
     rows[rowIdx].status = statusData.status;
     rows[rowIdx]._dirty = true;
+    rows[rowIdx]._statusDirty = true;
     saveLedgerRows(rows);
     const ok = await updateLedgerStatusOnSheet(statusData.receipt, statusData.status);
     if (ok) {
       const current = loadLedgerRows();
       const i = current.findIndex(r => r.receipt === statusData.receipt);
-      if (i !== -1) { delete current[i]._dirty; saveLedgerRows(current); }
+      if (i !== -1) { delete current[i]._dirty; delete current[i]._statusDirty; saveLedgerRows(current); }
     }
   } else { console.warn('[applyUpdateStatus] Receipt not found in localStorage:', statusData.receipt); }
   actionNotes.push(`Status → ${statusData.status}`);
@@ -10221,116 +10326,46 @@ async function loadLedgerFromSheet() {
 }
 
 async function _doLoadLedgerFromSheet() {
-  if (!_sheetsSpreadsheetId || !_gmailToken) {
-    console.log('Sheet sync not available: missing ID or token');
+  if (!_sheetsSpreadsheetId) return null;
+  // Background pull: refresh the token without UI; no token => local only.
+  const tok = await ensureGoogleToken({ interactive: false });
+  if (!tok) {
+    console.log('Sheet sync not available: Google sign-in needed');
     return null;
   }
-
   try {
-    const res = await googleFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:K`,
-      { headers: { Authorization: `Bearer ${_gmailToken}` } }
-    );
+    const sheet = await readLedgerSheet();
+    if (!sheet) return null;
+    console.log('Loaded', sheet.values.length, 'rows from sheet (incl. header)');
+    const LS = LedgerSyncApi();
+    const tombs = loadLedgerTombstones();
+    const { rows: merged, toPush, toDelete } = LS.mergeLedger(sheet.rows, loadLedgerRows(), tombs);
 
-    if (!res.ok) {
-      const err = await res.json();
-      console.error('Failed to load ledger from sheet:', err.error?.message || res.statusText);
-      return null;
+    // Deletes first, bottom-up so row numbers stay valid. Then forget the
+    // tombstones that were applied or whose row is already gone; keep only
+    // ones that could not be matched to a single row yet.
+    let deleted = true;
+    if (toDelete.length) {
+      console.log(`[Ledger] Removing ${toDelete.length} deleted row(s) from sheet`);
+      deleted = await deleteLedgerSheetRows(toDelete);
     }
-
-    const data = await res.json();
-    const allRows = data.values || [];
-    console.log('Loaded', allRows.length, 'rows from sheet (incl. header)');
-
-    const sheetRows = allRows.slice(1)
-      .filter(row => row[0] && row[0].trim())
-      .map(row => ({
-        receipt:         row[0] || '',
-        date:            row[1] || '',
-        client:          row[2] || '',
-        service:         row[3] || '',
-        projectTotal:    row[4] || '',
-        amountDue:       row[5] || '',
-        status:          row[6] || '⬜ Unpaid',
-        company:         row[7] || '',
-        description:     row[8] || '',
-        goalAllocations: (() => { try { return JSON.parse(row[9] || 'null'); } catch(e) { return null; } })(),
-        taxRate:         parseFloat(row[10] || '0') || 0,
-      }));
-
-    const sheetReceipts = new Set(sheetRows.map(r => r.receipt));
-    const local = loadLedgerRows();
-
-    // Keep only explicitly dirty local rows not yet in the sheet.
-    // Local rows without _dirty that aren't in the sheet are ghosts — silently drop them.
-    const buffer = local.filter(r => r._dirty === true && !sheetReceipts.has(r.receipt));
-
-    // Field-level merge for dirty buffer rows that happen to overlap sheet
-    // (e.g. status changed locally while sheet pull was in-flight)
-    const merged = sheetRows.map(sr => {
-      const lr = local.find(r => r.receipt === sr.receipt);
-      if (!lr) return sr;
-      return {
-        ...sr,
-        status: (lr.status === '✅ Paid' && sr.status !== '✅ Paid') ? '✅ Paid' : sr.status,
-        goalAllocations: sr.goalAllocations ?? lr.goalAllocations ?? null,
-        taxRate: sr.taxRate > 0 ? sr.taxRate : (lr.taxRate || 0),
-      };
+    const keepTombs = tombs.filter(t => {
+      const hits = LS.tombstoneTargets(sheet.rows, t).length;
+      if (hits) return !deleted;
+      return sheet.rows.some(r => LS.normReceipt(r.receipt) === t.receipt);
     });
+    if (keepTombs.length !== tombs.length) saveLedgerTombstones(keepTombs);
 
-    // PUSH SECOND: only push what's left in the dirty buffer after flush
-    if (buffer.length) {
-      console.log(`[Ledger] Pushing ${buffer.length} unsynced row(s) to sheet`);
-      for (const row of buffer) {
-        const sheetRow = [
-          row.receipt, row.date, row.client, row.service,
-          row.projectTotal, row.amountDue, row.status, row.company || '',
-          row.description || '',
-          row.goalAllocations ? JSON.stringify(row.goalAllocations) : '',
-          parseFloat(row.taxRate) > 0 ? parseFloat(row.taxRate) : ''
-        ];
-        try {
-          const pushRes = await googleFetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
-            { method: 'POST', headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ values: [sheetRow] }) }
-          );
-          if (pushRes.ok) {
-            row._dirty = false;
-            console.log(`[Ledger] Pushed ${row.receipt}`);
-          } else {
-            console.warn(`[Ledger] Push failed for ${row.receipt}:`, pushRes.status);
-          }
-        } catch (e) {
-          console.warn(`[Ledger] Push error for ${row.receipt}:`, e.message);
-        }
-      }
+    // Push local edits the sheet hasn't got (upsert by receipt).
+    for (const row of toPush) {
+      const ok = await upsertLedgerRowOnSheet(row);
+      if (ok) { delete row._dirty; delete row._statusDirty; console.log(`[Ledger] Pushed ${row.receipt}`); }
+      else console.warn(`[Ledger] Push failed for ${row.receipt}; kept queued`);
     }
 
-    // Repair stale sheet rows (paid status, goal allocations)
-    const repairRows = merged.filter((mr, i) => {
-      const sr = sheetRows[i];
-      return sr && (mr.status !== sr.status || (mr.goalAllocations && !sr.goalAllocations));
-    });
-    if (repairRows.length) {
-      console.log(`[Ledger] Repairing ${repairRows.length} stale sheet row(s)...`);
-      for (const row of repairRows) {
-        try { await updateLedgerStatusOnSheet(row.receipt, row.status); } catch(e) {}
-        if (row.goalAllocations) {
-          try { await updateGoalAllocOnSheet(row.receipt, row.goalAllocations); } catch(e) {}
-        }
-      }
-    }
-
-    // Rows still dirty after push attempts (push failed)
-    const remainingBuffer = buffer.filter(r => r._dirty === true);
-
-    // Save full merged result so renderDashboard() always finds data in localStorage
-    const finalRows = [...merged, ...remainingBuffer];
+    const finalRows = merged.filter(r => r && r.receipt);
     saveLedgerRows(finalRows);
-
     return finalRows;
-
   } catch (e) {
     console.error('Ledger load error:', e.message);
     return null;
@@ -10338,7 +10373,7 @@ async function _doLoadLedgerFromSheet() {
 }
 
 async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null) {
-  if (!_sheetsSpreadsheetId || !_gmailToken) return;
+  if (!_sheetsSpreadsheetId) return;
 
   try {
     const readRes = await googleFetch(
@@ -10386,7 +10421,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
 }
 
 async function updateGoalAllocOnSheet(receiptNumber, allocations) {
-  if (!_sheetsSpreadsheetId || !_gmailToken) return;
+  if (!_sheetsSpreadsheetId) return;
   try {
     const readRes = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:A`,
@@ -10693,7 +10728,7 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
         const _aok = await updateGoalAllocOnSheet(invoiceRow.receipt, appliedAllocations);
         if (_aok) {
           const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === invoiceRow.receipt);
-          if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+          if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
         }
       } catch(e) { console.warn('Goal alloc sheet write failed:', e.message); }
     }
@@ -11462,13 +11497,14 @@ function quickSetStatus(status) {
   }
   rows[idx].status = status;
   rows[idx]._dirty = true;
+  rows[idx]._statusDirty = true;
   saveLedgerRows(rows);
   const _receipt = rows[idx].receipt;
   const _amtDue = status === '✅ Paid' ? rows[idx].amountDue : null;
   updateLedgerStatusOnSheet(_receipt, status, _amtDue).then(ok => {
     if (ok) {
       const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === _receipt);
-      if (_ci !== -1) { delete _cur[_ci]._dirty; saveLedgerRows(_cur); }
+      if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
     }
   });
   document.getElementById('status-picker').style.display = 'none';

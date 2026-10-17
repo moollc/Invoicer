@@ -159,3 +159,14 @@ test('scope change discards the stored token', () => {
   assert.equal(mgr.restore(), false);
   assert.equal(storage.getItem('gmail-token'), null);
 });
+
+test('forced refresh after a 401 that fails drops the rejected token', async () => {
+  const nowRef = { t: T0 };
+  const storage = memStorage({ 'gmail-token': 'revoked', 'gmail-token-exp': String(T0 + 50 * 60e3), 'gmail-token-scopes': 'scope-a' });
+  const { mgr } = makeMgr({ behaviour: () => ({ error: 'interaction_required' }), nowRef, storage });
+  mgr.restore();
+  assert.equal(mgr.isValid(), true);
+  assert.equal(await mgr.ensureToken({ interactive: false, force: true }), null);
+  assert.equal(mgr.isValid(), false);
+  assert.equal(storage.getItem('gmail-token'), null);
+});
