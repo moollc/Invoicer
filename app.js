@@ -767,7 +767,7 @@ async function ensureTemplatesDriveFolder() {
 }
 
 async function driveUploadJsonFile(fileId, jsonText) {
-  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+  const res = await googleFetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
     method: 'PATCH',
     headers: {
       Authorization: `Bearer ${_gmailToken}`,
@@ -846,7 +846,7 @@ async function listDriveTemplates() {
 
 async function importTemplateFromDrive(fileId) {
   if (!gmailTokenValid()) throw new Error('Sign in with Google first');
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+  const res = await googleFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
     headers: { Authorization: `Bearer ${_gmailToken}` },
   });
   if (!res.ok) throw new Error('Could not download template from Drive');
@@ -2860,9 +2860,12 @@ async function updateLedger() {
     renderClientChips();
   }
 
-  // Sync to Google Sheets if configured
-  if (_sheetsSpreadsheetId && _gmailToken) {
-    await syncToGoogleSheets(data);
+  // Sync to Google Sheets if configured. Saving is a click, so the token
+  // refresh may use the popup; "synced" is only claimed on a confirmed write.
+  let synced = false;
+  if (_sheetsSpreadsheetId) {
+    const tok = await ensureGoogleToken({ interactive: true });
+    if (tok) synced = await syncToGoogleSheets(data);
   }
 
   // Re-render history so the new row appears with a status selector
@@ -2870,8 +2873,14 @@ async function updateLedger() {
 
   const confirmEl = document.getElementById('ledger-confirm');
   confirmEl.style.display = 'block';
-  confirmEl.style.color   = '#2a8c55';
-  confirmEl.textContent   = `✓ Saved — ${rows.length} entr${rows.length === 1 ? 'y' : 'ies'} in ledger${_sheetsSpreadsheetId ? ' & synced to Sheets' : ''}.`;
+  const n = loadLedgerRows().length;
+  if (!_sheetsSpreadsheetId || synced) {
+    confirmEl.style.color = '#2a8c55';
+    confirmEl.textContent = `✓ Saved — ${n} entr${n === 1 ? 'y' : 'ies'} in ledger${synced ? ' & synced to Sheets' : ''}.`;
+  } else {
+    confirmEl.style.color = '#b45309';
+    confirmEl.textContent = `⚠ Saved on this device only — NOT synced to Sheets${gmailTokenValid() ? ' (sheet write failed)' : ' (Google sign-in expired)'}. It will retry on the next sync.`;
+  }
 }
 
 // Load the exact past invoice (read-only restore of the original receipt).
@@ -5446,7 +5455,7 @@ async function uploadBillFileToDrive({ bill, dataUrl, originalName, kind }) {
 
   const controller = new AbortController();
   const uploadTimeout = setTimeout(() => controller.abort(), 15000);
-  const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+  const uploadRes = await googleFetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
     method: 'PATCH',
     headers: { 'Authorization': `Bearer ${_gmailToken}`, 'Content-Type': mimeType },
     body: blob,
@@ -6370,7 +6379,7 @@ async function gmailApi(path, opts = {}) {
   const url = path.startsWith('http')
     ? path
     : `https://gmail.googleapis.com/gmail/v1/users/me${path.startsWith('/') ? path : '/' + path}`;
-  const res = await fetch(url, {
+  const res = await googleFetch(url, {
     method: opts.method || 'GET',
     headers: {
       Authorization: `Bearer ${_gmailToken}`,
@@ -8188,14 +8197,151 @@ function saveOAuthClientIdInput() {
 
 let _gmailToken     = null;
 let _gmailTokenExp  = 0;
-let _gmailTokenClient = null;
+let _gmailTokenClient = null; // legacy marker: truthy once GIS is usable
 let _sheetsSpreadsheetId = localStorage.getItem('sheets-spreadsheet-id') || '';
 
+// Account hint so a refresh goes straight to the right Google account. It is
+// the signed-in user's own address, captured after sign-in (Gmail profile,
+// allowed by the existing gmail scopes) and kept only in this browser's
+// localStorage. No hint stored => login_hint is left out entirely.
+function googleLoginHint() {
+  return (localStorage.getItem('gmail-login-hint') || '').trim();
+}
+
+let _googleHintFetchInFlight = false;
+async function captureGoogleAccountEmail(token) {
+  if (!token || _googleHintFetchInFlight || googleLoginHint()) return;
+  _googleHintFetchInFlight = true;
+  try {
+    const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return;
+    const json = await res.json().catch(() => ({}));
+    const email = String((json && json.emailAddress) || '').trim();
+    if (/^\S+@\S+\.\S+$/.test(email)) localStorage.setItem('gmail-login-hint', email);
+  } catch (e) {
+    // Hint is optional; refreshes simply go without it.
+  } finally {
+    _googleHintFetchInFlight = false;
+  }
+}
+
+// One shared token manager (source/shared/google-token.mjs). Every Google
+// API call goes through ensureGoogleToken() so expiry is handled in one place.
+let _googleTokenMgr = null;
+const _googleTokenListeners = [];
+function getGoogleTokenManager() {
+  if (_googleTokenMgr) return _googleTokenMgr;
+  const api = (typeof window !== 'undefined' && window.GoogleToken) ? window.GoogleToken : null;
+  if (!api) return null;
+  _googleTokenMgr = api.createGoogleTokenManager({
+    getGoogle: () => (typeof google !== 'undefined' ? google : null),
+    getClientId: () => GMAIL_CLIENT_ID,
+    scope: GMAIL_SCOPE,
+    getLoginHint: googleLoginHint,
+    storage: localStorage,
+    onToken: (tok, exp) => {
+      _gmailToken = tok;
+      _gmailTokenExp = exp;
+      captureGoogleAccountEmail(tok);
+      try { updateEmailBtn(); } catch (e) {}
+      try { if (typeof refreshSheetsIdStatus === 'function') refreshSheetsIdStatus(); } catch (e) {}
+      const ls = _googleTokenListeners.splice(0);
+      ls.forEach(fn => { try { fn(); } catch (e) { console.warn(e); } });
+    },
+    onSignInNeeded: (err) => {
+      console.warn('[GoogleToken] sign-in needed:', err);
+      _gmailToken = null;
+      _gmailTokenExp = 0;
+      try { updateEmailBtn(); } catch (e) {}
+    },
+  });
+  return _googleTokenMgr;
+}
+
+function _syncTokenMirror() {
+  const m = getGoogleTokenManager();
+  if (!m) return;
+  _gmailToken = m.token;
+  _gmailTokenExp = m.exp;
+}
+
 function gmailTokenValid() {
-  return _gmailToken && Date.now() < _gmailTokenExp - 30000;
+  const m = getGoogleTokenManager();
+  if (m) return m.isValid();
+  return !!_gmailToken && Date.now() < _gmailTokenExp - 30000;
+}
+
+/**
+ * Get a usable Google access token.
+ *   interactive:false (default) never shows any Google UI; returns null when
+ *   sign-in is needed. Use it for background work (sync, Drive backup).
+ *   interactive:true is for a click the user just made (Publish, sign in):
+ *   refreshes with prompt '' + login_hint, falls back to the popup.
+ */
+async function ensureGoogleToken(opts = {}) {
+  const m = getGoogleTokenManager();
+  if (!m) return gmailTokenValid() ? _gmailToken : null;
+  const t = await m.ensureToken(opts);
+  _syncTokenMirror();
+  return t;
+}
+
+/**
+ * Run a user-initiated Google action. Gets a token (silent first, popup if
+ * needed) and runs action(token). If the popup could not open (blocked
+ * because the click is too old), show a Sign in button that finishes the
+ * same action when tapped.
+ */
+async function runWithGoogle(action, label = 'continue') {
+  const t = await ensureGoogleToken({ interactive: true });
+  if (t) return action(t);
+  showSignInRetryToast(label, action);
+  return null;
+}
+
+function showSignInRetryToast(label, action) {
+  const toast = showToast(`Google sign-in needed to ${label}.`, 'info', 0);
+  if (!toast) return;
+  const btn = document.createElement('button');
+  btn.textContent = 'Sign in';
+  btn.className = 'toast-undo-btn';
+  btn.onclick = async () => {
+    toast.remove();
+    const t = await ensureGoogleToken({ interactive: true, force: !gmailTokenValid() });
+    if (t) action(t);
+    else showToast('Still not signed in to Google.', 'error');
+  };
+  const closeBtn = toast.querySelector('.toast-close');
+  if (closeBtn) toast.insertBefore(btn, closeBtn); else toast.appendChild(btn);
+}
+
+// fetch() for Google APIs: gets a fresh token without UI (refreshes when close
+// to expiry), sets the Authorization header, and retries once on 401. When
+// sign-in is needed it answers 401 instead of opening any Google window.
+async function googleFetch(url, init = {}, { interactive = false } = {}) {
+  const tok = await ensureGoogleToken({ interactive });
+  if (!tok) {
+    return new Response(JSON.stringify({ error: { code: 401, message: 'Google sign-in expired', status: 'UNAUTHENTICATED' } }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } });
+  }
+  const send = t => {
+    const h = new Headers(init.headers || {});
+    h.set('Authorization', `Bearer ${t}`);
+    return fetch(url, { ...init, headers: h });
+  };
+  let res = await send(tok);
+  if (res.status === 401) {
+    const fresh = await ensureGoogleToken({ interactive, force: true });
+    if (fresh) res = await send(fresh);
+  }
+  return res;
 }
 
 function saveTokenToStorage() {
+  const m = getGoogleTokenManager();
+  if (m && _gmailToken) { m.setToken(_gmailToken, Math.max(0, (_gmailTokenExp - Date.now()) / 1000)); return; }
   if (_gmailToken) {
     localStorage.setItem('gmail-token', _gmailToken);
     localStorage.setItem('gmail-token-exp', _gmailTokenExp);
@@ -8204,92 +8350,44 @@ function saveTokenToStorage() {
 }
 
 function restoreTokenFromStorage() {
+  const m = getGoogleTokenManager();
+  if (m) {
+    const ok = m.restore();
+    _syncTokenMirror();
+    if (ok) { _gmailTokenClient = _gmailTokenClient || true; console.log('✓ Restored token from storage'); }
+    return ok;
+  }
   const token  = localStorage.getItem('gmail-token');
   const exp    = localStorage.getItem('gmail-token-exp');
   const scopes = localStorage.getItem('gmail-token-scopes');
-  // Reject stored token if it was granted for different scopes
-  if (scopes !== GMAIL_SCOPE) {
-    localStorage.removeItem('gmail-token');
-    localStorage.removeItem('gmail-token-exp');
-    localStorage.removeItem('gmail-token-scopes');
-    console.log('ℹ Scopes changed — stored token cleared, re-auth required');
-    return false;
-  }
+  if (scopes !== GMAIL_SCOPE) return false;
   if (token && exp && Date.now() < parseInt(exp) - 30000) {
     _gmailToken = token;
     _gmailTokenExp = parseInt(exp);
-    console.log('✓ Restored token from storage');
     return true;
   }
   return false;
 }
 
-let _gmailSilentRefreshPending = false;
-let _gmailSuppressSilentFailureToast = false;
-
 function hadPriorGmailSignIn() {
   return !!(localStorage.getItem('gmail-token') || localStorage.getItem('gmail-token-exp'));
 }
 
-function notifyGmailSilentRefreshFailed(detail) {
-  if (!_gmailSilentRefreshPending || _gmailSuppressSilentFailureToast) {
-    _gmailSilentRefreshPending = false;
-    _gmailSuppressSilentFailureToast = false;
-    return;
-  }
-  _gmailSilentRefreshPending = false;
-  if (!hadPriorGmailSignIn()) return;
-  console.warn('GIS silent refresh failed:', detail);
-  localStorage.removeItem('gmail-token');
-  localStorage.removeItem('gmail-token-exp');
-  localStorage.removeItem('gmail-token-scopes');
-  _gmailToken = null;
-  _gmailTokenExp = 0;
-  try { showToast('Google sign-in expired. Open Connections to sign in again.', 'info'); } catch (e) {}
-  updateEmailBtn();
+// Legacy entry points, now thin wrappers over the token manager.
+// Background refresh: never shows Google UI.
+function requestGmailSilentRefresh() {
+  return ensureGoogleToken({ interactive: false, force: true });
 }
 
-function requestGmailSilentRefresh(opts) {
-  if (!_gmailTokenClient) return;
-  _gmailSuppressSilentFailureToast = !!(opts && opts.suppressFailureToast);
-  _gmailSilentRefreshPending = true;
-  _gmailTokenClient.requestAccessToken({ prompt: 'none' });
-}
-
+// Register a one-shot callback for the next token arrival (legacy API).
 function initGmailAuth(onToken) {
-  _gmailTokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GMAIL_CLIENT_ID,
-    scope:     GMAIL_SCOPE,
-    callback:  resp => {
-      if (resp.error) {
-        console.error(resp);
-        notifyGmailSilentRefreshFailed(resp.error);
-        return;
-      }
-      _gmailSilentRefreshPending = false;
-      _gmailSuppressSilentFailureToast = false;
-      _gmailToken    = resp.access_token;
-      _gmailTokenExp = Date.now() + resp.expires_in * 1000;
-      saveTokenToStorage();
-      // Always refresh sign-in UI on token arrival, regardless of which caller's
-      // onToken is attached — fixes sign-in not registering until a manual page
-      // refresh (the GIS callback could fire on a different client instance).
-      updateEmailBtn();
-      try { if (typeof refreshSheetsIdStatus === 'function') refreshSheetsIdStatus(); } catch(e){}
-      if (onToken) onToken();
-    },
-    error_callback: err => {
-      console.error('GIS error:', err);
-      notifyGmailSilentRefreshFailed(err && err.type ? err.type : err);
-    },
-  });
+  if (getGoogleTokenManager()) _gmailTokenClient = true;
+  if (typeof onToken === 'function') _googleTokenListeners.push(onToken);
 }
 
 function requestGmailToken(onToken) {
   if (gmailTokenValid()) { if (onToken) onToken(); return; }
-  // Re-init with callback so onToken fires when token arrives, then try silent refresh
-  initGmailAuth(onToken);
-  requestGmailSilentRefresh();
+  ensureGoogleToken({ interactive: false }).then(t => { if (t && onToken) onToken(); });
 }
 
 function refreshProfileSigninNote() {
@@ -8339,19 +8437,18 @@ function updateEmailBtn() {
   refreshProfileSigninNote();
 }
 
-function googleSignIn() {
-  initGmailAuth(async () => {
-    updateEmailBtn();
-    refreshSheetsIdStatus();
-    await setupDrive();
-    if (typeof initBusinessProfile === 'function') initBusinessProfile();
-    if (typeof renderConnectionsStatus === 'function') renderConnectionsStatus();
-    const overlay = document.getElementById('profile-overlay');
-    if (overlay && overlay.style.display === 'flex' && typeof openProfileModal === 'function') {
-      openProfileModal();
-    }
-  });
-  if (_gmailTokenClient) _gmailTokenClient.requestAccessToken({ prompt: '' });
+async function googleSignIn() {
+  const t = await ensureGoogleToken({ interactive: true, force: !gmailTokenValid() });
+  if (!t) { showToast('Google sign-in did not complete.', 'info'); return; }
+  updateEmailBtn();
+  refreshSheetsIdStatus();
+  await setupDrive();
+  if (typeof initBusinessProfile === 'function') initBusinessProfile();
+  if (typeof renderConnectionsStatus === 'function') renderConnectionsStatus();
+  const overlay = document.getElementById('profile-overlay');
+  if (overlay && overlay.style.display === 'flex' && typeof openProfileModal === 'function') {
+    openProfileModal();
+  }
 }
 
 async function openEmail() {
@@ -8448,14 +8545,19 @@ async function openEmail() {
       }
       const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-      const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
+      const postDraft = tok => fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
         method:  'POST',
         headers: {
-          Authorization:  `Bearer ${_gmailToken}`,
+          Authorization:  `Bearer ${tok}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ message: { raw: encoded } }),
       });
+      let res = await postDraft(_gmailToken);
+      if (res.status === 401) {
+        const fresh = await ensureGoogleToken({ interactive: true, force: true });
+        if (fresh) res = await postDraft(fresh);
+      }
       const json = await res.json();
       if (!res.ok) {
         console.error('Gmail API error:', json);
@@ -8482,18 +8584,13 @@ async function openEmail() {
     markReceiptAsSent();
   };
 
-  if (gmailTokenValid()) {
-    await sendViaDraft();
-  } else {
-    if (!_gmailTokenClient) initGmailAuth(null);
-    _gmailTokenClient.requestAccessToken({ prompt: '' });
-    const orig = _gmailTokenClient.callback;
-    _gmailTokenClient.callback = async resp => {
-      orig(resp);
-      if (!resp.error) await sendViaDraft();
-      else { restoreBtn(); fallbackEmail(); }
-    };
-  }
+  // Refresh the token first (silent when the Google session is still there,
+  // popup only if needed), then finish the draft. If sign-in can't complete
+  // now, offer a Sign in button that finishes this same draft.
+  const tok = await ensureGoogleToken({ interactive: true });
+  if (tok) { await sendViaDraft(); return; }
+  restoreBtn();
+  showSignInRetryToast('create the Gmail draft', () => openEmail());
 }
 
 function resetGmailClientId() {
@@ -8504,12 +8601,12 @@ function resetGmailClientId() {
 // ── Google Sheets Sync ───────────────────────────────────────
 
 async function syncToGoogleSheets(invoiceData) {
-  if (!_gmailToken) return;
+  if (!gmailTokenValid()) return false;
   if (!_sheetsSpreadsheetId) {
     const folderId = await ensureDriveFolder();
     await ensureLedgerSheet(folderId);
   }
-  if (!_sheetsSpreadsheetId) return;
+  if (!_sheetsSpreadsheetId) return false;
 
   try {
     const services = invoiceData.lineItems.map(l => l.service).join(', ');
@@ -8528,7 +8625,7 @@ async function syncToGoogleSheets(invoiceData) {
       parseFloat(invoiceData.taxRate) > 0 ? parseFloat(invoiceData.taxRate) : '' // Tax Rate (col K)
     ];
 
-    const res = await fetch(
+    const res = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
       {
         method: 'POST',
@@ -8544,16 +8641,19 @@ async function syncToGoogleSheets(invoiceData) {
       const err = await res.json();
       console.error('Sheets sync error:', err);
       showToast('Invoice saved locally — sheet sync failed. Will retry on next open.', 'info');
+      return false;
     } else {
       console.log('✓ Invoice synced to Google Sheets');
       // Row is now in the sheet — remove it from local write buffer
       const stored = loadLedgerRows();
       const filtered = stored.filter(r => r.receipt !== invoiceData.receiptNumber);
       if (filtered.length !== stored.length) saveLedgerRows(filtered);
+      return true;
     }
   } catch (e) {
     console.error('Sheets sync failed:', e.message);
     showToast('Invoice saved locally — sheet sync failed. Will retry on next open.', 'info');
+    return false;
   }
 }
 
@@ -8582,20 +8682,18 @@ let _driveFolderId = localStorage.getItem('drive-folder-id') || '';
 
 async function driveRequest(method, path, body, isUpload, isRetry = false) {
   const base = isUpload ? 'https://www.googleapis.com/upload/drive/v3' : 'https://www.googleapis.com/drive/v3';
+  // Background call: refresh without UI if the token is close to expiry.
+  const tok = await ensureGoogleToken({ interactive: false });
+  if (!tok) throw new Error('Google sign-in expired');
   const res = await fetch(base + path, {
     method,
-    headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined
   });
   if (res.status === 401 && !isRetry) {
     console.warn('Drive API auth error, attempting silent token refresh...');
-    await new Promise((resolve) => {
-      try {
-        initGmailAuth(() => resolve());
-        requestGmailSilentRefresh();
-      } catch (e) { resolve(); }
-      setTimeout(resolve, 3000);
-    });
+    const fresh = await ensureGoogleToken({ interactive: false, force: true });
+    if (!fresh) throw new Error('Google sign-in expired');
     return driveRequest(method, path, body, isUpload, true);
   }
   if (res.status === 403) {
@@ -8617,32 +8715,24 @@ async function driveRequest(method, path, body, isUpload, isRetry = false) {
 }
 
 async function sheetsRequest(method, path, body, isRetry = false) {
-  if (!_gmailToken || !_sheetsSpreadsheetId) {
-    // Attempt to restore if missing
-    if (typeof restoreTokenFromStorage === 'function') restoreTokenFromStorage();
-    if (!_gmailToken || !_sheetsSpreadsheetId) return { error: { message: 'Missing token or spreadsheet ID' } };
-  }
-  
+  if (!_sheetsSpreadsheetId) return { error: { message: 'Missing token or spreadsheet ID' } };
+  if (!_gmailToken && typeof restoreTokenFromStorage === 'function') restoreTokenFromStorage();
+  // Background call: refresh without UI if the token is close to expiry.
+  const tok = await ensureGoogleToken({ interactive: false });
+  if (!tok) return { error: { message: 'Google sign-in expired', code: 401, signInNeeded: true } };
+
   try {
     const res = await fetch('https://sheets.googleapis.com/v4' + path, {
       method,
-      headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined
     });
 
     if (res.status === 401 && !isRetry) {
       console.warn('Sheets API auth error, attempting silent token refresh...');
-      return new Promise((resolve) => {
-        try {
-          initGmailAuth(() => {
-            sheetsRequest(method, path, body, true).then(resolve);
-          });
-          if (_gmailTokenClient) requestGmailSilentRefresh();
-          else resolve({ error: { message: 'Token client not initialized' } });
-        } catch(e) {
-          resolve({ error: { message: e.message } });
-        }
-      });
+      const fresh = await ensureGoogleToken({ interactive: false, force: true });
+      if (!fresh) return { error: { message: 'Google sign-in expired', code: 401, signInNeeded: true } };
+      return sheetsRequest(method, path, body, true);
     }
 
     if (res.status === 403) {
@@ -8888,7 +8978,7 @@ async function ensureLedgerSheet(folderId) {
   localStorage.setItem('sheets-spreadsheet-id', _sheetsSpreadsheetId);
 
   // Write header row (tab is still called Sheet1 at creation; ensureAllTabs renames it)
-  await fetch(
+  await googleFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Sheet1!A1:G1?valueInputOption=USER_ENTERED`,
     {
       method: 'PUT',
@@ -9064,7 +9154,7 @@ async function savePdfToDrive(pdfBlob, filename) {
     const form = new FormData();
     form.append('metadata', new Blob([JSON.stringify({ name: filename, parents: [_driveFolderId] })], { type: 'application/json' }));
     form.append('file', pdfBlob, filename);
-    const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    const res = await googleFetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
       method: 'POST',
       headers: { Authorization: `Bearer ${_gmailToken}` },
       body: form
@@ -9093,7 +9183,7 @@ async function fetchCalendarEvents(keyword) {
     + '&orderBy=startTime'
     + '&maxResults=50';
 
-  const res = await fetch(url, {
+  const res = await googleFetch(url, {
     headers: { Authorization: 'Bearer ' + _gmailToken }
   });
 
@@ -9169,12 +9259,9 @@ async function openDashboard() {
   // silent refresh once, then prompt interactive sign-in if still missing.
   if (!gmailTokenValid()) {
     if (!_gmailToken && typeof restoreTokenFromStorage === 'function') restoreTokenFromStorage();
-    if (!gmailTokenValid() && _gmailTokenClient) {
-      await new Promise(resolve => {
-        initGmailAuth(() => resolve());
-        try { requestGmailSilentRefresh({ suppressFailureToast: true }); } catch (e) { resolve(); }
-        setTimeout(resolve, 3000);
-      });
+    // Opening the dashboard is a click, so the refresh may use the popup.
+    if (!gmailTokenValid() && hadPriorGmailSignIn()) {
+      await ensureGoogleToken({ interactive: true });
     }
     if (!gmailTokenValid()) {
       if (emptyEl) emptyEl.innerHTML = 'Not signed in — your data syncs with Google Sheets. <a href="#" onclick="closeDashboard();openConnectionsModal();return false;" class="address-book-csv-link">Open Connections</a> to sign in and sync.';
@@ -9876,7 +9963,7 @@ async function submitClaimModal() {
       if (!metaRes.id) throw new Error('Failed to create receipt metadata in Drive.');
 
       // Step 2: Upload file content
-      const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
+      const uploadRes = await googleFetch(`https://www.googleapis.com/upload/drive/v3/files/${metaRes.id}?uploadType=media`, {
         method: 'PATCH',
         headers: {
           'Authorization': `Bearer ${_gmailToken}`,
@@ -10140,7 +10227,7 @@ async function _doLoadLedgerFromSheet() {
   }
 
   try {
-    const res = await fetch(
+    const res = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:K`,
       { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
@@ -10203,7 +10290,7 @@ async function _doLoadLedgerFromSheet() {
           parseFloat(row.taxRate) > 0 ? parseFloat(row.taxRate) : ''
         ];
         try {
-          const pushRes = await fetch(
+          const pushRes = await googleFetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A1:append?valueInputOption=USER_ENTERED`,
             { method: 'POST', headers: { Authorization: `Bearer ${_gmailToken}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ values: [sheetRow] }) }
@@ -10254,7 +10341,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
   if (!_sheetsSpreadsheetId || !_gmailToken) return;
 
   try {
-    const readRes = await fetch(
+    const readRes = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:A`,
       { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
@@ -10267,7 +10354,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
     let putRes;
     if (amountDue !== null) {
       const range = `Ledger!F${sheetRowIdx + 1}:G${sheetRowIdx + 1}`;
-      putRes = await fetch(
+      putRes = await googleFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`,
         {
           method: 'PUT',
@@ -10277,7 +10364,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
       );
     } else {
       const cell = `Ledger!G${sheetRowIdx + 1}`;
-      putRes = await fetch(
+      putRes = await googleFetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
         {
           method: 'PUT',
@@ -10301,7 +10388,7 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
 async function updateGoalAllocOnSheet(receiptNumber, allocations) {
   if (!_sheetsSpreadsheetId || !_gmailToken) return;
   try {
-    const readRes = await fetch(
+    const readRes = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/Ledger!A:A`,
       { headers: { Authorization: `Bearer ${_gmailToken}` } }
     );
@@ -10311,7 +10398,7 @@ async function updateGoalAllocOnSheet(receiptNumber, allocations) {
     if (sheetRowIdx === -1) return;
     const cell = `Ledger!J${sheetRowIdx + 1}`;
     const value = allocations ? JSON.stringify(allocations) : '';
-    const putRes = await fetch(
+    const putRes = await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${_sheetsSpreadsheetId}/values/${cell}?valueInputOption=USER_ENTERED`,
       {
         method: 'PUT',
@@ -10742,6 +10829,10 @@ function googleSignOut() {
   // until reload and every signed-in/out UI state stays stale.
   _gmailToken = null;
   _gmailTokenExp = 0;
+  const _tm = getGoogleTokenManager();
+  if (_tm) _tm.clear();
+  // Forget the account hint too, so the next sign-in can pick any account.
+  localStorage.removeItem('gmail-login-hint');
   // Sheet/folder ids and the pin stay: they are not credentials, and clearing
   // the pin would let Drive auto-resolve recreate a duplicate ledger on the
   // next sign-in (see promptForSheetsId).
@@ -11124,13 +11215,14 @@ window.addEventListener('load', () => {
   try { migrateLegacyClientExpenses(); } catch(e) {}
   try { tickBillCycles(); } catch(e) {} // tick on app boot, not just dashboard open
   try {
-    initGmailAuth(() => {
-      updateEmailBtn();
-      setupDrive();
-    });
-    // If stored token is expired/missing, try silent re-auth (no popup if still signed into Google)
-    if (!gmailTokenValid() && _gmailTokenClient) {
-      requestGmailSilentRefresh();
+    // Stored token expired: try a no-UI refresh (prompt 'none'). It never
+    // shows a sign-in page; if Google needs the user, the next Google action
+    // they click asks then. A valid token schedules its own refresh ~5 min
+    // before expiry.
+    if (!gmailTokenValid() && hadPriorGmailSignIn()) {
+      ensureGoogleToken({ interactive: false }).then(t => {
+        if (t) { updateEmailBtn(); setupDrive(); }
+      }).catch(() => {});
     }
   } catch(e) {}
 });

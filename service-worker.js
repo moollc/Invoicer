@@ -1,4 +1,4 @@
-const CACHE = 'app-1791212409'; // __CACHE_VERSION__
+const CACHE = 'app-1792222554'; // __CACHE_VERSION__
 const ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +7,8 @@ const ASSETS = [
   '/privacy.html',
   '/terms.html',
   '/boot/invoice-totals.js',
+  '/boot/google-token.js',
+  '/source/shared/google-token.mjs',
   '/source/shared/invoice-totals.mjs',
   '/source/shared/invoice-totals-money.mjs',
   '/source/shared/invoice-totals-sync.mjs',
