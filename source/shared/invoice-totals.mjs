@@ -8,9 +8,12 @@
 export {
   amountPrefixFor,
   formatTotalAmountDisplay,
+  formatInvoiceAmount,
   formatTotalsAmount,
   formatTotalsNumber,
+  getShowCents,
   parseMoneyNum,
+  setShowCents,
   sumLineItemsTotal,
   sumPayments,
   totalsDecimals,

@@ -37,32 +37,47 @@ export function amountPrefixFor(data) {
 
 const hasCents = n => Math.abs(Math.round(n * 100) % 100) > 0;
 
-/**
- * Decimals setting for the totals block (project total, payments, amount
- * due): 0 or 2. It follows how the amount due is shown (pass healed data):
- * "JMD 55,000" means decimals off, "JMD 55,000.00" (the default) means on.
- * A blank or zero amount due keeps the default. Real cents anywhere in the
- * block always force 2 so an amount is never rounded on the invoice.
- */
-export function totalsDecimals(data) {
-  const d = data || {};
-  const amounts = [sumLineItemsTotal(d), ...(Array.isArray(d.payments) ? d.payments : []).map(p => parseMoneyNum(p && p.amount))];
-  if (amounts.some(hasCents)) return 2;
-  const shown = String(d.totalAmount || '').trim();
-  if (parseMoneyNum(shown) !== 0 && /\d/.test(shown) && !/\.\d/.test(shown)) return 0;
-  return 2;
+// "Show cents" display setting (Settings > Default Invoice Settings). On by
+// default. It only changes how amounts are shown, never the stored values.
+let showCentsPref = true;
+
+/** Set the Show cents preference (the app calls this on load and on toggle). */
+export function setShowCents(on) { showCentsPref = on !== false; }
+export function getShowCents() { return showCentsPref; }
+
+function amountTexts(d) {
+  const out = [];
+  (Array.isArray(d.lineItems) ? d.lineItems : []).forEach(item => {
+    (Array.isArray(item && item.costs) ? item.costs : []).forEach(c => out.push(c));
+  });
+  (Array.isArray(d.payments) ? d.payments : []).forEach(p => out.push(p && p.amount));
+  out.push(d.projectTotal, d.totalAmount);
+  return out.filter(v => v != null && String(v).trim() !== '');
 }
 
-/** Number only, with the block's decimals: 65000 -> "65,000.00" (or "65,000"). */
-export function formatTotalsNumber(amount, data) {
-  const dec = totalsDecimals(data);
+/**
+ * Decimals for every amount on the invoice (line costs, project total,
+ * payments, amount due): 2 with Show cents on (the default), 0 with it off.
+ * Real cents anywhere on the invoice always force 2, so an amount is never
+ * rounded on the page. opts.showCents overrides the saved preference.
+ */
+export function totalsDecimals(data, opts = {}) {
+  const d = data || {};
+  const show = opts.showCents === undefined ? showCentsPref : opts.showCents !== false;
+  if (amountTexts(d).some(v => hasCents(parseMoneyNum(v)))) return 2;
+  return show ? 2 : 0;
+}
+
+/** Number only, with the invoice's decimals: 65000 -> "65,000.00" (or "65,000"). */
+export function formatTotalsNumber(amount, data, opts) {
+  const dec = totalsDecimals(data, opts);
   return Number(amount || 0).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
-/** Prefix + number, the way every amount in the totals block is shown. */
-export function formatTotalsAmount(amount, data) {
+/** Prefix + number, the way every amount on the invoice is shown. */
+export function formatTotalsAmount(amount, data, opts) {
   const prefix = amountPrefixFor(data);
-  const num = formatTotalsNumber(amount, data);
+  const num = formatTotalsNumber(amount, data, opts);
   if (prefix.length <= 4 && /^[A-Z]+$/.test(prefix)) return `${prefix} ${num}`;
   return `${prefix}${num}`;
 }
@@ -78,4 +93,24 @@ export function formatTotalAmountDisplay(amount, data) {
   const num = amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   if (prefix.length <= 4 && /^[A-Z]+$/.test(prefix)) return `${prefix} ${num}`;
   return `${prefix}${num}`;
+}
+
+// A plain amount as typed or stored: optional currency code or symbol, then
+// a number ("55500", "55,500.00", "JMD 55500", "$1,200.5", "-2500").
+const PLAIN_AMOUNT = /^\s*(-|\u2212)?\s*(?:[A-Z]{3}\s*|[A-Z]{0,3}\$|[€£¥])?\s*(-|\u2212)?\s*(\d[\d,]*(?:\.\d+)?|\.\d+)\s*$/;
+
+/**
+ * Display text for one amount on the invoice (a line cost or the amount
+ * due), with the same prefix and decimals as the totals block:
+ * "55500" -> "JMD 55,500.00". Text that is not a plain amount ("TBC",
+ * "Included", "2 x 500") is returned unchanged. Negatives use a real minus.
+ */
+export function formatInvoiceAmount(value, data, opts) {
+  const raw = String(value == null ? '' : value);
+  const m = raw.match(PLAIN_AMOUNT);
+  if (!m) return raw.trim();
+  const n = parseFloat(m[3].replace(/,/g, ''));
+  if (!isFinite(n)) return raw.trim();
+  const neg = !!(m[1] || m[2]) && n !== 0;
+  return (neg ? '\u2212' : '') + formatTotalsAmount(n, data, opts);
 }

@@ -257,6 +257,13 @@
         <option value="JPY">JPY (¥)</option>
       </select>
     </div>
+    <label class="sp-row sp-row--border sp-row--toggle" for="show-cents-toggle">
+      <span class="sp-row-text">
+        <span class="sp-row-label">Show cents</span>
+        <span class="sp-row-hint">Amounts with cents always show them</span>
+      </span>
+      <input id="show-cents-toggle" type="checkbox" checked onchange="saveDefaultSettings()">
+    </label>
     <div class="sp-row sp-row--border">
       <span class="sp-row-label">Default Tax Rate</span>
       <span style="display:flex; align-items:center; gap:4px;">

@@ -113,6 +113,19 @@ function sanitizePrintClone(clone) {
     const val = sel.value || (sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent) || '';
     sel.replaceWith(document.createTextNode(val));
   });
+  // Cost textareas (edit mode) become the same cost-amt spans view mode
+  // renders, so applyTotalsBlockFormat gives them the totals format below.
+  clone.querySelectorAll('textarea.cost-edit-ta').forEach(ta => {
+    const i = ta.dataset.lineIndex;
+    const spans = String(ta.value || '').split('\n').map(v => v.trim()).filter(Boolean).map((v, ci) => {
+      const span = document.createElement('span');
+      span.className = 'cost-amt';
+      span.dataset.field = `lineItems.${i}.costs.${ci}`;
+      span.textContent = v;
+      return span;
+    });
+    ta.replaceWith(...spans);
+  });
   clone.querySelectorAll('textarea').forEach(ta => {
     const span = document.createElement('span');
     span.style.whiteSpace = 'pre-line';
@@ -386,9 +399,16 @@ function getData() {
 // Totals sync lives in source/shared/invoice-totals.mjs (loaded via boot/invoice-totals.js).
 // Always go through window — bare InvoiceTotals throws ReferenceError if the module
 // has not assigned yet (or failed to load), which used to abort setupDrive mid-sync.
+// Show cents (Settings > Default Invoice Settings): on unless set to '0'.
+// Display only; stored amounts are never rounded.
+const SHOW_CENTS_KEY = 'invoicer-show-cents';
+function showCentsEnabled() {
+  try { return localStorage.getItem(SHOW_CENTS_KEY) !== '0'; } catch (e) { return true; }
+}
 function getInvoiceTotals() {
   const api = (typeof window !== 'undefined' && window.InvoiceTotals) ? window.InvoiceTotals : null;
   if (!api) throw new Error('InvoiceTotals not loaded — hard refresh (Cmd+Shift+R) or check boot/invoice-totals.js');
+  if (typeof api.setShowCents === 'function') api.setShowCents(showCentsEnabled());
   return api;
 }
 function parseMoneyNum(s) { return getInvoiceTotals().parseMoneyNum(s); }
@@ -972,10 +992,11 @@ function render(data) {
     const ratesHtml = rates.map((r, ri) =>
       `<span class="rate-tag" data-field="lineItems.${i}.rates.${ri}">${r}</span>`
     ).join('');
-    // Display with thousands separators (15000 -> 15,000); the stored value
-    // is left as typed.
+    // Same prefix and decimals as the totals block (55500 -> JMD 55,500.00);
+    // the stored value is left as typed.
+    const totalsApi = getInvoiceTotals();
     const costsHtml = costs.map((c, ci) =>
-      `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${invoiceFormat().formatCostCell(c)}</span>`
+      `<span class="cost-amt" data-field="lineItems.${i}.costs.${ci}">${totalsApi.formatInvoiceAmount(c, data)}</span>`
     ).join('');
     const tipLines = rates.length > 1
       ? rates.map((r, ri) => `${r}  ×  ${costs[ri] || '—'}`).join('\n')
@@ -1460,10 +1481,11 @@ function renderPaymentsDisplay(payments, data) {
   listEl.innerHTML = totalsAdjustmentRowsHTML(payments, data || getData());
 }
 
-// One format for every amount in the totals block: the same prefix as the
-// amount due (JMD, never $ on a JMD invoice) and the same decimals setting
-// (totalsDecimals). Runs on the live page and on every print/PDF clone, since
-// the clone re-applies raw data-field values first.
+// One format for every amount on the invoice (line costs and the totals
+// block): the same prefix as the amount due (JMD, never $ on a JMD invoice)
+// and the same decimals (totalsDecimals, from the Show cents setting). Runs
+// on the live page and on every print/PDF clone, since the clone re-applies
+// raw data-field values first.
 function applyTotalsBlockFormat(root, data) {
   if (!root || !data) return;
   const totals = getInvoiceTotals();
@@ -1485,6 +1507,13 @@ function applyTotalsBlockFormat(root, data) {
   if (list && (!editing || root.classList.contains('print-clone'))) {
     list.innerHTML = totalsAdjustmentRowsHTML(data.payments || [], data);
   }
+  if (editing) return;
+  const due = block.querySelector('[data-field="totalAmount"]');
+  if (due && data.totalAmount != null) due.textContent = totals.formatInvoiceAmount(data.totalAmount, data);
+  root.querySelectorAll('#line-items .cost-amt[data-field]').forEach(el => {
+    const v = get(data, el.dataset.field);
+    if (v !== undefined && typeof v !== 'object') el.textContent = totals.formatInvoiceAmount(v, data);
+  });
 }
 
 const escapeHTML = (str) => {
@@ -3973,6 +4002,8 @@ function toggleChatSettings() {
     if (selCur) {
       selCur.value = localStorage.getItem('invoicer-default-currency') || 'USD';
     }
+    const centsEl = document.getElementById('show-cents-toggle');
+    if (centsEl) centsEl.checked = showCentsEnabled();
     const taxRateEl = document.getElementById('default-tax-rate-input');
     if (taxRateEl) {
       const stored = parseFloat(localStorage.getItem('invoicer-tax-rate') || '0');
@@ -4007,7 +4038,7 @@ window.resetAppSettings = async function() {
   if (!await showConfirm('Reset UI preferences to defaults? This will not affect your ledger, templates, clients, or AI providers.', 'Reset UI')) return;
   const UI_KEYS = [
     'invoice-title-font', 'invoice-theme', 'invoice-title-size',
-    'invoicer-default-pay-period', 'invoicer-default-currency',
+    'invoicer-default-pay-period', 'invoicer-default-currency', SHOW_CENTS_KEY,
     'invoice-company-prefix', 'invoice-receipt-prefix', 'invoice-filename-preset',
     'invoicer-preferred-template', 'invoice-last-state', 'invoicer-autosave',
     'invoice-chat-history'
@@ -4018,6 +4049,9 @@ window.resetAppSettings = async function() {
   const curEl = document.getElementById('default-currency-select');
   if (payEl) payEl.value = '0';
   if (curEl) curEl.value = 'USD';
+  const centsEl = document.getElementById('show-cents-toggle');
+  if (centsEl) centsEl.checked = true;
+  if (!document.body.classList.contains('editing')) render(getData());
   // Restore visual defaults
   restoreTitleFont();
   restoreTheme();
@@ -4036,6 +4070,13 @@ window.saveDefaultSettings = function() {
   if (taxRateEl) {
     const pct = parseFloat(taxRateEl.value) || 0;
     localStorage.setItem('invoicer-tax-rate', pct > 0 ? String(pct / 100) : '0');
+  }
+
+  const centsEl = document.getElementById('show-cents-toggle');
+  if (centsEl) {
+    const was = showCentsEnabled();
+    localStorage.setItem(SHOW_CENTS_KEY, centsEl.checked ? '1' : '0');
+    if (was !== centsEl.checked && !document.body.classList.contains('editing')) render(getData());
   }
 
   syncSettingsToSheet();
@@ -6372,6 +6413,7 @@ const SYNCED_SETTINGS_KEYS = [
   'invoicer-default-currency',
   'invoicer-default-pay-period',
   'invoicer-tax-rate',
+  'invoicer-show-cents',
   'invoice-theme',
   'invoice-title-font',
   'invoice-filename-preset',

@@ -117,24 +117,58 @@ test('prepareInvoiceForArchive does not mutate source', () => {
   assert.equal(parseMoneyNum(archived.totalAmount), 50000);
 });
 
-import { formatTotalsAmount, formatTotalsNumber, totalsDecimals } from '../source/shared/invoice-totals.mjs';
+import { formatTotalsAmount, formatTotalsNumber, totalsDecimals, formatInvoiceAmount, setShowCents, getShowCents } from '../source/shared/invoice-totals.mjs';
 
-test('totals block follows one decimals setting taken from the total due', () => {
-  const base = { currency: 'JMD', lineItems: [{ costs: ['65000'] }], payments: [{ label: 'Deposit', amount: '10000' }] };
-  const on = { ...base, totalAmount: 'JMD 55,000.00' };
-  const off = { ...base, totalAmount: 'JMD 55,000' };
-  assert.equal(totalsDecimals(on), 2);
-  assert.equal(totalsDecimals(off), 0);
-  assert.equal(formatTotalsNumber(65000, on), '65,000.00');
-  assert.equal(formatTotalsNumber(65000, off), '65,000');
-  assert.equal(formatTotalsAmount(10000, on), 'JMD 10,000.00');
-  assert.equal(formatTotalsAmount(10000, off), 'JMD 10,000');
-  // blank / zero total due keeps the default
-  assert.equal(totalsDecimals({ ...base, totalAmount: '' }), 2);
-  assert.equal(totalsDecimals({ ...base, totalAmount: '$0' }), 2);
-  // real cents are never rounded away
-  assert.equal(totalsDecimals({ ...off, payments: [{ amount: '10000.50' }] }), 2);
-  assert.equal(totalsDecimals({ ...off, lineItems: [{ costs: ['65000.25'] }] }), 2);
+test('every amount follows the Show cents setting (on by default)', () => {
+  const base = { currency: 'JMD', lineItems: [{ costs: ['65000'] }], payments: [{ label: 'Deposit', amount: '10000' }], totalAmount: 'JMD 55,000.00' };
+  assert.equal(getShowCents(), true, 'default on');
+  assert.equal(totalsDecimals(base), 2);
+  assert.equal(totalsDecimals(base, { showCents: false }), 0);
+  assert.equal(formatTotalsNumber(65000, base), '65,000.00');
+  assert.equal(formatTotalsNumber(65000, base, { showCents: false }), '65,000');
+  assert.equal(formatTotalsAmount(10000, base), 'JMD 10,000.00');
+  assert.equal(formatTotalsAmount(10000, base, { showCents: false }), 'JMD 10,000');
+  // The saved preference is what the app sets; opts still override it.
+  setShowCents(false);
+  try {
+    assert.equal(totalsDecimals(base), 0);
+    assert.equal(totalsDecimals(base, { showCents: true }), 2);
+    // How the amount due was typed no longer switches decimals.
+    assert.equal(totalsDecimals({ ...base, totalAmount: 'JMD 55,000.00' }), 0);
+  } finally { setShowCents(true); }
+  assert.equal(totalsDecimals({ ...base, totalAmount: 'JMD 55,000' }), 2);
+});
+
+test('real cents are never hidden, whatever the setting', () => {
+  const off = { showCents: false };
+  const base = { currency: 'JMD', lineItems: [{ costs: ['65000'] }], payments: [], totalAmount: 'JMD 65,000.00' };
+  assert.equal(totalsDecimals({ ...base, payments: [{ amount: '10000.50' }] }, off), 2);
+  assert.equal(totalsDecimals({ ...base, lineItems: [{ costs: ['65000', '0.25'] }] }, off), 2);
+  assert.equal(totalsDecimals({ ...base, lineItems: [{ costs: ['0.5', '0.5'] }] }, off), 2, 'cents that add up to a whole number still count');
+  assert.equal(totalsDecimals({ ...base, totalAmount: 'JMD 64,999.99' }, off), 2);
+  assert.equal(formatInvoiceAmount('2500.5', { ...base, lineItems: [{ costs: ['2500.5'] }] }, off), 'JMD 2,500.50');
+});
+
+test('line costs use the same prefix and decimals as the totals block', () => {
+  const data = { currency: 'JMD', lineItems: [{ costs: ['55500'] }], payments: [], totalAmount: 'JMD 55,500.00' };
+  assert.equal(formatInvoiceAmount('55500', data), 'JMD 55,500.00');
+  assert.equal(formatInvoiceAmount('55,500.00', data), 'JMD 55,500.00');
+  assert.equal(formatInvoiceAmount('JMD 55500', data), 'JMD 55,500.00');
+  assert.equal(formatInvoiceAmount('55500', data, { showCents: false }), 'JMD 55,500');
+  assert.equal(formatInvoiceAmount('JMD 55,500.00', data, { showCents: false }), 'JMD 55,500');
+  assert.equal(formatInvoiceAmount('-2500', data), '\u2212JMD 2,500.00');
+  assert.equal(formatInvoiceAmount('500', { currency: 'USD', totalAmount: '$500.00' }), '$500.00');
+  // Not a plain amount: left as written.
+  for (const t of ['TBC', 'Included', '2 x 500', '']) assert.equal(formatInvoiceAmount(t, data), t);
+});
+
+test('display decimals never change stored values', () => {
+  const data = { currency: 'JMD', lineItems: [{ costs: ['55500'] }], payments: [{ amount: '1000' }], totalAmount: 'JMD 54,500.00', projectTotal: '55,500' };
+  const before = JSON.stringify(data);
+  formatInvoiceAmount('55500', data, { showCents: false });
+  formatTotalsAmount(1000, data, { showCents: false });
+  totalsDecimals(data, { showCents: false });
+  assert.equal(JSON.stringify(data), before);
 });
 
 test('totals block uses the amount-due prefix for every row', () => {

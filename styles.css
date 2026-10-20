@@ -2613,6 +2613,11 @@
   .sp-row { padding:0 14px 10px; display:flex; justify-content:space-between; align-items:center; }
   .sp-row--border { padding:0 14px 16px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(20,32,46,0.06); margin-bottom:12px; }
   .sp-row-label { font-size:12px; color:#14202e; font-weight:500; }
+  .sp-row--toggle { cursor:pointer; gap:12px; min-height:44px; box-sizing:border-box; }
+  .sp-row-text { display:flex; flex-direction:column; gap:4px; }
+  .sp-row-hint { font-size:11px; color:#5f6975; }
+  .sp-row--toggle input[type="checkbox"] { width:18px; height:18px; margin:0; flex:none; cursor:pointer; accent-color:#14202e; }
+  .sp-row--toggle input[type="checkbox"]:focus-visible { outline:2px solid #14202e; outline-offset:2px; }
   .sp-section { padding:0 14px 14px; }
   .sp-section-divider { padding:0 14px 14px; border-top:1px solid rgba(20,32,46,0.06); padding-top:14px; }
   .sp-section-divider-mt { padding:0 14px 14px; border-top:1px solid rgba(20,32,46,0.06); padding-top:14px; margin-top:2px; }
