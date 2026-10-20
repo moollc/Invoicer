@@ -2810,3 +2810,37 @@
   .client-picker { display: none; font-family: Roboto, sans-serif; font-size: 11px; margin: 2px 0 6px; padding: 3px 6px; border: 1.5px dashed var(--rule); border-radius: 4px; background: transparent; color: var(--ink); max-width: 100%; }
   body.editing .client-picker { display: block !important; }
   @media print { .client-picker { display: none !important; } }
+
+  /* ── Site footer: app name + legal links (static HTML, screen only) ── */
+  .site-footer {
+    width: 816px;
+    max-width: calc(100% - 32px);
+    margin: 0 auto 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px 24px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #14202e;
+  }
+  .site-footer-about { margin: 0; }
+  .site-footer-name { font-weight: 700; }
+  .site-footer-links { display: flex; gap: 16px; }
+  .site-footer-links a { display: inline-flex; align-items: center; min-height: 44px; color: #14202e; text-decoration: underline; text-underline-offset: 2px; }
+  .site-footer-links a:hover { text-decoration-thickness: 2px; }
+  .site-footer-links a:focus-visible { outline: 2px solid #14202e; outline-offset: 2px; border-radius: 2px; }
+  @media (max-width: 900px) {
+    .site-footer {
+      max-width: none;
+      width: auto;
+      margin: 0;
+      padding: 16px 16px calc(96px + env(safe-area-inset-bottom, 0px));
+      flex-direction: column;
+      gap: 4px;
+      font-size: 14px;
+    }
+  }
+  @media print { .site-footer { display: none !important; } }

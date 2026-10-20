@@ -1,7 +1,7 @@
 {
-  "name": "moo Invoicer",
-  "short_name": "Invoicer",
-  "description": "Invoice generation and ledger tracking tool",
+  "name": "mooInvoicer",
+  "short_name": "mooInvoicer",
+  "description": "mooInvoicer makes invoices and keeps your ledger in your own Google Sheet.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

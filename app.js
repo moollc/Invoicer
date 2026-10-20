@@ -1014,8 +1014,8 @@ function render(data) {
   // Dynamic document title
   const clientName = (data.to && data.to.name) ? data.to.name.split(' ')[0] : '';
   document.title = data.receiptNumber
-    ? `${data.receiptNumber}${clientName ? ' · ' + clientName : ''} — moo Invoicer`
-    : 'moo Invoicer';
+    ? `${data.receiptNumber}${clientName ? ' · ' + clientName : ''} — mooInvoicer`
+    : 'mooInvoicer';
 
   // Due date — auto-calculate from invoice date + payPeriod
   const dueDateLabel = document.getElementById('due-date-label');
@@ -3371,7 +3371,7 @@ async function proceedPrint() {
     render(getData());
   }
   window.print();
-  setTimeout(() => { document.title = 'moo Invoicer'; }, 2000);
+  setTimeout(() => { document.title = 'mooInvoicer'; }, 2000);
 
   // Optional Drive backup after printing. It never asks Google for a new
   // token or opens any Google window: only an already-valid token is used,
