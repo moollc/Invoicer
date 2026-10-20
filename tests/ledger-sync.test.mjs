@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   STATUS, upsertLedgerRow, deriveLedgerStatus, mergeLedger, makeTombstone,
-  tombstoneTargets, removeLocalRow, rowToSheetValues, sheetValuesToRow,
+  tombstoneTargets, removeLocalRow, rowToSheetValues, sheetValuesToRow, isQuoteRow,
 } from '../source/shared/ledger-sync.mjs';
 
 const base = {
@@ -63,8 +63,46 @@ test('status: deposit that covers everything is not Deposit', () => {
   assert.equal(deriveLedgerStatus({ payments: [{ amount: '100' }], totalAmount: '0' }, undefined), STATUS.UNPAID);
 });
 
-test('status: quote doc => Quote', () => {
-  assert.equal(deriveLedgerStatus({}, STATUS.UNPAID, { isQuote: true }), STATUS.QUOTE);
+test('status: quote doc => Quote for a new row or a row that is already a Quote', () => {
+  assert.equal(deriveLedgerStatus({}, undefined, { isQuote: true }), STATUS.QUOTE);
+  assert.equal(deriveLedgerStatus({}, '', { isQuote: true }), STATUS.QUOTE);
+  assert.equal(deriveLedgerStatus({}, STATUS.QUOTE, { isQuote: true }), STATUS.QUOTE);
+});
+
+test('status: a quote doc never overwrites Paid, Sent, Unpaid or Deposit', () => {
+  for (const s of [STATUS.PAID, STATUS.SENT, STATUS.UNPAID, STATUS.DEPOSIT]) {
+    assert.equal(deriveLedgerStatus({}, s, { isQuote: true }), s, s);
+  }
+});
+
+test('quote: only status Quote or an explicit quote doc makes a row a quote', () => {
+  assert.equal(isQuoteRow({ status: STATUS.QUOTE }), true);
+  assert.equal(isQuoteRow({ status: '', docType: 'quote' }), true);
+  // A word in the text is never enough, whatever the status.
+  for (const status of [STATUS.UNPAID, STATUS.SENT, STATUS.PAID, STATUS.DEPOSIT]) {
+    assert.equal(isQuoteRow({ status, client: 'LFMC', service: 'Documentary edit', description: 'quote for LFMC, quotation, budget draft, valid 30 days' }), false, status);
+  }
+  // A docType left over on a row with a real status does not win.
+  assert.equal(isQuoteRow({ status: STATUS.UNPAID, docType: 'quote' }), false);
+  assert.equal(isQuoteRow({ status: STATUS.PAID, docType: 'quote' }), false);
+  assert.equal(isQuoteRow(null), false);
+});
+
+test('upsert: Quote never replaces Paid, Sent, Unpaid or Deposit', () => {
+  for (const s of [STATUS.PAID, STATUS.SENT, STATUS.UNPAID, STATUS.DEPOSIT]) {
+    const { rows: out } = upsertLedgerRow([{ ...base, status: s }], { ...base, status: STATUS.QUOTE });
+    assert.equal(out[0].status, s, s);
+  }
+  const { rows: q } = upsertLedgerRow([{ ...base, status: STATUS.QUOTE }], { ...base, status: STATUS.QUOTE });
+  assert.equal(q[0].status, STATUS.QUOTE);
+});
+
+test('merge: a local Quote does not overwrite the sheet status unless the user picked it', () => {
+  const sheet = [{ ...base, status: STATUS.UNPAID, goalAllocations: null, taxRate: 0 }];
+  const { rows } = mergeLedger(sheet, [{ ...base, status: STATUS.QUOTE, _dirty: true }], []);
+  assert.equal(rows[0].status, STATUS.UNPAID);
+  const { rows: picked } = mergeLedger(sheet, [{ ...base, status: STATUS.QUOTE, _dirty: true, _statusDirty: true }], []);
+  assert.equal(picked[0].status, STATUS.QUOTE);
 });
 
 test('merge: dirty local edit wins over sheet and is queued for push', () => {

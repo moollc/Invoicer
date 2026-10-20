@@ -1895,11 +1895,10 @@ function isQuoteDocument(data) {
   return false;
 }
 
+// Status Quote, or no status yet and saved from a quote document. Never a
+// keyword in the text (a client or project name is never a quote marker).
 function isQuoteLedgerRow(row) {
-  if (!row) return false;
-  if (row.status === '📋 Quote') return true;
-  const blob = `${row.service || ''} ${row.description || ''} ${row.payPeriod || ''} ${row.status || ''}`;
-  return /\bquote\b|\bquotation\b|\bbudget draft\b|\bvalid\s+\d+\s+days\b/i.test(blob);
+  return LedgerSyncApi().isQuoteRow(row);
 }
 
 // Ledger lives entirely in localStorage as an array of row objects
@@ -1915,19 +1914,8 @@ function loadLedgerRows() {
         healed = true;
       }
     }
-    // Reclassify LFMC / budget / quotation rows that were saved as Unpaid invoices.
-    if (r.status !== '📋 Quote' && typeof isQuoteLedgerRow === 'function' && isQuoteLedgerRow(r)) {
-      r.status = '📋 Quote';
-      r.docType = 'quote';
-      healed = true;
-    } else {
-      const blob = `${r.client || ''} ${r.service || ''} ${r.description || ''} ${r.receipt || ''}`.toLowerCase();
-      if (r.status !== '📋 Quote' && (/\blfmcs?\b/.test(blob) || /budget draft|quotation|\bquote\b/.test(blob))) {
-        r.status = '📋 Quote';
-        r.docType = 'quote';
-        healed = true;
-      }
-    }
+    // Statuses are never relabelled on load. A row is a quote only when the
+    // user (or a quote document) made it one.
   }
   if (healed) { try { localStorage.setItem('invoice-ledger-rows', JSON.stringify(rows)); } catch(e) {} }
   return rows;
@@ -2125,7 +2113,7 @@ function markReceiptAsSent() {
       rows[idx]._dirty = true;
       rows[idx]._statusDirty = true;
     }
-    if (isQuoteDocument(data)) {
+    if (isQuoteDocument(data) && (!rows[idx].status || rows[idx].status === '📋 Quote')) {
       rows[idx].status = '📋 Quote';
       rows[idx].docType = 'quote';
     }
@@ -6772,8 +6760,7 @@ const GMAIL_WEAK_BILL_TOKENS = new Set([
 
 function gmailIsQuoteOrBudgetMail(parsed) {
   const hay = `${parsed.from || ''} ${parsed.subject || ''} ${parsed.snippet || ''} ${parsed.body || ''}`.toLowerCase();
-  return /\b(quotation|quote\b|budget draft|costings? for|this is a quote|not a final invoice|valid\s+\d+\s+days|estimate only)\b/i.test(hay)
-    || /\blfmcs?\b.*\b(budget|quote|quotation|documentary)\b/i.test(hay);
+  return /\b(quotation|quote\b|budget draft|costings? for|this is a quote|not a final invoice|valid\s+\d+\s+days|estimate only)\b/i.test(hay);
 }
 
 

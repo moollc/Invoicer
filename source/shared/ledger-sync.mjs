@@ -34,20 +34,36 @@ function money(s) {
   return parseFloat(String(s == null ? '' : s).replace(/[^0-9.-]/g, '')) || 0;
 }
 
+// Statuses the app never changes on its own. Only the user (status picker)
+// moves a row off one of these.
+const KEPT_STATUSES = new Set([STATUS.PAID, STATUS.SENT, STATUS.UNPAID, STATUS.DEPOSIT, '◑ Deposit']);
+
+/**
+ * A ledger row is a quote only when its status is Quote, or when it has no
+ * status yet and was saved from a quote document (docType "quote"). Words in
+ * the client, service or description never count.
+ */
+export function isQuoteRow(row) {
+  if (!row) return false;
+  if (row.status === STATUS.QUOTE) return true;
+  return !row.status && String(row.docType || '').toLowerCase() === 'quote';
+}
+
 function paymentsSum(data) {
   return (Array.isArray(data && data.payments) ? data.payments : []).reduce((s, p) => s + money(p && p.amount), 0);
 }
 
 /**
  * Status for an invoice being saved.
- *   quote doc                     -> Quote
+ *   quote doc, new row or Quote   -> Quote
+ *   quote doc, row has a status   -> unchanged (Paid/Sent/Unpaid/Deposit kept)
  *   user already set Paid / Sent  -> unchanged
  *   payments > 0 and balance > 0  -> Deposit
  *   user set Deposit              -> unchanged
  *   otherwise                     -> existing status, or Unpaid for a new row
  */
 export function deriveLedgerStatus(data, existingStatus, { isQuote = false } = {}) {
-  if (isQuote) return STATUS.QUOTE;
+  if (isQuote) return (!existingStatus || existingStatus === STATUS.QUOTE) ? STATUS.QUOTE : existingStatus;
   if (existingStatus === STATUS.PAID || existingStatus === STATUS.SENT) return existingStatus;
   const paid = paymentsSum(data);
   const due = money(data && data.totalAmount);
@@ -74,9 +90,11 @@ export function upsertLedgerRow(rows, incoming) {
   const prev = list[index];
   const next = { ...prev };
   for (const f of INVOICE_FIELDS) if (incoming[f] !== undefined) next[f] = incoming[f];
-  // A status the user set (Paid / Sent) is never overwritten by a re-save.
+  // A status the user set (Paid / Sent) is never overwritten by a re-save,
+  // and Quote never replaces a real invoice status.
   const userSet = prev.status === STATUS.PAID || prev.status === STATUS.SENT;
-  if (incoming.status !== undefined && !(userSet && incoming.status !== STATUS.QUOTE)) next.status = incoming.status;
+  const quoteOverReal = incoming.status === STATUS.QUOTE && KEPT_STATUSES.has(prev.status);
+  if (incoming.status !== undefined && !userSet && !quoteOverReal) next.status = incoming.status;
   if (incoming._dirty !== undefined) next._dirty = incoming._dirty;
   next.receipt = key;
   list[index] = next;
@@ -171,9 +189,10 @@ export function mergeLedger(sheetRows, localRows, tombstones = []) {
       const row = { ...sr, ...lr, receipt: sr.receipt };
       // Status: a status the user picked on this device wins. Otherwise the
       // sheet's status stands (it may have been set on another device), except
-      // that a derived Deposit/Quote upgrades a plain Unpaid.
+      // that a derived Deposit upgrades a plain Unpaid. A Quote never
+      // replaces the sheet's status unless the user picked it here.
       if (!lr._statusDirty) {
-        const upgrade = sr.status === STATUS.UNPAID && (lr.status === STATUS.DEPOSIT || lr.status === STATUS.QUOTE);
+        const upgrade = sr.status === STATUS.UNPAID && lr.status === STATUS.DEPOSIT;
         row.status = upgrade ? lr.status : sr.status;
       }
       if (row.goalAllocations == null && sr.goalAllocations != null) row.goalAllocations = sr.goalAllocations;
