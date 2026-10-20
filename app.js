@@ -9393,16 +9393,22 @@ async function forcePullAllFromSheet() {
 }
 window.forcePullAllFromSheet = forcePullAllFromSheet;
 
+// Drive query string literal: ' and \ must be escaped or the search is a 400
+// (a client like O'Brien would fail every backup).
+function driveQueryLiteral(s) {
+  return String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 async function savePdfToDrive(pdfBlob, filename) {
   if (!gmailTokenValid() || !_driveFolderId) return null;
   try {
     // Check if a file with this name already exists in the folder
-    const q = encodeURIComponent(`name='${filename}' and '${_driveFolderId}' in parents and trashed=false`);
+    const q = encodeURIComponent(`name='${driveQueryLiteral(filename)}' and '${driveQueryLiteral(_driveFolderId)}' in parents and trashed=false`);
     const search = await driveRequest('GET', `/files?q=${q}&fields=files(id,name)&pageSize=1`);
     const existing = search?.files?.[0];
 
     if (existing) {
-      showToast(`Drive already has "${filename}" — delete it manually if you need to replace it.`, 'info');
+      showToast(`Drive already has "${escapeHTML(filename)}" — delete it manually if you need to replace it.`, 'info');
       return existing.id;
     }
 
@@ -9417,7 +9423,7 @@ async function savePdfToDrive(pdfBlob, filename) {
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.id) throw new Error((json.error && json.error.message) || `Drive upload ${res.status}`);
     console.log('✓ PDF saved to Drive:', json.name);
-    showToast(`PDF saved to Drive: ${json.name}`, 'success');
+    showToast(`PDF saved to Drive: ${escapeHTML(String(json.name || filename))}`, 'success');
     return json.id;
   } catch (e) {
     console.error('Drive PDF save failed:', e.message);
