@@ -2844,3 +2844,9 @@
     }
   }
   @media print { .site-footer { display: none !important; } }
+
+  /* The rotated DRAFT/PAID watermark is wider than a phone screen; keep it
+     inside the page so the page never scrolls sideways. */
+  @media (max-width: 900px) {
+    #invoice { overflow-x: clip; }
+  }
