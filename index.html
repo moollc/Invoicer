@@ -23,7 +23,7 @@
      amount [X], dated today."
 
   ── Field guide ───────────────────────────────────────────────
-  date          Auto-set to today on load (DD / MM / YYYY).
+  date          Auto-set to today on load (MM / DD / YYYY, month first).
                 Override by setting "dateOverride" to a string.
 
   receiptNumber Auto-generated from today's date in YYMMDD
@@ -886,6 +886,7 @@
 <script type="module" src="./boot/google-token.js"></script>
 <script type="module" src="./boot/ledger-sync.js"></script>
 <script type="module" src="./boot/invoice-format.js"></script>
+<script type="module" src="./boot/invoice-date.js"></script>
 <script defer src="./app.js"></script>
 
 <div id="preview-overlay">

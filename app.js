@@ -174,20 +174,22 @@ function sanitizePrintClone(clone) {
   return clone;
 }
 
-// Canonical ledger date is MM/DD/YYYY with no spaces. autoDate() produces
-// "MM / DD / YYYY" (with spaces). ISO paths produce YYYY-MM-DD. Normalize all.
-function normalizeLedgerDate(raw) {
+// Every date read or written goes through source/shared/invoice-date.mjs:
+// month first, M/D/YYYY in the ledger and MM / DD / YYYY on the invoice.
+// The receipt number (YYMMDD) settles old day-first values like 01 / 09.
+function InvoiceDateApi() {
+  const api = (typeof window !== 'undefined' && window.InvoiceDate) ? window.InvoiceDate : null;
+  if (!api) throw new Error('InvoiceDate not loaded — hard refresh (Cmd+Shift+R)');
+  return api;
+}
+function normalizeLedgerDate(raw, receipt) {
   if (!raw) return raw;
-  const s = String(raw).trim();
-  // ISO: YYYY-MM-DD -> MM/DD/YYYY
-  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) return `${iso[2]}/${iso[3]}/${iso[1]}`;
-  // All slash-separated forms: just strip spaces around slashes, keep order as-is.
-  // autoDate() is MM / DD / YYYY so the order is already correct.
-  const parts = s.split('/').map(p => p.trim());
-  if (parts.length !== 3) return s.replace(/\s*\/\s*/g, '/');
-  const pad = v => String(v).padStart(2, '0');
-  return `${pad(parts[0])}/${pad(parts[1])}/${parts[2]}`;
+  return InvoiceDateApi().formatLedgerDate(raw, { receipt });
+}
+/** Ledger row date as a local Date, or null. */
+function ledgerRowDate(row) {
+  if (!row || !row.date) return null;
+  return InvoiceDateApi().toDate(row.date, { receipt: row.receipt });
 }
 
 // Receipt format: YYMMDD + suffix letter (A, B, C…)
@@ -230,8 +232,7 @@ function autoReceiptNumber() {
 }
 
 function autoDate() {
-  const { dd, mm, yyyy } = todayFormatted();
-  return `${dd} / ${mm} / ${yyyy}`;
+  return InvoiceDateApi().todayInvoiceDate();
 }
 
 // ── Toast Notifications ──────────────────────────────────────
@@ -332,8 +333,10 @@ function showPrompt(message, { placeholder = '', defaultValue = '', confirmLabel
 
 function getData() {
   const raw = JSON.parse(document.getElementById('invoice-data').textContent);
-  raw.date          = raw.dateOverride    || autoDate();
   raw.receiptNumber = raw.receiptOverride || autoReceiptNumber();
+  raw.date          = raw.dateOverride
+    ? InvoiceDateApi().formatInvoiceDate(raw.dateOverride, { receipt: raw.receiptNumber })
+    : autoDate();
   // Migrate old single totalLabel to split fields
   if (raw.totalLabel && !raw.totalLabelTop) {
     const parts = raw.totalLabel.split(' ');
@@ -927,12 +930,8 @@ function render(data) {
       if (match && match.status) {
         statusStr = match.status;
         if ((statusStr === '⬜ Unpaid' || statusStr === '📤 Sent') && match.date) {
-          const dateParts = match.date.split('/').map(s => s.trim());
-          if (dateParts.length === 3) {
-            const invDate = new Date(`${dateParts[2]}-${dateParts[1]}-${dateParts[0]}T00:00:00`);
-            const daysOld = (new Date() - invDate) / (1000 * 60 * 60 * 24);
-            if (daysOld > 30) isOverdue = true;
-          }
+          const invDate = ledgerRowDate(match);
+          if (invDate && InvoiceDateApi().daysBetween(invDate, new Date()) > 30) isOverdue = true;
         }
       }
     } catch(e) {}
@@ -1005,16 +1004,11 @@ function render(data) {
     const pp = (data.payPeriod || '').trim();
     const netDays = parseInt(pp.replace(/[^0-9]/g, ''));
     if (!isNaN(netDays) && netDays > 0 && data.date) {
-      const parts = data.date.split('/').map(s => s.trim());
-      let invoiceDate;
-      if (parts.length === 3) invoiceDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T12:00:00`);
-      if (invoiceDate && !isNaN(invoiceDate)) {
+      const invoiceDate = InvoiceDateApi().toDate(data.date, { receipt: data.receiptNumber });
+      if (invoiceDate) {
         const due = new Date(invoiceDate);
         due.setDate(due.getDate() + netDays);
-        const dd = String(due.getDate()).padStart(2, '0');
-        const mm = String(due.getMonth() + 1).padStart(2, '0');
-        const yyyy = due.getFullYear();
-        dueDateValue.textContent = `${dd} / ${mm} / ${yyyy}`;
+        dueDateValue.textContent = InvoiceDateApi().formatInvoiceDate(due);
         dueDateLabel.classList.remove('hidden');
         dueDateValue.classList.remove('hidden');
         // Aging chip — hide if Paid, otherwise colour by urgency
@@ -1120,16 +1114,8 @@ function startEdit() {
       ta.className = 'date-edit-input';
       ta.style.cssText = 'font-family: inherit; font-size: inherit; font-weight: inherit; color: inherit; border: 1.5px dashed var(--rule); border-radius: 4px; padding: 2px 4px; background: transparent; outline: none; width: 130px;';
       
-      let d = new Date(current);
-      if (isNaN(d) && current.includes('/')) {
-        const parts = current.split('/').map(s => s.trim());
-        if (parts.length === 3) d = new Date(`${parts[2]}-${parts[0]}-${parts[1]}T12:00:00`);
-      }
-      
-      if (!isNaN(d)) {
-        const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().split('T')[0];
-        ta.value = iso;
-      }
+      const iso = InvoiceDateApi().toIsoDate(current, { receipt: getData().receiptNumber });
+      if (iso) ta.value = iso;
       el.innerHTML = '';
       el.appendChild(ta);
       el.contentEditable = 'false';
@@ -1550,9 +1536,8 @@ function extractEditData() {
     if (field === 'date') {
       const input = el.querySelector('input[type="date"]');
       if (input && input.value) {
-        const parts = input.value.split('-'); // YYYY-MM-DD
-        if (parts.length === 3) {
-          const formatted = `${parts[1]} / ${parts[2]} / ${parts[0]}`;
+        const formatted = InvoiceDateApi().formatInvoiceDate(input.value); // YYYY-MM-DD in
+        if (InvoiceDateApi().parseInvoiceDate(input.value)) {
           setNestedField(data, field, formatted);
         } else {
           setNestedField(data, field, escapeHTML(el.textContent.trim()));
@@ -1965,7 +1950,7 @@ function auditLedgerRows(rows) {
       if (seen.has(k)) issues.push({ receipt: rec, issue: `duplicate receipt (also at ${seen.get(k)})` });
       else seen.set(k, i);
     }
-    if (r.date && isNaN(new Date(normalizeLedgerDate(r.date)).valueOf()) && isNaN(new Date(r.date).valueOf())) {
+    if (r.date && !ledgerRowDate(r)) {
       issues.push({ receipt: rec, issue: `bad date: ${r.date}` });
     }
     if (r.status && !okStatus.has(r.status)) issues.push({ receipt: rec, issue: `unknown status: ${r.status}` });
@@ -2053,7 +2038,7 @@ function draftFromLedgerRow(row) {
       email:   clientMatch?.email   || '',
       phone:   clientMatch?.phone   || '',
     },
-    dateOverride:    row.date || '',
+    dateOverride:    row.date ? InvoiceDateApi().formatInvoiceDate(row.date, { receipt: row.receipt }) : '',
     receiptOverride: row.receipt,
     currency:        cur,
     // Cost the line item at the full project total, not the amount due — the
@@ -2153,7 +2138,7 @@ function markReceiptAsSent() {
     const quoteDoc = isQuoteDocument(data);
     rows.push({
       receipt:      receipt,
-      date:         normalizeLedgerDate(data.date),
+      date:         normalizeLedgerDate(data.date, receipt),
       client:       data.to.name,
       service:      services,
       description:  description,
@@ -2183,7 +2168,7 @@ function buildLedgerRowFromInvoice(data) {
   const status = LedgerSyncApi().deriveLedgerStatus(data, existing && existing.status, { isQuote: quoteDoc });
   return {
     receipt,
-    date:         normalizeLedgerDate(data.date),
+    date:         normalizeLedgerDate(data.date, receipt),
     client:       data.to.name,
     service:      services,
     description:  description,
@@ -2259,7 +2244,7 @@ async function renderLedgerHistory() {
     } else {
       totalsByCurrency[cur].outstanding += parseAmount(r.amountDue);
       
-      const rowDate = typeof parseRowDate === 'function' ? parseRowDate(r.date) : new Date(r.date);
+      const rowDate = ledgerRowDate(r);
       const isOverdue = rowDate && !isNaN(rowDate.valueOf()) &&
         (new Date() - rowDate) / (1000 * 60 * 60 * 24) > (parseInt(r.payPeriod) || 30);
         
@@ -2605,8 +2590,8 @@ async function renderLedgerHistory() {
     .sort((a, b) => {
       let cmp = 0;
       if (window.ledgerSortConfig.key === 'date') {
-        const da = typeof parseRowDate === 'function' ? parseRowDate(a.row.date) : new Date(a.row.date);
-        const db = typeof parseRowDate === 'function' ? parseRowDate(b.row.date) : new Date(b.row.date);
+        const da = ledgerRowDate(a.row);
+        const db = ledgerRowDate(b.row);
         cmp = (da - db) || 0;
       } else if (window.ledgerSortConfig.key === 'client') {
         cmp = (a.row.client || '').localeCompare(b.row.client || '');
@@ -2623,7 +2608,7 @@ async function renderLedgerHistory() {
 
   sorted.forEach(({ row, idx: realIdx }) => {
 
-    const rowDate = typeof parseRowDate === 'function' ? parseRowDate(row.date) : new Date(row.date);
+    const rowDate = ledgerRowDate(row);
     const isOverdue = row.status !== '✅ Paid' && row.status !== '📋 Quote' && !isQuoteLedgerRow(row) && rowDate && !isNaN(rowDate.valueOf()) &&
       (new Date() - rowDate) / (1000 * 60 * 60 * 24) > (parseInt(row.payPeriod) || 30);
 
@@ -4829,8 +4814,7 @@ async function generateStatement(clientName) {
 
   const fmt = n => currency + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fromData = getData().from;
-  const today = new Date();
-  const dateStr = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
+  const dateStr = InvoiceDateApi().formatLedgerDate(new Date());
 
   const rowsHtml = rows.map(r => {
     const isPaid = r.status === '✅ Paid';
@@ -6147,8 +6131,7 @@ function viewBillDoc(id, kind = 'receipt') {
 
 async function generatePaymentReceipt(bill) {
   const profile = getActiveProfile() || {};
-  const today = new Date();
-  const dateStr = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
+  const dateStr = InvoiceDateApi().formatLedgerDate(new Date());
   const currency = window.currentDashCurrency || localStorage.getItem('invoicer-default-currency') || 'USD';
   const amt = parseFloat(bill.amount) || 0;
   const fmtAmt = currency + ' ' + amt.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -7861,19 +7844,14 @@ function renderClientBook() {
   // Build unpaid totals + last-invoiced maps keyed by client name (case-insensitive)
   const unpaidMap = {};
   const lastInvoicedMap = {};
-  const parseDate = str => {
-    if (!str) return null;
-    const p = str.split('/').map(s => s.trim());
-    if (p.length === 3) { const d = new Date(+p[2], +p[0] - 1, +p[1]); if (!isNaN(d)) return d; }
-    const d = new Date(str); return isNaN(d) ? null : d;
-  };
+
   loadLedgerRows().forEach(r => {
     const key = (r.client || '').toLowerCase();
     if ((r.status || '').toLowerCase() !== 'paid') {
       const amt = parseFloat((r.amountDue || '0').toString().replace(/[^0-9.-]/g, '')) || 0;
       unpaidMap[key] = (unpaidMap[key] || 0) + amt;
     }
-    const d = parseDate(r.date);
+    const d = ledgerRowDate(r);
     if (d && (!lastInvoicedMap[key] || d > lastInvoicedMap[key])) lastInvoicedMap[key] = d;
   });
 
@@ -7914,7 +7892,7 @@ function renderClientBook() {
       : '';
     const lastInvDate = lastInvoicedMap[(c.name || '').toLowerCase()];
     const lastInvStr = lastInvDate
-      ? `Last invoiced: ${String(lastInvDate.getDate()).padStart(2,'0')} / ${String(lastInvDate.getMonth()+1).padStart(2,'0')} / ${lastInvDate.getFullYear()}`
+      ? `Last invoiced: ${InvoiceDateApi().formatInvoiceDate(lastInvDate)}`
       : '';
     const lastInvHtml = lastInvStr
       ? `<div class="client-card-last" style="font-size:10px;color:#9aa2ac;margin-top:1px;">${lastInvStr}</div>`
@@ -9455,7 +9433,7 @@ async function fetchCalendarEvents(keyword) {
 function buildDraftFromEvent(event) {
   const startRaw = (event.start && (event.start.dateTime || event.start.date)) || '';
   const dateStr  = startRaw
-    ? new Date(startRaw).toLocaleDateString('en-GB').replace(/\//g, ' / ')
+    ? InvoiceDateApi().formatInvoiceDate(startRaw)
     : '';
 
   const attendees   = event.attendees || [];
@@ -9604,24 +9582,13 @@ function renderDashboard() {
   function parseAmt(str) {
     return parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
   }
-  function parseRowDate(str) {
-    if (!str) return null;
-    const parts = str.split('/').map(s => s.trim());
-    if (parts.length === 3) {
-      const d = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]));
-      if (!isNaN(d.valueOf())) return d;
-    }
-    const d = new Date(str);
-    if (!isNaN(d.valueOf())) return d;
-    return null;
-  }
   function rowYM(row) {
-    const d = parseRowDate(row.date);
+    const d = ledgerRowDate(row);
     if (!d) return '';
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   }
   function rowQ(row) {
-    const d = parseRowDate(row.date);
+    const d = ledgerRowDate(row);
     if (!d) return '';
     return d.getFullYear() + '-Q' + Math.ceil((d.getMonth() + 1) / 3);
   }
@@ -9967,10 +9934,9 @@ function renderAllocationUI(container, row) {
   // 3-day retroactive window — only invoices created within the last 3 days can contribute to goals
   if (row.date) {
     try {
-      const parts = row.date.split('/').map(s => s.trim());
-      if (parts.length === 3) {
-        const invoiceDate = new Date(`${parts[2]}-${parts[1]}-${parts[0]}T00:00:00`);
-        const daysDiff = (new Date() - invoiceDate) / (1000 * 60 * 60 * 24);
+      const invoiceDate = ledgerRowDate(row);
+      if (invoiceDate) {
+        const daysDiff = InvoiceDateApi().daysBetween(invoiceDate, new Date());
         if (daysDiff > 3) {
           container.innerHTML = '<div style="font-size:11px; color:#6c7682; background:#f6f6f4; padding:8px 10px; border-radius:6px;">Goal contributions are only available for invoices created within the last 3 days.</div>';
           return;
