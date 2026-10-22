@@ -132,6 +132,9 @@ function sanitizePrintClone(clone) {
     span.textContent = ta.value || '';
     ta.replaceWith(span);
   });
+  // The reimbursable checkbox is editor chrome; the printed line shows the
+  // "billed at cost" note instead (from the stored line item).
+  clone.querySelectorAll('.reimb-toggle').forEach(el => el.remove());
   clone.querySelectorAll('input').forEach(inp => {
     if (inp.type === 'checkbox' || inp.type === 'radio' || inp.type === 'file' || inp.type === 'range') { inp.remove(); return; }
     inp.replaceWith(document.createTextNode(inp.value || ''));
@@ -190,6 +193,18 @@ function sanitizePrintClone(clone) {
 // Every date read or written goes through source/shared/invoice-date.mjs:
 // month first, M/D/YYYY in the ledger and MM / DD / YYYY on the invoice.
 // The receipt number (YYMMDD) settles old day-first values like 01 / 09.
+// Reimbursable-at-cost helpers (source/shared/reimbursable.mjs). The note
+// text is fixed here too so a line still renders if the module is late.
+const REIMBURSABLE_NOTE = 'Reimbursable expense, billed at cost';
+function ReimbursableApi() {
+  const api = (typeof window !== 'undefined' && window.Reimbursable) ? window.Reimbursable : null;
+  if (!api) throw new Error('Reimbursable not loaded — hard refresh (Cmd+Shift+R)');
+  return api;
+}
+function isReimbursableItem(item) {
+  return !!(item && (item.reimbursable === true || item.reimbursable === 'true'));
+}
+
 function InvoiceDateApi() {
   const api = (typeof window !== 'undefined' && window.InvoiceDate) ? window.InvoiceDate : null;
   if (!api) throw new Error('InvoiceDate not loaded — hard refresh (Cmd+Shift+R)');
@@ -1002,9 +1017,12 @@ function render(data) {
       ? rates.map((r, ri) => `${r}  ×  ${costs[ri] || '—'}`).join('\n')
       : '';
     const costRowsTip = tipLines ? ` data-tip="${tipLines.replace(/"/g, '&quot;')}"` : '';
+    const reimbNote = isReimbursableItem(item)
+      ? `<div class="reimb-note">${REIMBURSABLE_NOTE}</div>`
+      : '';
     tbody.innerHTML += `
-      <tr>
-        <td class="col-service"><div class="service-name" data-field="lineItems.${i}.service">${item.service}</div></td>
+      <tr${reimbNote ? ' class="is-reimbursable"' : ''}>
+        <td class="col-service"><div class="service-name" data-field="lineItems.${i}.service">${item.service}</div>${reimbNote}</td>
         <td class="col-details" data-field="lineItems.${i}.details">${item.details}</td>
         <td class="col-rate"><div class="rate-rows" id="rate-rows-${i}">${ratesHtml}</div></td>
         <td class="col-cost num"><div class="cost-rows" id="cost-rows-${i}"${costRowsTip}>${costsHtml}</div></td>
@@ -1211,6 +1229,24 @@ function startEdit() {
       // be the containing block or it would anchor to the page.
       svcCell.style.position = 'relative';
       svcCell.appendChild(delBtn);
+
+      // "Reimbursable at cost": gear bought for the client and passed through
+      // at cost. The line still bills and totals as normal; the ledger logs
+      // the matching cost so it is not counted as income.
+      svcCell.querySelectorAll('.reimb-toggle').forEach(el => el.remove());
+      const reimbLabel = document.createElement('label');
+      reimbLabel.className = 'reimb-toggle';
+      reimbLabel.title = 'Money passed through to the client at cost. A matching project cost is logged when the invoice is saved to the ledger, so it does not count as income.';
+      const reimbBox = document.createElement('input');
+      reimbBox.type = 'checkbox';
+      reimbBox.className = 'reimb-toggle-input';
+      reimbBox.dataset.lineIndex = String(i);
+      reimbBox.checked = isReimbursableItem(item);
+      reimbBox.addEventListener('change', () => tr.classList.toggle('is-reimbursable', reimbBox.checked));
+      const reimbText = document.createElement('span');
+      reimbText.textContent = 'Reimbursable at cost';
+      reimbLabel.append(reimbBox, reimbText);
+      svcCell.appendChild(reimbLabel);
 
       const moveLineItem = (fromIdx, dir) => {
         const d = extractEditData();
@@ -1536,6 +1572,12 @@ function extractEditData() {
     const i = parseInt(ta.dataset.lineIndex);
     const vals = escapeHTML(ta.value).split('\n').map(s => s.trim()).filter(Boolean);
     data.lineItems[i].costs = vals.length ? vals : ['0'];
+  });
+  document.querySelectorAll('.reimb-toggle-input').forEach(function(box) {
+    const item = data.lineItems[parseInt(box.dataset.lineIndex)];
+    if (!item) return;
+    if (box.checked) item.reimbursable = true;
+    else delete item.reimbursable;
   });
   document.querySelectorAll('[data-field]').forEach(el => {
     const field = el.dataset.field;
@@ -4386,7 +4428,7 @@ Address book: ${existingClients.map(c => c.name).join(', ') || 'empty'}`
 The user will describe what to change next. Return ONLY a single valid JSON object with the fields that need to change.
 Do not repeat fields that are already correct. Do not return markdown, explanation, or any text outside the JSON object.
 If nothing needs to change, return an empty object: {}
-Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[]), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, invoiceNotes (freeform notes shown below line items — payment terms, bank details, late fee policy, etc.), paid.
+Field reference: date, receiptNumber, currency, payPeriod, from (object: name/email/phone), to (object: name/address/email/phone), lineItems (array of objects: service, details, rates[], costs[], reimbursable — true only for things bought on the client's behalf and billed at cost, e.g. equipment procurement; leave it out otherwise), projectTotal, totalLabelTop, totalLabelBottom, totalAmount, paymentNote, invoiceNotes (freeform notes shown below line items — payment terms, bank details, late fee policy, etc.), paid.
 When updating "to" or "from", include ALL subfields of that object, not just the changed ones.
 To load a past invoice into the editor, include "_loadReceipt": "RECEIPT_NUMBER" — use the exact receipt number from the ledger. The app restores the invoice itself; you must NOT output invoice field values for a past invoice from memory. Never invent or guess the client address, email, phone, line-item details, rates, or currency of a past invoice — if a field was not stored, leave it blank rather than fabricating it. Only use this if the user explicitly asks to open, load, or re-open a past invoice.
 To save a contact to the address book, include "_addContact": { "name": "...", "address": "...", "email": "...", "phone": "..." } in your response. Only include fields you know. This does not update the invoice — combine with "to" if you also want to set the client.
