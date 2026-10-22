@@ -135,6 +135,9 @@ function sanitizePrintClone(clone) {
   // The reimbursable checkbox is editor chrome; the printed line shows the
   // "billed at cost" note instead (from the stored line item).
   clone.querySelectorAll('.reimb-toggle').forEach(el => el.remove());
+  // A cloned element restarts its CSS animation, so the green "total
+  // updated" flash from the editor would be baked into the PDF.
+  clone.querySelectorAll('.flash-success').forEach(el => el.classList.remove('flash-success'));
   clone.querySelectorAll('input').forEach(inp => {
     if (inp.type === 'checkbox' || inp.type === 'radio' || inp.type === 'file' || inp.type === 'range') { inp.remove(); return; }
     inp.replaceWith(document.createTextNode(inp.value || ''));
