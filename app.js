@@ -2970,7 +2970,7 @@ async function renderLedgerHistory() {
           amt.className = 'reimb-cost-amount';
           amt.setAttribute('aria-label', `Actual cost for ${row.receipt} (billed ${fmtAmt(parseFloat(c.billed) || 0)})`);
           amt.title = `Billed at ${fmtAmt(parseFloat(c.billed) || 0)}. Change this if what you paid was less (markup).`;
-          amt.style.cssText = 'width:110px; min-height:32px; font-family:Roboto,sans-serif; font-size:11px; font-weight:600; text-align:right; font-variant-numeric:tabular-nums; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; flex-shrink:0;';
+          amt.style.cssText = 'width:110px; font-family:Roboto,sans-serif; font-size:11px; font-weight:600; text-align:right; font-variant-numeric:tabular-nums; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; flex-shrink:0;';
           amt.addEventListener('click', e => e.stopPropagation());
           amt.addEventListener('change', () => {
             const v = parseFloat(amt.value);
@@ -4428,10 +4428,13 @@ async function sendChat() {
 
   // Build ledger summary for query mode
   const ledgerRows = loadLedgerRows();
+  const _reimbIdx = reimbursableIndex();
   const ledgerSummary = ledgerRows.length
-    ? `Invoice ledger (${ledgerRows.length} records):\n` + ledgerRows.map(r =>
-        `  Receipt ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | total ${r.projectTotal || r.amountDue} | due ${r.amountDue} | ${r.status || '⬜ Unpaid'}`
-      ).join('\n')
+    ? `Invoice ledger (${ledgerRows.length} records):\n` + ledgerRows.map(r => {
+        const rc = _reimbIdx.get(String(r.receipt || '').trim()) || 0;
+        const reimb = rc > 0 ? ` | reimbursable at cost ${rc} (not income) | net income ${netIncomeOf(r, _reimbIdx)}` : '';
+        return `  Receipt ${r.receipt} | ${r.date} | ${r.client} | ${r.service} | total ${r.projectTotal || r.amountDue} | due ${r.amountDue} | ${r.status || '⬜ Unpaid'}${reimb}`;
+      }).join('\n')
     : '';
 
   const queryMode = isQueryMessage(text) && !images.length;
@@ -5444,7 +5447,13 @@ function buildPoolBar(pool, currencyCode) {
 function calcIncomePool(rows) {
   if (!rows) rows = loadLedgerRows();
   const parseAmt = s => parseFloat((s || '').replace(/[^0-9.]/g, '')) || 0;
-  const totalIncome   = rows.filter(r => r.status === '✅ Paid').reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  // Income is net of reimbursable at-cost spend (money passed through to the
+  // client is not ours). Rows with no reimbursable cost count in full.
+  const reimbIdx      = reimbursableIndex();
+  const paidRows      = rows.filter(r => r.status === '✅ Paid');
+  const grossIncome   = paidRows.reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  const totalIncome   = paidRows.reduce((s, r) => s + netIncomeOf(r, reimbIdx), 0);
+  const reimbursedExcluded = Math.max(0, Math.round((grossIncome - totalIncome) * 100) / 100);
   const goalsUsed     = loadGoals().reduce((s, g) => s + (parseFloat(g.amountReached) || 0), 0);
   // billsPaid = actual money spent on paid bills; billsFunded = money reserved for unpaid bills
   const allBills = loadBills();
@@ -5458,9 +5467,9 @@ function calcIncomePool(rows) {
   const billsUsed     = billsPaid + billsFunded;
   const taxReserved = rows
     .filter(r => r.status === '✅ Paid' && parseFloat(r.taxRate) > 0)
-    .reduce((s, r) => s + parseAmt(r.amountDue) * parseFloat(r.taxRate), 0);
+    .reduce((s, r) => s + netIncomeOf(r, reimbIdx) * parseFloat(r.taxRate), 0);
   const free = Math.max(0, totalIncome - goalsUsed - billsUsed - taxReserved);
-  return { totalIncome, goalsUsed, billsFunded: billsUsed, billsPaid, billsReserved: billsFunded, taxReserved, free };
+  return { totalIncome, goalsUsed, billsFunded: billsUsed, billsPaid, billsReserved: billsFunded, taxReserved, free, reimbursedExcluded };
 }
 
 function billToSheetRow(bill) {
@@ -6200,7 +6209,7 @@ function reimbursableCostFor(receipt) {
 function netIncomeOf(row, byReceipt) {
   const cost = byReceipt ? (byReceipt.get(String(row.receipt || '').trim()) || 0) : reimbursableCostFor(row.receipt);
   try { return ReimbursableApi().netIncomeAmount(row, cost); }
-  catch (e) { return parseAmt(row.amountDue); }
+  catch (e) { return parseFloat(String(row.amountDue || '').replace(/[^0-9.]/g, '')) || 0; }
 }
 function reimbursableIndex() {
   try { return ReimbursableApi().reimbursableByReceipt(loadProjectCosts()); }
@@ -9803,19 +9812,23 @@ function renderDashboard() {
   const thisYM = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   const thisQ  = now.getFullYear() + '-Q' + Math.ceil((now.getMonth() + 1) / 3);
 
+  // Earnings figures are net of reimbursable at-cost spend; Outstanding stays
+  // the full amount the client still owes.
+  const reimbIdx = reimbursableIndex();
+  const netAmt = r => netIncomeOf(r, reimbIdx);
   const paid = rows.filter(r => r.status === '✅ Paid');
   const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit' || r.status === '📤 Sent');
 
   let monthPaidYM = thisYM;
-  let monthPaid = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  let monthPaid = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + netAmt(r), 0);
   if (monthPaid === 0) {
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastYM = lastMonth.getFullYear() + '-' + String(lastMonth.getMonth() + 1).padStart(2, '0');
-    const lastMonthPaid = paid.filter(r => rowYM(r) === lastYM).reduce((s, r) => s + parseAmt(r.amountDue), 0);
+    const lastMonthPaid = paid.filter(r => rowYM(r) === lastYM).reduce((s, r) => s + netAmt(r), 0);
     if (lastMonthPaid > 0) { monthPaid = lastMonthPaid; monthPaidYM = lastYM; }
   }
-  const quarterAll  = rows.filter(r => rowQ(r) === thisQ).reduce((s, r) => s + parseAmt(r.amountDue), 0);
-  const avgInvoice  = rows.length ? rows.reduce((s, r) => s + parseAmt(r.amountDue), 0) / rows.length : 0;
+  const quarterAll  = rows.filter(r => rowQ(r) === thisQ).reduce((s, r) => s + netAmt(r), 0);
+  const avgInvoice  = rows.length ? rows.reduce((s, r) => s + netAmt(r), 0) / rows.length : 0;
   const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
 
   const currencyCode = (() => {
@@ -9853,12 +9866,20 @@ function renderDashboard() {
     document.getElementById('dash-quarter').textContent     = fmt(quarterAll);
     document.getElementById('dash-avg').textContent         = fmt(avgInvoice);
     document.getElementById('dash-outstanding').textContent = fmt(outstanding);
+    const reimbNoteEl = document.getElementById('dash-reimb-note');
+    if (reimbNoteEl) {
+      const excluded = calcIncomePool(rows).reimbursedExcluded || 0;
+      reimbNoteEl.hidden = !(excluded > 0);
+      reimbNoteEl.textContent = excluded > 0
+        ? `Income excludes ${fmt(excluded)} reimbursable at cost (money passed through to clients).`
+        : '';
+    }
 
     const clientTotals = {};
     rows.forEach(r => {
       const name = (r.client || '').trim();
       if (!name) return;
-      clientTotals[name] = (clientTotals[name] || 0) + parseAmt(r.amountDue);
+      clientTotals[name] = (clientTotals[name] || 0) + netAmt(r);
     });
     const topClient = Object.entries(clientTotals).sort((a, b) => b[1] - a[1])[0];
     const topClientEl    = document.getElementById('dash-top-client');
@@ -9898,7 +9919,7 @@ function renderDashboard() {
       const date = new Date(y, mo - 1, 1);
       return {
         label: date.toLocaleString('default', { month: 'short' }),
-        total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + parseAmt(r.amountDue), 0),
+        total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + netAmt(r), 0),
         spent: billSpendByMonth[m] || 0,
         goals: goalSpendByMonth[m] || 0
       };
@@ -10166,6 +10187,11 @@ function renderAllocationUI(container, row) {
       </div>
       <button id="btn-undo-alloc" style="font-size:11px;padding:5px 12px;background:none;border:1.5px solid #d0241b;color:#d0241b;border-radius:4px;cursor:pointer;">↩ Undo Allocation</button>`;
     container.querySelector('#btn-undo-alloc').onclick = () => undoGoalAllocation(row, container);
+    return;
+  }
+
+  if (reimbursableCostFor(row.receipt) > 0 && netIncomeOf(row) <= 0) {
+    container.innerHTML = '<div class="reimb-alloc-note" style="font-size:11px; color:#5f6b78; background:#f6f6f4; padding:8px 10px; border-radius:6px;">This invoice is reimbursable at cost (money passed through to the client), so there is no income to allocate to goals.</div>';
     return;
   }
 
@@ -10976,8 +11002,11 @@ function restoreFxRateOverride() {
 window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
   if (!pct || pct <= 0 || pct > 100) throw new Error('Percentage must be between 1 and 100.');
 
-  const invoiceAmount = parseFloat((invoiceRow.amountDue || '0').replace(/[^0-9.]/g, '')) || 0;
-  if (!invoiceAmount) throw new Error('Could not read invoice amount.');
+  const grossAmount = parseFloat((invoiceRow.amountDue || '0').replace(/[^0-9.]/g, '')) || 0;
+  if (!grossAmount) throw new Error('Could not read invoice amount.');
+  // Goals draw on income only: reimbursable at-cost spend is left out.
+  const invoiceAmount = netIncomeOf(invoiceRow);
+  if (!invoiceAmount) throw new Error('This invoice is all reimbursable at cost, so there is no income to allocate.');
 
   const invoiceCurrency = (invoiceRow.projectTotal || '').split(' ')[0] || 'JMD';
   let rate;

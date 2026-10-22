@@ -2899,3 +2899,15 @@
   @media (max-width: 900px) {
     #invoice { overflow-x: clip; }
   }
+
+/* Dashboard: one quiet line saying how much paid money was pass-through. */
+#dash-reimb-note {
+  /* Sits 8px under the stat cards it explains (the grid has 20px below it). */
+  margin: -12px 0 16px;
+  font-family: 'Roboto', sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #5f6b78;
+  font-variant-numeric: tabular-nums;
+}
+#dash-reimb-note[hidden] { display: none; }
