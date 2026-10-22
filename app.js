@@ -9831,7 +9831,11 @@ function renderDashboard() {
     if (lastMonthPaid > 0) { monthPaid = lastMonthPaid; monthPaidYM = lastYM; }
   }
   const quarterAll  = rows.filter(r => rowQ(r) === thisQ).reduce((s, r) => s + netAmt(r), 0);
-  const avgInvoice  = rows.length ? rows.reduce((s, r) => s + netAmt(r), 0) / rows.length : 0;
+  // Average real-income invoice: invoices that are entirely reimbursable at
+  // cost (net 0) are left out of the count; a markup invoice counts at net.
+  const isPassThrough = r => (reimbIdx.get(String(r.receipt || '').trim()) || 0) > 0 && netAmt(r) <= 0;
+  const avgRows     = rows.filter(r => !isPassThrough(r));
+  const avgInvoice  = avgRows.length ? avgRows.reduce((s, r) => s + netAmt(r), 0) / avgRows.length : 0;
   const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
 
   const currencyCode = (() => {
@@ -9874,7 +9878,7 @@ function renderDashboard() {
       const excluded = calcIncomePool(rows).reimbursedExcluded || 0;
       reimbNoteEl.hidden = !(excluded > 0);
       reimbNoteEl.textContent = excluded > 0
-        ? `Income excludes ${fmt(excluded)} reimbursable at cost (money passed through to clients).`
+        ? `Income excludes ${fmt(excluded)} billed at cost for client purchases.`
         : '';
     }
 
@@ -9942,8 +9946,13 @@ function renderDashboard() {
       const goalsPct = t.total > 0 ? Math.min(Math.round((t.goals / t.total) * pct), pct - spentPct) : 0;
       const bar = document.createElement('div');
       if (t.total === 0) {
+        // Same row shape as a month with income (label, empty track, dash) so
+        // every month sits on its own line in order.
         bar.className = 'dash-chart-row dash-chart-row--empty';
-        bar.innerHTML = `<span class="dash-chart-label">${t.label}</span><span class="dash-chart-amt dash-chart-amt--nil">—</span>`;
+        bar.innerHTML = `
+          <span class="dash-chart-label">${t.label}</span>
+          <div class="dash-chart-track"></div>
+          <span class="dash-chart-amt dash-chart-amt--nil" aria-label="none">—</span>`;
       } else {
         bar.className = 'dash-chart-row';
         bar.innerHTML = `

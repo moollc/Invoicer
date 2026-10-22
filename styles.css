@@ -2519,8 +2519,8 @@
   #dash-top-client-card { background:#f6f6f4; border-radius:8px; padding:14px 16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; }
   #dash-top-client { font-size:16px; font-weight:700; color:#14202e; }
   #dash-top-client-amt { font-size:18px; font-weight:700; color:#2a8c55; text-align:right; }
-  #dash-chart-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-  #dash-chart-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; }
+  #dash-chart-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:4px 12px; margin-bottom:12px; }
+  #dash-chart-title { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:#9aa2ac; white-space:nowrap; }
   #dash-chart-legend { display:flex; align-items:center; gap:8px; font-size:10px; color:#9aa2ac; }
   .dash-legend-dot { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:3px; }
   .dash-legend-dot--earned { background:#14202e; }
@@ -2549,16 +2549,16 @@
   .goal-notes-link { color:#5b4fcf; word-break:break-all; }
   .goal-bar-wrap { width:100%; height:6px; background:rgba(0,0,0,0.05); border-radius:3px; margin-top:8px; overflow:hidden; position:relative; z-index:2; }
   .goal-bar-fill { height:100%; width:0%; background:#14202e; transition:width 0.6s ease-out; }
-  #dash-chart { display:flex; flex-wrap:wrap; align-items:center; gap:4px 0; margin-bottom:24px; width:100%; }
-  .dash-chart-row { display:flex; align-items:center; gap:5px; width:100%; }
-  .dash-chart-row--empty { width:auto; flex:0 0 auto; gap:2px; }
-  .dash-chart-label { font-size:10px; width:24px; color:#9aa2ac; flex-shrink:0; }
+  /* One row per month, oldest first: label | bar | amount. */
+  #dash-chart { display:flex; flex-direction:column; gap:8px; margin-bottom:24px; width:100%; }
+  .dash-chart-row { display:flex; align-items:center; gap:8px; width:100%; min-height:16px; }
+  .dash-chart-label { font-size:12px; width:32px; color:#5f6b78; flex-shrink:0; }
   .dash-chart-track { flex:1; min-width:0; background:#eeeeec; border-radius:3px; height:10px; overflow:hidden; position:relative; }
   .dash-chart-fill { background:#14202e; height:100%; border-radius:3px; transition:width 0.3s; }
   .dash-chart-fill--spent { position:absolute; top:0; left:0; height:100%; border-radius:3px; background:rgba(230,160,30,0.75); transition:width 0.3s; pointer-events:none; z-index:1; }
   .dash-chart-fill--goals { position:absolute; top:0; left:0; height:100%; border-radius:3px; background:rgba(42,160,120,0.7); transition:width 0.3s; pointer-events:none; z-index:2; }
-  .dash-chart-amt { font-size:10px; font-weight:600; width:44px; flex-shrink:0; text-align:right; color:#14202e; white-space:nowrap; }
-  .dash-chart-amt--nil { color:#c0c4c9; width:auto; }
+  .dash-chart-amt { font-size:12px; font-weight:600; width:48px; flex-shrink:0; text-align:right; color:#14202e; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .dash-chart-amt--nil { color:#5f6b78; font-weight:400; }
   #dash-profile-name { font-size:13px; font-weight:600; color:#14202e; }
   #dash-empty { display:none; font-size:12px; color:#9aa2ac; text-align:center; padding:20px 0; }
   #dash-diagnostics { display:none; margin-top:20px; padding:12px; background:#fff8f8; border:1px solid #fde7e7; border-radius:8px; }
