@@ -2436,6 +2436,7 @@ async function renderLedgerHistory() {
         }
       });
       saveLedgerRows(lrows);
+      toUpdate.forEach(r => logReimbursableCost(r.receipt));
       renderLedgerHistory();
       for (const row of toUpdate) {
         const ok = await updateLedgerStatusOnSheet(row.receipt, '✅ Paid', row.amountDue || null);
@@ -2795,6 +2796,7 @@ async function renderLedgerHistory() {
         rows[realIdx]._statusDirty = true;
         wrap.style.background = rowBg(rows[realIdx], false);
         saveLedgerRows(rows);
+        if (sel.value === '✅ Paid') logReimbursableCost(rows[realIdx].receipt);
         const paidAmountDue = sel.value === '✅ Paid' ? rows[realIdx].amountDue : null;
         const _statusOk = await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
         if (_statusOk) {
@@ -2933,15 +2935,60 @@ async function renderLedgerHistory() {
         (costs.length ? `<span style="font-size:11px; font-weight:700; color:${net >= 0 ? '#2a8c55' : '#d0241b'};">Net Margin: ${fmtAmt(net)}</span>` : '');
       costsWrap.appendChild(head);
 
+      // Reimbursable at-cost spend is not income: say what this invoice
+      // counts as income once paid.
+      const reimbCosts = costs.filter(c => ReimbursableApi().isReimbursableCost(c));
+      if (reimbCosts.length) {
+        const netRow = document.createElement('div');
+        netRow.className = 'reimb-net-row';
+        netRow.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:11px; color:#14202e;';
+        const reimbTotal = reimbCosts.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+        netRow.innerHTML = `<span style="color:#5f6b78;">Reimbursable at cost · not income</span>` +
+          `<span style="font-weight:700; font-variant-numeric:tabular-nums;">Net income: <span class="reimb-net-amt">${fmtAmt(netIncomeOf(row))}</span></span>`;
+        netRow.title = `${fmtAmt(reimbTotal)} of this invoice is reimbursable at cost, so it is left out of income, profit, goal allocation and tax reserve.`;
+        costsWrap.appendChild(netRow);
+      }
+
+      const fmtCostDate = d => {
+        const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        return m ? `${m[2]}/${m[3]}/${m[1]}` : (d || '');
+      };
       costs.forEach(c => {
         const line = document.createElement('div');
         line.style.cssText = 'display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:11px; color:#14202e;';
         const label = document.createElement('span');
-        label.textContent = `${c.date ? c.date + ' · ' : ''}${c.desc}`;
+        label.textContent = `${c.date ? fmtCostDate(c.date) + ' · ' : ''}${c.desc}`;
         label.style.cssText = 'flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;';
-        const amt = document.createElement('span');
-        amt.textContent = fmtAmt(parseFloat(c.amount) || 0);
-        amt.style.cssText = 'font-weight:600; flex-shrink:0;';
+        let amt;
+        if (ReimbursableApi().isReimbursableCost(c)) {
+          // What it actually cost. Defaults to the billed amount; lower it
+          // if the client was charged a markup and the difference is income.
+          line.classList.add('reimb-cost-line');
+          amt = document.createElement('input');
+          amt.type = 'number'; amt.min = '0'; amt.step = '0.01';
+          amt.value = String(parseFloat(c.amount) || 0);
+          amt.className = 'reimb-cost-amount';
+          amt.setAttribute('aria-label', `Actual cost for ${row.receipt} (billed ${fmtAmt(parseFloat(c.billed) || 0)})`);
+          amt.title = `Billed at ${fmtAmt(parseFloat(c.billed) || 0)}. Change this if what you paid was less (markup).`;
+          amt.style.cssText = 'width:110px; min-height:32px; font-family:Roboto,sans-serif; font-size:11px; font-weight:600; text-align:right; font-variant-numeric:tabular-nums; padding:4px 8px; border:1.5px solid rgba(20,32,46,0.18); border-radius:5px; flex-shrink:0;';
+          amt.addEventListener('click', e => e.stopPropagation());
+          amt.addEventListener('change', () => {
+            const v = parseFloat(amt.value);
+            if (isNaN(v) || v < 0) { amt.value = String(parseFloat(c.amount) || 0); return; }
+            const all = loadProjectCosts();
+            const i = all.findIndex(x => x.id === c.id);
+            if (i === -1) return;
+            all[i] = { ...all[i], amount: String(Math.round(v * 100) / 100) };
+            saveProjectCosts(all);
+            syncProjectCostsToSheet().catch(() => {});
+            renderCostsSection();
+            if (typeof renderDashboard === 'function') { try { renderDashboard(); } catch (e) {} }
+          });
+        } else {
+          amt = document.createElement('span');
+          amt.textContent = fmtAmt(parseFloat(c.amount) || 0);
+          amt.style.cssText = 'font-weight:600; flex-shrink:0;';
+        }
         const del = document.createElement('button');
         del.textContent = '×';
         del.title = 'Remove cost';
@@ -3044,6 +3091,7 @@ async function updateLedger() {
   const { rows: next, action } = LS.upsertLedgerRow(loadLedgerRows(), { ...row, _dirty: true });
   saveLedgerRows(next);
   archiveInvoice(row.receipt, data);
+  logReimbursableCost(row.receipt, data);
 
   // Pin receipt + date so the editor keeps showing this receipt after save
   // (without the pin, the next render would auto-number the next letter).
@@ -5962,7 +6010,11 @@ async function confirmBillInvoice() {
 // logger (costs charged back to the client as invoice line items).
 
 function loadProjectCosts() {
-  try { return JSON.parse(localStorage.getItem('invoice-project-costs') || '[]'); } catch(e) { return []; }
+  let list;
+  try { list = JSON.parse(localStorage.getItem('invoice-project-costs') || '[]'); } catch(e) { return []; }
+  if (!Array.isArray(list)) return [];
+  // Older syncs could double-append the same cost id; count it once.
+  try { return ReimbursableApi().dedupeCostsById(list); } catch (e) { return list; }
 }
 function saveProjectCosts(costs) {
   localStorage.setItem('invoice-project-costs', JSON.stringify(costs));
@@ -5997,11 +6049,11 @@ function addProjectCost({ receipt, client, desc, amount, date }) {
 async function clearProjectCostRow(id) {
   if (!_gmailToken || !_sheetsSpreadsheetId || !id) return;
   try {
-    let existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+    let existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:H');
     if (existing === null) return;
     const rowIdx = existing.findIndex(r => r[0] === id);
     if (rowIdx === -1) return;
-    await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${rowIdx + 2}:F${rowIdx + 2}`, [['', '', '', '', '', '']]);
+    await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${rowIdx + 2}:H${rowIdx + 2}`, [['', '', '', '', '', '', '', '']]);
   } catch (e) {
     console.warn('[Costs] clearProjectCostRow failed:', e.message);
   }
@@ -6014,30 +6066,49 @@ function deleteProjectCost(id) {
   }).catch(() => {});
 }
 
+// ProjectCosts columns A..H: ID, Receipt #, Client, Description, Amount,
+// Date, Type, Billed. G/H are blank on older rows, which read as plain costs.
 function projectCostToRow(c) {
-  return [c.id, c.receipt, c.client, c.desc, c.amount, c.date];
+  return ReimbursableApi().projectCostToRow(c);
 }
 function projectCostFromRow(r) {
-  return {
-    id:      r[0],
-    receipt: sanitizeSheetValue(r[1]) || '',
-    client:  sanitizeSheetValue(r[2]) || '',
-    desc:    sanitizeSheetValue(r[3]) || '',
-    amount:  sanitizeSheetValue(r[4]) || '0',
-    date:    sanitizeSheetValue(r[5]) || '',
-  };
+  return ReimbursableApi().projectCostFromRow(r, sanitizeSheetValue);
 }
 
 // Upsert by id (Bills pattern). Sheet-only rows are kept — blanking moved to clearProjectCostRow/deleteProjectCost.
-async function syncProjectCostsToSheet() {
+// Runs one at a time: two overlapping syncs could both miss a new id on the
+// sheet and append it twice (the old duplicate-cost bug).
+// Older ProjectCosts tabs have six headers; add Type/Billed (G1:H1) once,
+// leaving A..F and every data row as they are.
+let _projectCostHeadersChecked = false;
+async function ensureProjectCostHeaders(spreadsheetId) {
+  if (_projectCostHeadersChecked) return;
+  const head = await sheetsRead(spreadsheetId, 'ProjectCosts!A1:H1');
+  if (head === null) return;
+  const h = (head[0] || []).map(v => String(v || '').trim());
+  if (h.length > 0 && !h.includes('Type')) {
+    await sheetsWrite(spreadsheetId, 'ProjectCosts!G1:H1', [['Type', 'Billed']]);
+  }
+  _projectCostHeadersChecked = true;
+}
+let _projectCostSyncChain = Promise.resolve();
+function syncProjectCostsToSheet() {
+  const run = _projectCostSyncChain.then(() => _syncProjectCostsToSheetNow());
+  _projectCostSyncChain = run.catch(() => {});
+  return run;
+}
+async function _syncProjectCostsToSheetNow() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Not signed in' };
   const costs = loadProjectCosts();
-  let existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+  let existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:H');
   if (existing === null) {
     try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Costs] ensureAllTabs failed:', e.message); }
-    existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+    existing = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:H');
   }
   if (existing === null) return { success: false, error: 'ProjectCosts tab read failed' };
+  if (costs.some(c => c.type)) {
+    try { await ensureProjectCostHeaders(_sheetsSpreadsheetId); } catch (e) { console.warn('[Costs] header check failed:', e.message); }
+  }
   let failures = 0;
   for (const cost of costs) {
     const newRow = projectCostToRow(cost);
@@ -6047,7 +6118,12 @@ async function syncProjectCostsToSheet() {
         await sheetsAppend(_sheetsSpreadsheetId, 'ProjectCosts!A1', [newRow]);
         existing.push(newRow);
       } else {
-        await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${rowIdx + 2}:F${rowIdx + 2}`, [newRow]);
+        const old = existing[rowIdx] || [];
+        const same = newRow.every((v, i) => String(v ?? '') === String(old[i] ?? ''));
+        if (!same) {
+          await sheetsWrite(_sheetsSpreadsheetId, `ProjectCosts!A${rowIdx + 2}:H${rowIdx + 2}`, [newRow]);
+          existing[rowIdx] = newRow;
+        }
       }
     } catch (e) {
       failures++;
@@ -6059,13 +6135,13 @@ async function syncProjectCostsToSheet() {
 
 async function loadProjectCostsFromSheet() {
   if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  let rows = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+  let rows = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:H');
   if (rows === null) {
     try { await ensureAllTabs(_sheetsSpreadsheetId); } catch (e) { console.warn('[Costs] ensureAllTabs failed:', e.message); }
-    rows = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:F');
+    rows = await sheetsRead(_sheetsSpreadsheetId, 'ProjectCosts!A2:H');
   }
   if (rows === null) return;
-  const sheetCosts = rows.filter(r => r[0] && r[0].trim()).map(projectCostFromRow);
+  const sheetCosts = ReimbursableApi().dedupeCostsById(rows.filter(r => r[0] && r[0].trim()).map(projectCostFromRow));
   const local = loadProjectCosts();
   if (!sheetCosts.length) {
     if (local.length) await syncProjectCostsToSheet();
@@ -6076,6 +6152,59 @@ async function loadProjectCostsFromSheet() {
   const localOnly = local.filter(c => !sheetIds.has(c.id));
   saveProjectCosts([...sheetCosts, ...localOnly]);
   if (localOnly.length) await syncProjectCostsToSheet();
+}
+
+// ── Reimbursable at cost ─────────────────────────────────────
+// Lines marked "Reimbursable at cost" are money passed through to the client
+// (e.g. equipment bought for them). On save to the ledger and on mark Paid,
+// one matching ProjectCosts record (id reimb-<receipt>) is kept in step so
+// that invoice's income nets it out. Same id every time: re-saving updates it,
+// never adds a second one. An amount edited by hand (markup) is kept.
+function invoiceDateToIso(dateStr) {
+  const m = String(dateStr || '').match(/(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})/);
+  if (!m) return new Date().toISOString().slice(0, 10);
+  return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+}
+function logReimbursableCost(receipt, data) {
+  const key = String(receipt || '').trim();
+  const inv = data || getArchivedInvoice(key);
+  if (!key || !inv || isQuoteDocument(inv)) return 'none';
+  let res;
+  try {
+    res = ReimbursableApi().upsertReimbursableCost(loadProjectCosts(), {
+      receipt: key,
+      client: (inv.to && inv.to.name) || '',
+      data: inv,
+      date: invoiceDateToIso(inv.date || inv.dateOverride),
+    });
+  } catch (e) {
+    console.warn('[Reimbursable] could not log cost:', e.message);
+    return 'none';
+  }
+  if (res.action === 'none') return 'none';
+  saveProjectCosts(res.costs);
+  syncProjectCostsToSheet().then(r => {
+    if (r && !r.success && r.error !== 'Not signed in') {
+      showToast('Reimbursable cost saved locally — sheet sync failed. It will push on next sync.', 'info');
+    }
+  }).catch(() => {});
+  return res.action;
+}
+function reimbursableCostFor(receipt) {
+  try {
+    return ReimbursableApi().reimbursableByReceipt(loadProjectCosts()).get(String(receipt || '').trim()) || 0;
+  } catch (e) { return 0; }
+}
+// What a ledger row counts as income: the amount paid minus its share of
+// any reimbursable at-cost spend. Rows without one are unchanged.
+function netIncomeOf(row, byReceipt) {
+  const cost = byReceipt ? (byReceipt.get(String(row.receipt || '').trim()) || 0) : reimbursableCostFor(row.receipt);
+  try { return ReimbursableApi().netIncomeAmount(row, cost); }
+  catch (e) { return parseAmt(row.amountDue); }
+}
+function reimbursableIndex() {
+  try { return ReimbursableApi().reimbursableByReceipt(loadProjectCosts()); }
+  catch (e) { return new Map(); }
 }
 
 /**
@@ -9161,8 +9290,9 @@ async function ensureAllTabs(spreadsheetId) {
     }
   }
   if (!existing.includes('ProjectCosts')) {
-    await sheetsWrite(spreadsheetId, 'ProjectCosts!A1:F1', [['ID', 'Receipt #', 'Client', 'Description', 'Amount', 'Date']]);
+    await sheetsWrite(spreadsheetId, 'ProjectCosts!A1:H1', [['ID', 'Receipt #', 'Client', 'Description', 'Amount', 'Date', 'Type', 'Billed']]);
   }
+  else await ensureProjectCostHeaders(spreadsheetId);
   if (!existing.includes('ClientExpenses')) {
     await sheetsWrite(spreadsheetId, 'ClientExpenses!A1:H1', [['ID', 'Receipt #', 'Client', 'Description', 'Amount', 'Date', 'Billed', 'Billed Receipt']]);
   }
@@ -11701,6 +11831,7 @@ function quickSetStatus(status) {
   rows[idx]._statusDirty = true;
   saveLedgerRows(rows);
   const _receipt = rows[idx].receipt;
+  if (status === '✅ Paid') logReimbursableCost(_receipt, data);
   const _amtDue = status === '✅ Paid' ? rows[idx].amountDue : null;
   updateLedgerStatusOnSheet(_receipt, status, _amtDue).then(ok => {
     if (ok) {
