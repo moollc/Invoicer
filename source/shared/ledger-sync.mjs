@@ -7,10 +7,13 @@
  *   A2-style corrections have their own receipt numbers, so they stay rows
  *   of their own.
  * - Status is only changed by the user, except that an invoice with a
- *   deposit/payment and a balance still due is "Deposit".
+ *   deposit/payment and a balance still due is "Deposit", and one whose
+ *   payments cover the total (balance 0) is "Paid". Nothing here ever
+ *   switches a row to Quote.
  * - Deleting is explicit and leaves a tombstone so the next sheet sync
  *   removes the row there too instead of bringing it back.
  */
+import { paymentSummary } from './invoice-payments.mjs';
 
 export const STATUS = {
   UNPAID: '⬜ Unpaid',
@@ -59,6 +62,7 @@ function paymentsSum(data) {
  * Status for an invoice being saved.
  *   quote doc, new row or Quote   -> Quote
  *   quote doc, row has a status   -> unchanged (Paid/Sent/Unpaid/Deposit kept)
+ *   payments cover the total      -> Paid (balance 0)
  *   user already set Paid / Sent  -> unchanged
  *   payments > 0 and balance > 0  -> Deposit
  *   user set Deposit              -> unchanged
@@ -66,12 +70,28 @@ function paymentsSum(data) {
  */
 export function deriveLedgerStatus(data, existingStatus, { isQuote = false } = {}) {
   if (isQuote) return (!existingStatus || existingStatus === STATUS.QUOTE) ? STATUS.QUOTE : existingStatus;
+  // Payments cover the line-item total (balance 0): Paid.
+  if (paymentSummary(data || {}).status === 'paid') return STATUS.PAID;
   if (existingStatus === STATUS.PAID || existingStatus === STATUS.SENT) return existingStatus;
   const paid = paymentsSum(data);
   const due = money(data && data.totalAmount);
   if (paid > 0 && due > 0) return STATUS.DEPOSIT;
   if (existingStatus && existingStatus !== STATUS.QUOTE) return existingStatus;
   return STATUS.UNPAID;
+}
+
+/**
+ * Status for a ledger row whose Amount Paid (column L) covers its Amount Due
+ * (column F): Paid. Quote and Paid rows, and rows with nothing paid, keep
+ * their status. Running it again changes nothing.
+ */
+export function settledRowStatus(row) {
+  if (!row) return row && row.status;
+  if (row.status === STATUS.PAID || row.status === STATUS.QUOTE || isQuoteRow(row)) return row.status;
+  const paid = money(row.amountPaid);
+  const due = money(row.amountDue);
+  if (paid > 0 && due > 0 && paid >= due - 0.005) return STATUS.PAID;
+  return row.status;
 }
 
 /**
@@ -94,10 +114,13 @@ export function upsertLedgerRow(rows, incoming) {
   for (const f of INVOICE_FIELDS) if (incoming[f] !== undefined) next[f] = incoming[f];
   // A status the user set (Paid / Sent) is never overwritten by a re-save,
   // and Quote never replaces a real invoice status.
+  // A balance that reached 0 (incoming Paid) does replace Sent / Unpaid / Deposit.
   const userSet = prev.status === STATUS.PAID || prev.status === STATUS.SENT;
   const quoteOverReal = incoming.status === STATUS.QUOTE && KEPT_STATUSES.has(prev.status);
-  if (incoming.status !== undefined && !userSet && !quoteOverReal) next.status = incoming.status;
+  const settles = incoming.status === STATUS.PAID;
+  if (incoming.status !== undefined && (settles || !userSet) && !quoteOverReal) next.status = incoming.status;
   if (incoming._dirty !== undefined) next._dirty = incoming._dirty;
+  if (incoming._statusDirty !== undefined) next._statusDirty = incoming._statusDirty;
   next.receipt = key;
   list[index] = next;
   return { rows: list, action: 'update', index };
@@ -196,7 +219,13 @@ export function mergeLedger(sheetRows, localRows, tombstones = []) {
   const toPush = [];
   const merged = kept.map(sr => {
     const li = local.findIndex((lr, i) => !used.has(i) && normReceipt(lr.receipt) === sr.receipt);
-    if (li === -1) return sr;
+    if (li === -1) {
+      const settled = settledRowStatus(sr);
+      if (settled === sr.status) return sr;
+      const row = { ...sr, status: settled }; // Amount Paid covers Amount Due
+      toPush.push(row);
+      return row;
+    }
     used.add(li);
     const lr = local[li];
     const extras = { note: lr.note, payPeriod: lr.payPeriod, docType: lr.docType };
@@ -212,6 +241,9 @@ export function mergeLedger(sheetRows, localRows, tombstones = []) {
         row.status = upgrade ? lr.status : sr.status;
       }
       if (row.goalAllocations == null && sr.goalAllocations != null) row.goalAllocations = sr.goalAllocations;
+      // Balance 0 (Amount Paid covers Amount Due): Paid, unless the user
+      // picked a status for this row on this device.
+      if (!lr._statusDirty) row.status = settledRowStatus(row);
       toPush.push(row);
       return row;
     }
@@ -223,13 +255,17 @@ export function mergeLedger(sheetRows, localRows, tombstones = []) {
       goalAllocations: sr.goalAllocations ?? lr.goalAllocations ?? null,
       taxRate: sr.taxRate > 0 ? sr.taxRate : (lr.taxRate || 0),
     };
-    if (keepPaid) toPush.push(row); // repair a sheet that missed a Paid
+    const settled = settledRowStatus(row);
+    const settle = settled !== row.status;
+    if (settle) row.status = settled; // Amount Paid covers Amount Due
+    if (keepPaid || settle) toPush.push(row); // repair a sheet that missed a Paid
     return row;
   });
   const tombSigs = new Set(tombstones.map(t => t.sig));
   local.forEach((lr, i) => {
     if (used.has(i) || lr._dirty !== true) return;
     if (tombSigs.has(rowSignature(lr))) return;
+    if (!lr._statusDirty) lr.status = settledRowStatus(lr);
     merged.push(lr);
     toPush.push(lr);
   });

@@ -987,11 +987,6 @@
     letter-spacing: 0.3px;
     font-variant-numeric: tabular-nums lining-nums;
   }
-  /* Keep the currency code on the same line as its amount ("JMD 100,000.00"
-     used to wrap JMD above the figure). Phones keep wrapping at the space. */
-  @media (min-width: 601px) { .cost-amt { white-space: nowrap; } }
-  @media print { .cost-amt { white-space: nowrap; } }
-  .print-clone .cost-amt { white-space: nowrap; }
 
   /* ── TOTAL ── */
   .total-wrap {

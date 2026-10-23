@@ -1755,6 +1755,7 @@ function saveEdit() {
   // in sync so re-loading it later shows the edit, not the stale copy. New
   // drafts still only archive on print/send.
   if (getArchivedInvoice(data.receiptNumber)) archiveInvoice(data.receiptNumber, data);
+  try { autoMarkPaidIfSettled(data); } catch (e) { console.warn('[payments] auto Paid skipped:', e.message || e); }
   // "Saved!" feedback on sticky bar before closing
   const saveBtn = document.getElementById('btn-save-changes');
   if (saveBtn) {
@@ -2275,9 +2276,11 @@ function markReceiptAsSent() {
   const receipt = (receiptEl && receiptEl.textContent.trim()) || data.receiptNumber;
   const rows = loadLedgerRows();
   const idx = rows.findIndex(r => r.receipt === receipt);
+  // Payments already cover the total (balance 0): it goes in as Paid, not Sent.
+  const settled = !isQuoteDocument(data) && getInvoiceTotals().paymentSummary(data).status === 'paid';
   if (idx >= 0) {
     if (rows[idx].status !== '✅ Paid' && rows[idx].status !== '📋 Quote' && !isQuoteDocument(data)) {
-      rows[idx].status = '📤 Sent';
+      rows[idx].status = settled ? '✅ Paid' : '📤 Sent';
       rows[idx]._dirty = true;
       rows[idx]._statusDirty = true;
     }
@@ -2301,7 +2304,7 @@ function markReceiptAsSent() {
       projectTotal: `${data.currency} ${data.projectTotal}`,
       amountDue:    ledgerAmountDueText(data),
       ...ledgerPaymentFieldsFor(data),
-      status:       quoteDoc ? '📋 Quote' : '📤 Sent',
+      status:       quoteDoc ? '📋 Quote' : (settled ? '✅ Paid' : '📤 Sent'),
       payPeriod:    data.payPeriod || '',
       docType:      quoteDoc ? 'quote' : 'invoice',
       _dirty:       true,
@@ -2309,7 +2312,44 @@ function markReceiptAsSent() {
   }
   saveLedgerRows(rows);
   archiveInvoice(receipt, data);
-  updateLedgerStatusOnSheet(receipt, '📤 Sent');
+  const finalRow = rows.find(r => r.receipt === receipt);
+  if (settled && finalRow && finalRow.status === '✅ Paid') {
+    logReimbursableCost(receipt, data);
+    updateLedgerStatusOnSheet(receipt, '✅ Paid', null, ledgerPaymentFieldsFor(data));
+  } else {
+    updateLedgerStatusOnSheet(receipt, '📤 Sent');
+  }
+}
+
+// Balance reached 0 (payments cover the total): switch this invoice's ledger
+// row to Paid, here and on the sheet, with Amount Paid / Paid Date. Rows that
+// are already Paid, quotes, and receipts not in the ledger are left alone, so
+// running it again does nothing. Never switches anything to Quote.
+function autoMarkPaidIfSettled(data) {
+  if (!data || isQuoteDocument(data)) return false;
+  if (getInvoiceTotals().paymentSummary(data).status !== 'paid') return false;
+  const receipt = String(data.receiptNumber || '').trim();
+  const rows = loadLedgerRows();
+  const idx = rows.findIndex(r => String(r.receipt || '').trim() === receipt);
+  if (idx === -1) return false;
+  const row = rows[idx];
+  if (row.status === '✅ Paid' || row.status === '📋 Quote' || LedgerSyncApi().isQuoteRow(row)) return false;
+  const fields = ledgerPaymentFieldsFor(data);
+  row.status = '✅ Paid';
+  row.amountDue = ledgerAmountDueText(data);
+  row.amountPaid = fields.amountPaid || '';
+  row.paidDate = fields.paidDate || '';
+  row._dirty = true;
+  row._statusDirty = true;
+  saveLedgerRows(rows);
+  logReimbursableCost(receipt, data);
+  updateLedgerStatusOnSheet(receipt, '✅ Paid', row.amountDue, fields).then(ok => {
+    if (!ok) return;
+    const cur = loadLedgerRows(); const ci = cur.findIndex(r => r.receipt === row.receipt);
+    if (ci !== -1) { delete cur[ci]._dirty; delete cur[ci]._statusDirty; saveLedgerRows(cur); }
+  });
+  showToast(`${escapeHtml(receipt)} is paid in full, so it is now marked Paid in the ledger.`, 'success', 5000);
+  return true;
 }
 
 let _pendingRow = null; // the row object for the current invoice, set on dialog open
@@ -2332,7 +2372,8 @@ function ledgerPaymentFieldsFor(data) {
 }
 
 // Ledger summary row for an invoice. Status comes from the existing row (set
-// by the user) or is derived: a deposit/payment with a balance left => Deposit.
+// by the user) or is derived: a deposit/payment with a balance left => Deposit,
+// payments covering the total (balance 0) => Paid.
 function buildLedgerRowFromInvoice(data) {
   const services = data.lineItems.map(l => l.service).join(', ');
   const description = data.lineItems.map(l => l.details || '').filter(Boolean).join('; ');
@@ -3212,7 +3253,12 @@ async function updateLedger() {
   const row = buildLedgerRowFromInvoice(data);
   _pendingRow = row;
   const LS = LedgerSyncApi();
-  const { rows: next, action } = LS.upsertLedgerRow(loadLedgerRows(), { ...row, _dirty: true });
+  const before = loadLedgerRows();
+  const prevRow = before.find(r => String(r.receipt || '').trim() === row.receipt);
+  // Balance reached 0 on this save: the derived Paid is pushed to the sheet
+  // like a status the user picked.
+  const becamePaid = row.status === LS.STATUS.PAID && (!prevRow || prevRow.status !== LS.STATUS.PAID);
+  const { rows: next, action } = LS.upsertLedgerRow(before, { ...row, _dirty: true, ...(becamePaid ? { _statusDirty: true } : {}) });
   saveLedgerRows(next);
   archiveInvoice(row.receipt, data);
   logReimbursableCost(row.receipt, data);

@@ -205,3 +205,45 @@ test('amount paid / paid date: columns L and M after every existing column, roun
   assert.equal(ledgerRowBalance({ ...base, amountPaid: 'JMD 150,000' }), 0);
   assert.equal(ledgerRowBalance({ ...base, status: STATUS.PAID }), 0);
 });
+
+test('balance 0: payments covering the total make the row Paid, once, never Quote', async () => {
+  const { settledRowStatus } = await import('../source/shared/ledger-sync.mjs');
+  const inv = (payments, extra = {}) => ({ currency: 'JMD', lineItems: [{ costs: ['100,000'] }], totalAmount: 'JMD 0.00', payments, ...extra });
+  const full = inv([{ amount: '100,000', date: '10/21/2026' }]);
+  assert.equal(deriveLedgerStatus(full, undefined), STATUS.PAID);
+  assert.equal(deriveLedgerStatus(full, STATUS.SENT), STATUS.PAID);
+  assert.equal(deriveLedgerStatus(full, STATUS.DEPOSIT), STATUS.PAID);
+  assert.equal(deriveLedgerStatus(full, STATUS.PAID), STATUS.PAID);
+  assert.equal(deriveLedgerStatus(inv([{ amount: '120,000', date: '10/21/2026' }]), STATUS.UNPAID), STATUS.PAID);
+  assert.equal(deriveLedgerStatus(inv([{ label: 'Deposit', amount: '100,000' }]), STATUS.UNPAID), STATUS.PAID);
+  // part payment stays as before
+  assert.equal(deriveLedgerStatus(inv([{ amount: '40,000', date: '10/21/2026' }], { totalAmount: 'JMD 60,000.00' }), STATUS.UNPAID), STATUS.DEPOSIT);
+  // a quote is never made Paid, and nothing becomes Quote
+  assert.equal(deriveLedgerStatus(full, undefined, { isQuote: true }), STATUS.QUOTE);
+  assert.equal(deriveLedgerStatus(full, STATUS.SENT, { isQuote: true }), STATUS.SENT);
+  // upsert: Paid replaces Sent, then stays
+  const { rows: r1 } = upsertLedgerRow([{ ...base, status: STATUS.SENT }], { ...base, status: STATUS.PAID });
+  assert.equal(r1[0].status, STATUS.PAID);
+  const { rows: r2 } = upsertLedgerRow(r1, { ...base, status: STATUS.PAID });
+  assert.deepEqual(r2, r1);
+  // ledger rows by Amount Paid vs Amount Due
+  assert.equal(settledRowStatus({ ...base, status: STATUS.SENT, amountPaid: 'JMD 100,000' }), STATUS.PAID);
+  assert.equal(settledRowStatus({ ...base, status: STATUS.UNPAID, amountPaid: 'JMD 40,000' }), STATUS.UNPAID);
+  assert.equal(settledRowStatus({ ...base, status: STATUS.QUOTE, amountPaid: 'JMD 100,000' }), STATUS.QUOTE);
+  assert.equal(settledRowStatus({ ...base, status: STATUS.SENT }), STATUS.SENT);
+});
+
+test('sync: a sheet row whose Amount Paid covers Amount Due is pushed as Paid, once', () => {
+  const sheet = [{ ...base, status: STATUS.SENT, amountPaid: 'JMD 100,000', paidDate: '10/21/2026' }, { ...base, receipt: '261017B', status: STATUS.QUOTE, amountPaid: 'JMD 100,000' }];
+  const { rows, toPush } = mergeLedger(sheet, []);
+  assert.equal(rows[0].status, STATUS.PAID);
+  assert.equal(rows[1].status, STATUS.QUOTE);
+  assert.equal(toPush.length, 1);
+  const again = mergeLedger(rows, []);
+  assert.equal(again.toPush.length, 0);
+  // a status the user picked on this device is respected
+  const mine = mergeLedger(sheet.slice(0, 1), [{ ...sheet[0], status: STATUS.SENT, _dirty: true, _statusDirty: true }]);
+  assert.equal(mine.rows[0].status, STATUS.SENT);
+  const notMine = mergeLedger(sheet.slice(0, 1), [{ ...sheet[0], _dirty: true }]);
+  assert.equal(notMine.rows[0].status, STATUS.PAID);
+});
