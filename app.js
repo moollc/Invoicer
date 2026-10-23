@@ -5419,7 +5419,10 @@ function allocateToBills(incomeUSD) {
 }
 
 function buildPoolBar(pool, currencyCode) {
-  const fmt = n => formatCurrencyNative(Math.round(n), currencyCode || window.currentDashCurrency || 'USD', 0);
+  const fmt = n => formatCurrencyNative(Math.round(n), currencyCode || pool.currency || window.currentDashCurrency || 'USD', 0);
+  const goalsText = pool.goalsNoRate && pool.goalsUsedUSD > 0
+    ? `Goals ${formatCurrencyNative(pool.goalsUsedUSD, 'USD', 2)} (no exchange rate, not in Liquid)`
+    : `Goals ${fmt(pool.goalsUsed)}`;
   const goalsPct = pool.totalIncome > 0 ? Math.round((pool.goalsUsed  / pool.totalIncome) * 100) : 0;
   const billsPct = pool.totalIncome > 0 ? Math.round((pool.billsFunded / pool.totalIncome) * 100) : 0;
   const taxPct   = pool.totalIncome > 0 && pool.taxReserved > 0 ? Math.round((pool.taxReserved / pool.totalIncome) * 100) : 0;
@@ -5438,12 +5441,50 @@ function buildPoolBar(pool, currencyCode) {
       ${taxFill}
     </div>
     <div class="pool-legend">
-      <span class="pool-legend-item pool-legend--goals">Goals ${fmt(pool.goalsUsed)}</span>
+      <span class="pool-legend-item pool-legend--goals">${goalsText}</span>
       <span class="pool-legend-item pool-legend--bills">Bills ${fmt(pool.billsPaid)}${pool.billsReserved > 0 ? ` <span style="opacity:0.6">(+${fmt(pool.billsReserved)} reserved)</span>` : ''}</span>
       ${taxLegend}
       <span class="pool-legend-item pool-legend--free">Liquid ${fmt(pool.free)}</span>
     </div>`;
   return el;
+}
+
+function DashboardFiguresApi() {
+  const api = (typeof window !== 'undefined' && window.DashboardFigures) ? window.DashboardFigures : null;
+  if (!api) throw new Error('DashboardFigures not loaded — hard refresh (Cmd+Shift+R)');
+  return api;
+}
+/** Currency the ledger is kept in (first row's Amount Due prefix). */
+function ledgerCurrencyCode(rows) {
+  const r = (rows || [])[0];
+  const m = r && String(r.amountDue || r.projectTotal || '').trim().match(/^([a-zA-Z]{2,4})\b/);
+  if (m) return m[1].toUpperCase();
+  return (localStorage.getItem('invoicer-default-currency') || 'USD').toUpperCase();
+}
+/** 1 unit of `currency` in USD from the override or the FX cache (any age), or null. */
+function ledgerRateToUSD(currency) {
+  const cur = String(currency || 'USD').toUpperCase();
+  if (cur === 'USD') return 1;
+  const override = parseFloat(localStorage.getItem('fx-rate-override'));
+  if (override > 0) return override;
+  try {
+    const cached = JSON.parse(localStorage.getItem('fx-rate-cache') || '{}');
+    if (parseFloat(cached[cur]) > 0) return parseFloat(cached[cur]);
+  } catch (e) {}
+  return null;
+}
+/** Fill the FX cache from the _AppData tab when it has no rate yet. Never writes to the sheet. */
+async function warmFxRateCache(currency) {
+  const cur = String(currency || 'USD').toUpperCase();
+  if (ledgerRateToUSD(cur) || !_gmailToken || !_sheetsSpreadsheetId) return;
+  const rows = await sheetsRead(_sheetsSpreadsheetId, '_AppData!A2:B');
+  const hit = (rows || []).find(r => r[0] && String(r[0]).toUpperCase() === cur);
+  const rate = hit && parseFloat(hit[1]);
+  if (!(rate > 0)) return;
+  const cached = JSON.parse(localStorage.getItem('fx-rate-cache') || '{}');
+  cached[cur] = rate;
+  cached[cur + '_ts'] = Date.now();
+  localStorage.setItem('fx-rate-cache', JSON.stringify(cached));
 }
 
 // Pool calculation — shared across goals and bills
@@ -5457,22 +5498,26 @@ function calcIncomePool(rows) {
   const grossIncome   = paidRows.reduce((s, r) => s + parseAmt(r.amountDue), 0);
   const totalIncome   = paidRows.reduce((s, r) => s + netIncomeOf(r, reimbIdx), 0);
   const reimbursedExcluded = Math.max(0, Math.round((grossIncome - totalIncome) * 100) / 100);
-  const goalsUsed     = loadGoals().reduce((s, g) => s + (parseFloat(g.amountReached) || 0), 0);
-  // billsPaid = actual money spent on paid bills; billsFunded = money reserved for unpaid bills
+  // Goals are kept in USD; convert to the ledger currency before taking them
+  // off income. With no rate they are shown in USD and left out of Liquid.
+  const DF = DashboardFiguresApi();
+  const currency = ledgerCurrencyCode(rows);
+  const reached = DF.goalsReached(loadGoals(), ledgerRateToUSD(currency));
+  const goalsUsedUSD  = reached.usd;
+  const goalsNoRate   = reached.local == null;
+  const goalsUsed     = goalsNoRate ? 0 : reached.local;
+  // billsPaid = money spent on paid bills (Paid Total, else dated history; an
+  // unpaid bill with no payments counts nothing); billsFunded = money reserved
+  // for unpaid bills
   const allBills = loadBills();
-  const billsPaid = allBills.reduce((s, b) => {
-    // prefer explicit paidTotal; fall back to summing history for pre-migration bills
-    if (parseFloat(b.paidTotal) > 0) return s + parseFloat(b.paidTotal);
-    if (b.paid && b.history?.length) return s + b.history.reduce((hs, h) => hs + (parseFloat(h.amount) || 0), 0);
-    return s;
-  }, 0);
+  const billsPaid = DF.billsPaidTotal(allBills);
   const billsFunded   = allBills.reduce((s, b) => (b.paid || !billHasActiveAmount(b)) ? s : s + (parseFloat(b.funded) || 0), 0);
   const billsUsed     = billsPaid + billsFunded;
   const taxReserved = rows
     .filter(r => r.status === '✅ Paid' && parseFloat(r.taxRate) > 0)
     .reduce((s, r) => s + netIncomeOf(r, reimbIdx) * parseFloat(r.taxRate), 0);
   const free = Math.max(0, totalIncome - goalsUsed - billsUsed - taxReserved);
-  return { totalIncome, goalsUsed, billsFunded: billsUsed, billsPaid, billsReserved: billsFunded, taxReserved, free, reimbursedExcluded };
+  return { totalIncome, goalsUsed, goalsUsedUSD, goalsNoRate, currency, billsFunded: billsUsed, billsPaid, billsReserved: billsFunded, taxReserved, free, reimbursedExcluded };
 }
 
 function billToSheetRow(bill) {
@@ -9734,7 +9779,13 @@ async function openDashboard() {
       loadLedgerFromSheet(),
       loadGoalsFromSheet(),
       loadBillsFromSheet().catch(e => { console.warn('[Bills] Sheet sync failed:', e.message); }),
+      // Income is netted against reimbursable costs and the chart counts
+      // project costs, so the dashboard needs them fresh too.
+      loadProjectCostsFromSheet().catch(e => { console.warn('[ProjectCosts] Sheet sync failed:', e.message); }),
     ]);
+    // Goals are kept in USD; make sure a rate is on hand to show them in the
+    // ledger currency. Read-only.
+    try { await warmFxRateCache(ledgerCurrencyCode(loadLedgerRows())); } catch (e) {}
     
     // loadLedgerFromSheet already merges + saves to localStorage internally
     if (emptyEl) {
@@ -9906,32 +9957,24 @@ function renderDashboard() {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       months.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
     }
-    const bills = loadBills();
-    const billSpendByMonth = {};
-    bills.forEach(b => {
-      (b.history || []).forEach(h => {
-        const ym = h.date ? h.date.slice(0, 7) : null;
-        if (ym) billSpendByMonth[ym] = (billSpendByMonth[ym] || 0) + (parseFloat(h.amount) || 0);
-      });
-    });
-    const goalSpendByMonth = {};
-    loadGoals().forEach(g => {
-      (g.history || []).forEach(h => {
-        const ym = h.date ? h.date.slice(0, 7) : null;
-        if (ym) goalSpendByMonth[ym] = (goalSpendByMonth[ym] || 0) + (parseFloat(h.amount) || 0);
-      });
-    });
+    // Expenses: dated bill payments plus project costs (reimbursable at-cost
+    // costs are netted off their invoice instead). Goals: allocations recorded
+    // on the ledger rows (they sync; goal history is local only), converted
+    // from USD to the ledger currency.
+    const DF = DashboardFiguresApi();
+    const billSpendByMonth = DF.billSpendByMonth(loadBills());
+    const costSpendByMonth = DF.projectCostSpendByMonth(loadProjectCosts(), c => ReimbursableApi().isReimbursableCost(c));
+    const goalSpendByMonth = DF.goalSpendByMonth(rows, ledgerRateToUSD(currencyCode));
     const totals = months.map(m => {
       const [y, mo] = m.split('-').map(Number);
       const date = new Date(y, mo - 1, 1);
       return {
         label: date.toLocaleString('default', { month: 'short' }),
         total: rows.filter(r => rowYM(r) === m).reduce((s, r) => s + netAmt(r), 0),
-        spent: billSpendByMonth[m] || 0,
+        spent: (billSpendByMonth[m] || 0) + (costSpendByMonth[m] || 0),
         goals: goalSpendByMonth[m] || 0
       };
     });
-    const maxTotal = Math.max(...totals.map(t => t.total), 1);
     const fmtChartAmt = n => {
       if (!n) return '—';
       if (n >= 1e6) return (n / 1e6).toFixed(n % 1e6 === 0 ? 0 : 1) + 'M';
@@ -9940,33 +9983,29 @@ function renderDashboard() {
     };
     const chart = document.getElementById('dash-chart');
     chart.innerHTML = '';
-    totals.forEach(t => {
-      const pct = Math.round((t.total / maxTotal) * 100);
-      const spentPct = t.total > 0 ? Math.min(Math.round((t.spent / t.total) * pct), pct) : 0;
-      const goalsPct = t.total > 0 ? Math.min(Math.round((t.goals / t.total) * pct), pct - spentPct) : 0;
+    // One row per month: label | track | earned | expenses. Earned, expenses
+    // and goals share one scale, so a month that spent more than it earned
+    // shows it.
+    DF.chartBars(totals).forEach(t => {
       const bar = document.createElement('div');
-      if (t.total === 0) {
-        // Same row shape as a month with income (label, empty track, dash) so
-        // every month sits on its own line in order.
-        bar.className = 'dash-chart-row dash-chart-row--empty';
-        bar.innerHTML = `
-          <span class="dash-chart-label">${t.label}</span>
-          <div class="dash-chart-track"></div>
-          <span class="dash-chart-amt dash-chart-amt--nil" aria-label="none">—</span>`;
-      } else {
-        bar.className = 'dash-chart-row';
-        bar.innerHTML = `
-          <span class="dash-chart-label">${t.label}</span>
-          <div class="dash-chart-track">
-            <div class="dash-chart-fill"></div>
-            <div class="dash-chart-fill--spent"></div>
-            <div class="dash-chart-fill--goals"></div>
-          </div>
-          <span class="dash-chart-amt">${fmtChartAmt(t.total)}</span>`;
-        bar.querySelector('.dash-chart-fill').style.width = pct + '%';
-        bar.querySelector('.dash-chart-fill--spent').style.width = spentPct + '%';
-        bar.querySelector('.dash-chart-fill--goals').style.width = goalsPct + '%';
-      }
+      bar.className = 'dash-chart-row' + (t.total || t.spent || t.goals ? '' : ' dash-chart-row--empty');
+      bar.title = `${t.label}: earned ${fmt(t.total)}, expenses ${fmt(t.spent)}, goals ${fmt(t.goals)}`;
+      bar.setAttribute('aria-label', bar.title);
+      bar.innerHTML = `
+        <span class="dash-chart-label">${t.label}</span>
+        <div class="dash-chart-track">
+          <div class="dash-chart-fill"></div>
+          <div class="dash-chart-fill--spent"></div>
+          <div class="dash-chart-fill--goals"></div>
+        </div>
+        <span class="dash-chart-amt${t.total ? '' : ' dash-chart-amt--nil'}">${fmtChartAmt(t.total)}</span>
+        <span class="dash-chart-amt dash-chart-amt--spent${t.spent ? '' : ' dash-chart-amt--nil'}">${t.spent ? '−' + fmtChartAmt(t.spent) : '—'}</span>`;
+      bar.querySelector('.dash-chart-fill').style.width = t.earnedPct + '%';
+      const sp = bar.querySelector('.dash-chart-fill--spent');
+      sp.style.width = t.spentPct + '%';
+      const gl = bar.querySelector('.dash-chart-fill--goals');
+      gl.style.left = t.goalsLeftPct + '%';
+      gl.style.width = t.goalsPct + '%';
       chart.appendChild(bar);
     });
   }
@@ -10061,6 +10100,7 @@ function renderGoalsList() {
       div.classList.add('goal-card--progress');
     }
 
+    // Goal targets and amounts are kept in USD (allocateToGoal converts).
     div.innerHTML = `
       <div class="goal-card-header">
         <strong class="goal-name">${g.name}</strong>
@@ -10073,7 +10113,7 @@ function renderGoalsList() {
         ${claimBtn}
         ${deadlineLabel ? `<span class="goal-deadline ${deadlineClass}">${deadlineLabel}</span>` : ''}
         ${ageLabel ? `<span class="goal-age">${ageLabel}</span>` : ''}
-        <span class="goal-target">${formatCurrencyNative(reached, window.currentDashCurrency || 'USD', 0)} / ${formatCurrencyNative(target, window.currentDashCurrency || 'USD', 0)}</span>
+        <span class="goal-target">${formatCurrencyNative(reached, 'USD', 0)} / ${formatCurrencyNative(target, 'USD', 0)}</span>
       </div>
       <div class="goal-notes">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" class="goal-notes-link">${url}</a>`) : 'No notes provided'}</div>
       <div class="goal-bar-wrap">
