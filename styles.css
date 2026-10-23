@@ -985,7 +985,13 @@
     font-weight: 600;
     font-size: 15px;
     letter-spacing: 0.3px;
+    font-variant-numeric: tabular-nums lining-nums;
   }
+  /* Keep the currency code on the same line as its amount ("JMD 100,000.00"
+     used to wrap JMD above the figure). Phones keep wrapping at the space. */
+  @media (min-width: 601px) { .cost-amt { white-space: nowrap; } }
+  @media print { .cost-amt { white-space: nowrap; } }
+  .print-clone .cost-amt { white-space: nowrap; }
 
   /* ── TOTAL ── */
   .total-wrap {
@@ -1138,6 +1144,128 @@
   /* The minus sits with its number; the amount's right edge still matches the other rows. */
   .total-block .adjust-row .adj-sign { padding-right: 0.2em; }
   .total-block .project-total-row .ptv { white-space: nowrap; }
+
+  /* Payment rows: "Payment received 10/21/2026" with the reference under it
+     in sentence case. Long labels wrap in their own column; the amount keeps
+     the shared right edge. */
+  .total-block .adjust-row .ptl {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    white-space: normal;
+  }
+  .total-block .adjust-row .adj-ref {
+    font-size: 11px;
+    letter-spacing: 0.2px;
+    text-transform: none;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+
+  /* Paid in full: balance 0 after payments. The red "due" card turns into a
+     quiet paid card (white, green rule and text) with a PAID IN FULL stamp,
+     so a settled invoice never shouts its old total. Text, not color alone,
+     says it is paid. */
+  .total-block { --paid-ink: #1e6b41; }
+  .total-card .paid-stamp { display: none; }
+  .total-block.is-paid .total-card {
+    background: #fff;
+    color: var(--paid-ink);
+    border-top: 2px solid var(--paid-ink);
+  }
+  .total-block.is-paid .total-card .total-amount,
+  .total-block.is-paid .total-card .qualifier,
+  .total-block.is-paid .total-card .qualifier span { color: var(--paid-ink); }
+  .total-block.is-paid .total-card .qualifier { opacity: 1; }
+  .total-block.is-paid .total-card .paid-stamp {
+    display: block;
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-top: 10px;
+    padding: 4px 8px;
+    border: 1.5px solid var(--paid-ink);
+    border-radius: 4px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    line-height: 1.3;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+    color: var(--paid-ink);
+  }
+  .total-block.is-paid .total-card .paid-stamp::before { content: '\2713\00a0'; }
+  body.theme-outline .total-block.is-paid .total-card { border-color: var(--paid-ink); }
+  #invoice.layout-totals-flat .total-block.is-paid .total-card,
+  #invoice.layout-totals-flat .total-block.is-paid .total-card .total-amount,
+  #invoice.layout-totals-flat .total-block.is-paid .total-card .qualifier { color: var(--paid-ink) !important; }
+
+  /* "Marked paid, no payment recorded" prompt under the totals (screen only). */
+  #record-payment-offer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    font-family: 'Roboto', sans-serif;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  #record-payment-offer.hidden { display: none !important; }
+  #record-payment-offer button {
+    min-height: 36px;
+    padding: 6px 14px;
+    border: 1.5px solid var(--ink);
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    font: 600 13px 'Roboto', sans-serif;
+    cursor: pointer;
+  }
+  #record-payment-offer button:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+  @media print { .no-print, #record-payment-offer { display: none !important; } }
+  .print-clone .no-print, .print-clone #record-payment-offer { display: none !important; }
+
+  /* Payment editor rows (edit mode): label + amount, then date + reference. */
+  #payments-edit-wrap .pay-edit-row {
+    display: grid;
+    grid-template-columns: 1fr 110px 32px;
+    gap: 6px;
+    padding: 8px 0;
+    border-bottom: 1px dashed var(--rule);
+  }
+  #payments-edit-wrap .pay-edit-row input {
+    font: 13px 'Roboto', sans-serif;
+    min-height: 32px;
+    padding: 4px 8px;
+    border: 1px solid #c4c9cf;
+    border-radius: 4px;
+    min-width: 0;
+    color: var(--ink);
+    background: #fff;
+  }
+  #payments-edit-wrap .pay-edit-row .pay-amt { text-align: right; font-variant-numeric: tabular-nums; }
+  #payments-edit-wrap .pay-edit-row .pay-date { grid-column: 1; }
+  #payments-edit-wrap .pay-edit-row .pay-ref { grid-column: 2 / 4; }
+  #payments-edit-wrap .pay-edit-row .pay-del {
+    background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; border-radius: 4px;
+  }
+  #payments-edit-wrap .pay-edit-row .pay-del:hover { color: var(--red); }
+  #payments-edit-wrap .pay-edit-actions { display: flex; gap: 6px; padding: 8px 0 4px; }
+  #payments-edit-wrap .pay-edit-actions button {
+    flex: 1;
+    min-height: 32px;
+    font: 12px 'Roboto', sans-serif;
+    color: var(--ink);
+    background: none;
+    border: 1px dashed #9aa2ac;
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
 
   .pay-period {
     text-align: right;
@@ -2913,3 +3041,11 @@
   font-variant-numeric: tabular-nums;
 }
 #dash-reimb-note[hidden] { display: none; }
+  /* Touch targets on phones: 44px for the payment controls. */
+  @media (max-width: 600px) {
+    #record-payment-offer button,
+    #payments-edit-wrap .pay-edit-row input,
+    #payments-edit-wrap .pay-edit-row .pay-del,
+    #payments-edit-wrap .pay-edit-actions button { min-height: 44px; }
+    #payments-edit-wrap .pay-edit-row { grid-template-columns: 1fr 104px 44px; }
+  }

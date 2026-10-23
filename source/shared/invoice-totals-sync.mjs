@@ -13,8 +13,8 @@ import {
   formatTotalAmountDisplay,
   parseMoneyNum,
   sumLineItemsTotal,
-  sumPayments,
 } from './invoice-totals-money.mjs';
+import { paymentSummary } from './invoice-payments.mjs';
 
 const DRIFT_EPSILON = 0.01;
 
@@ -24,14 +24,15 @@ export function hasAmountDueOverride(data) {
   return raw !== undefined && raw !== null && String(raw).trim() !== '';
 }
 
-/** Derived amount due: explicit override > payments > full line sum. */
+/**
+ * Derived amount due (balance due): explicit override (less dated payments
+ * received against it) > line sum less every payment row > full line sum.
+ * Never below 0, so an overpayment shows a balance of 0.
+ */
 export function expectedAmountDue(data) {
   const lineSum = sumLineItemsTotal(data);
   if (lineSum <= 0) return 0;
-  if (hasAmountDueOverride(data)) return parseMoneyNum(data.amountDueOverride);
-  const paymentsSum = sumPayments(data);
-  if (paymentsSum > 0) return Math.max(0, lineSum - paymentsSum);
-  return lineSum;
+  return paymentSummary(data).balance;
 }
 
 /** In-place heal of projectTotal + totalAmount from line items. Mutates + returns data. */

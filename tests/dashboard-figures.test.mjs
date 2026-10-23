@@ -75,3 +75,15 @@ test('chart: one scale for earned, expenses and goals; goals sit after expenses'
   assert.equal(bars[1].goalsLeftPct, bars[1].spentPct);
   assert.deepEqual([bars[3].earnedPct, bars[3].spentPct, bars[3].goalsPct], [0, 0, 0]);
 });
+
+test('outstanding: real sheet stays 144,000; a part payment comes off', async () => {
+  const { outstandingTotal } = await import('../source/shared/dashboard-figures.mjs');
+  const { sheetValuesToRow } = await import('../source/shared/ledger-sync.mjs');
+  const rows = fx.Ledger.slice(1).map(sheetValuesToRow);
+  assert.equal(outstandingTotal(rows), 144000);
+  const i = rows.findIndex(r => r.receipt === '261005A'); // Sent, JMD 40,000
+  const part = rows.map((r, j) => j === i ? { ...r, amountPaid: 'JMD 15,000', paidDate: '10/20/2026' } : r);
+  assert.equal(outstandingTotal(part), 129000);
+  const over = rows.map((r, j) => j === i ? { ...r, amountPaid: 'JMD 50,000' } : r);
+  assert.equal(outstandingTotal(over), 104000);
+});

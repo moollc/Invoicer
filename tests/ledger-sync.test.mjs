@@ -185,3 +185,23 @@ test('sheet values round-trip', () => {
   assert.deepEqual(back.goalAllocations, row.goalAllocations);
   assert.equal(back.taxRate, 0.15);
 });
+
+test('amount paid / paid date: columns L and M after every existing column, round trip', async () => {
+  const { ledgerRowBalance, SHEET_COLUMNS } = await import('../source/shared/ledger-sync.mjs');
+  assert.equal(SHEET_COLUMNS.indexOf('amountPaid'), 11);
+  assert.equal(SHEET_COLUMNS.indexOf('paidDate'), 12);
+  const row = { ...base, amountPaid: 'JMD 40,000', paidDate: '10/21/2026' };
+  const vals = rowToSheetValues(row);
+  assert.equal(vals.length, 13);
+  assert.equal(vals[5], 'JMD 100,000');
+  assert.deepEqual(vals.slice(11), ['JMD 40,000', '10/21/2026']);
+  const back = sheetValuesToRow(vals);
+  assert.equal(back.amountPaid, 'JMD 40,000');
+  assert.equal(back.paidDate, '10/21/2026');
+  // An old 11-column row reads with no payment.
+  assert.equal(sheetValuesToRow(vals.slice(0, 11)).amountPaid, '');
+  assert.equal(ledgerRowBalance(row), 60000);
+  assert.equal(ledgerRowBalance(base), 100000);
+  assert.equal(ledgerRowBalance({ ...base, amountPaid: 'JMD 150,000' }), 0);
+  assert.equal(ledgerRowBalance({ ...base, status: STATUS.PAID }), 0);
+});

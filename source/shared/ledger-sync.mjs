@@ -20,11 +20,13 @@ export const STATUS = {
   QUOTE: '📋 Quote',
 };
 
-export const SHEET_COLUMNS = ['receipt', 'date', 'client', 'service', 'projectTotal', 'amountDue', 'status', 'company', 'description', 'goalAllocations', 'taxRate'];
+// L and M (Amount Paid, Paid Date) were added after K; earlier columns never move.
+export const SHEET_COLUMNS = ['receipt', 'date', 'client', 'service', 'projectTotal', 'amountDue', 'status', 'company', 'description', 'goalAllocations', 'taxRate', 'amountPaid', 'paidDate'];
+export const PAYMENT_HEADERS = ['Amount Paid', 'Paid Date'];
 
 // Fields an invoice save owns. Everything else on a row (status set by the
 // user, note, goal allocations, company) is kept as-is on update.
-const INVOICE_FIELDS = ['date', 'client', 'service', 'description', 'projectTotal', 'amountDue', 'payPeriod', 'docType', 'taxRate'];
+const INVOICE_FIELDS = ['date', 'client', 'service', 'description', 'projectTotal', 'amountDue', 'payPeriod', 'docType', 'taxRate', 'amountPaid', 'paidDate'];
 
 export function normReceipt(r) {
   return String(r == null ? '' : r).trim();
@@ -101,7 +103,7 @@ export function upsertLedgerRow(rows, incoming) {
   return { rows: list, action: 'update', index };
 }
 
-/** A row as the 11 Ledger sheet cells (A..K). */
+/** A row as the 13 Ledger sheet cells (A..M). */
 export function rowToSheetValues(row) {
   return [
     row.receipt || '', row.date || '', row.client || '', row.service || '',
@@ -109,7 +111,19 @@ export function rowToSheetValues(row) {
     row.company || '', row.description || '',
     row.goalAllocations ? JSON.stringify(row.goalAllocations) : '',
     parseFloat(row.taxRate) > 0 ? parseFloat(row.taxRate) : '',
+    row.amountPaid || '', row.paidDate || '',
   ];
+}
+
+/**
+ * What the client still owes on a ledger row: Amount Due less Amount Paid,
+ * never below 0. A Paid or Quote row owes nothing. Rows without an Amount
+ * Paid (every row written before column L existed) owe their Amount Due.
+ */
+export function ledgerRowBalance(row) {
+  if (!row || row.status === STATUS.PAID || isQuoteRow(row)) return 0;
+  const left = money(row.amountDue) - money(row.amountPaid);
+  return Math.max(0, Math.round(left * 100) / 100);
 }
 
 export function sheetValuesToRow(v) {
@@ -127,6 +141,8 @@ export function sheetValuesToRow(v) {
     description: v[8] || '',
     goalAllocations: goal,
     taxRate: parseFloat(v[10] || '0') || 0,
+    amountPaid: v[11] || '',
+    paidDate: v[12] || '',
   };
 }
 

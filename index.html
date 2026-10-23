@@ -53,6 +53,15 @@
   totalAmount   The amount shown large on the red card.
                 Include $ and commas, e.g. "$100,000".
 
+  payments      Payments received, each { label, amount, date, ref }.
+                Shown under Project Total as negative rows; the big
+                figure becomes the Balance Due (total minus payments,
+                never below 0) and reads PAID once nothing is left.
+                date is month first (M/D/YYYY). A row with a date is
+                money received against this invoice (ledger columns
+                Amount Paid / Paid Date); a row without one is a
+                deposit or credit taken off before it was issued.
+
   paymentNote   Footer payment instructions.
 
   paid          Set to true once the client has paid.
@@ -870,9 +879,11 @@
           </span>
           <span data-field="totalAmount" onblur="formatCurrencyField(this)"></span>
         </div>
+        <div class="paid-stamp"></div>
       </div>
     </div>
   </div>
+  <div id="record-payment-offer" class="no-print hidden" role="status"></div>
   </div>
 
   <div class="layout-block" data-layout-id="pay_period">

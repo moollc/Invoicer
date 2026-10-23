@@ -983,6 +983,7 @@ function render(data) {
       badge.style.display = 'none';
     }
     overdueBadge.classList.toggle('hidden', !isOverdue);
+    try { renderRecordPaymentOffer(data, statusStr); } catch (e) { console.warn('[payments] offer skipped:', e.message || e); }
     
     const watermark = document.getElementById('invoice-watermark');
     if (watermark) {
@@ -1145,6 +1146,14 @@ function formatCurrencyField(el) {
 
 function startEdit() {
   snapshot = document.getElementById('invoice-data').textContent;
+  // The view swaps "Total" for "Balance" once payments exist; edit the real label.
+  try {
+    const stored = JSON.parse(snapshot);
+    document.querySelectorAll('[data-field="totalLabelTop"][data-balance-swap]').forEach(el => {
+      el.textContent = stored.totalLabelTop || 'Total';
+      delete el.dataset.balanceSwap;
+    });
+  } catch (e) {}
   document.body.classList.add('editing');
   const bar = document.getElementById('edit-action-bar');
   if (bar) bar.style.display = 'flex';
@@ -1465,51 +1474,126 @@ function renderPaymentsEdit() {
     return;
   }
 
+  const DT = InvoiceDateApi();
+  const commit = (mutate, rerender = false) => {
+    const d = getData();
+    if (!Array.isArray(d.payments)) d.payments = [];
+    mutate(d);
+    document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2);
+    if (rerender) renderPaymentsEdit();
+    updateAutoSumHint();
+    renderPaymentsDisplay(d.payments, d);
+  };
+
   const wrap = document.createElement('div');
   wrap.id = 'payments-edit-wrap';
-  wrap.style.cssText = 'margin:6px 0 2px; font-family:Roboto,sans-serif;';
 
   payments.forEach((p, idx) => {
     const row = document.createElement('div');
-    row.style.cssText = 'display:flex; gap:6px; align-items:center; margin-bottom:4px;';
+    row.className = 'pay-edit-row';
     const labelInp = document.createElement('input');
     labelInp.value = p.label || '';
-    labelInp.placeholder = 'e.g. Deposit';
-    labelInp.style.cssText = 'flex:1; font-family:Roboto,sans-serif; font-size:11px; padding:3px 6px; border:1px solid #ddd; border-radius:4px;';
-    labelInp.oninput = () => { const d = getData(); if (d.payments[idx]) { d.payments[idx].label = labelInp.value; document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2); updateAutoSumHint(); renderPaymentsDisplay(d.payments, d); } };
+    labelInp.placeholder = 'Payment received';
+    labelInp.setAttribute('aria-label', `Payment ${idx + 1} label`);
+    labelInp.oninput = () => commit(d => { if (d.payments[idx]) d.payments[idx].label = labelInp.value; });
     const amtInp = document.createElement('input');
+    amtInp.className = 'pay-amt';
+    amtInp.inputMode = 'decimal';
     amtInp.value = p.amount || '';
     amtInp.placeholder = '0.00';
-    amtInp.style.cssText = 'width:80px; font-family:Roboto,sans-serif; font-size:11px; padding:3px 6px; border:1px solid #ddd; border-radius:4px; text-align:right;';
-    amtInp.oninput = () => { const d = getData(); if (d.payments[idx]) { d.payments[idx].amount = amtInp.value; document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2); updateAutoSumHint(); renderPaymentsDisplay(d.payments, d); } };
+    amtInp.setAttribute('aria-label', `Payment ${idx + 1} amount`);
+    amtInp.oninput = () => commit(d => { if (d.payments[idx]) d.payments[idx].amount = amtInp.value; });
     const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'pay-del';
     del.textContent = '✕';
-    del.style.cssText = 'background:none; border:none; color:#9aa2ac; cursor:pointer; font-size:12px; padding:2px 4px;';
-    del.onclick = () => { const d = getData(); d.payments.splice(idx, 1); document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2); renderPaymentsEdit(); updateAutoSumHint(); renderPaymentsDisplay(d.payments, d); };
-    row.append(labelInp, amtInp, del);
+    del.title = 'Remove payment';
+    del.setAttribute('aria-label', `Remove payment ${idx + 1}`);
+    del.onclick = () => commit(d => { d.payments.splice(idx, 1); }, true);
+    // Date: stored month first (M/D/YYYY). Empty = a deposit/credit taken off
+    // before the invoice went out (not counted as Amount Paid in the ledger).
+    const dateInp = document.createElement('input');
+    dateInp.type = 'date';
+    dateInp.className = 'pay-date';
+    dateInp.value = DT.toIsoDate(p.date || '');
+    dateInp.title = 'Date received';
+    dateInp.setAttribute('aria-label', `Payment ${idx + 1} date received`);
+    dateInp.onchange = () => commit(d => { if (d.payments[idx]) d.payments[idx].date = dateInp.value ? DT.formatLedgerDate(dateInp.value) : ''; });
+    const refInp = document.createElement('input');
+    refInp.className = 'pay-ref';
+    refInp.value = p.ref || '';
+    refInp.placeholder = 'Reference (optional)';
+    refInp.setAttribute('aria-label', `Payment ${idx + 1} reference`);
+    refInp.oninput = () => commit(d => { if (d.payments[idx]) { if (refInp.value.trim()) d.payments[idx].ref = refInp.value; else delete d.payments[idx].ref; } });
+    row.append(labelInp, amtInp, del, dateInp, refInp);
     wrap.appendChild(row);
   });
 
+  const actions = document.createElement('div');
+  actions.className = 'pay-edit-actions';
   const addBtn = document.createElement('button');
-  addBtn.textContent = '+ Add Payment / Deposit';
-  addBtn.style.cssText = 'font-family:Roboto,sans-serif; font-size:10.5px; color:#6c7682; background:none; border:1px dashed #ccc; border-radius:4px; padding:3px 10px; cursor:pointer; margin-top:2px; width:100%;';
-  addBtn.onclick = () => { const d = getData(); if (!Array.isArray(d.payments)) d.payments = []; d.payments.push({ label: 'Deposit', amount: '' }); document.getElementById('invoice-data').textContent = JSON.stringify(d, null, 2); renderPaymentsEdit(); };
-  wrap.appendChild(addBtn);
+  addBtn.type = 'button';
+  addBtn.textContent = '+ Add payment';
+  addBtn.onclick = () => commit(d => { d.payments.push({ label: 'Payment received', amount: '', date: DT.formatLedgerDate(new Date()) }); }, true);
+  actions.appendChild(addBtn);
+  // One tap for "paid in full": a row for whatever is still owed, dated today.
+  const full = getInvoiceTotals().fullPaymentRow(data, { date: new Date() });
+  if (full) {
+    const fullBtn = document.createElement('button');
+    fullBtn.type = 'button';
+    fullBtn.textContent = `+ Paid in full (${getInvoiceTotals().formatTotalsAmount(getInvoiceTotals().parseMoneyNum(full.amount), data)})`;
+    fullBtn.onclick = () => commit(d => { const r = getInvoiceTotals().fullPaymentRow(d, { date: new Date() }); if (r) d.payments.push(r); }, true);
+    actions.appendChild(fullBtn);
+  }
+  wrap.appendChild(actions);
   listEl.appendChild(wrap);
 }
 
 // Payment / deposit rows in the totals block. Each row uses the same grid as
 // Project Total (label column + value column, see .total-block in
-// styles.css) and the same amount format as the rest of the block.
+// styles.css) and the same amount format as the rest of the block. A dated
+// row reads "Payment received 10/21/2026"; a reference shows under the label.
 function totalsAdjustmentRowsHTML(payments, data) {
   if (!Array.isArray(payments) || !payments.length) return '';
   const totals = getInvoiceTotals();
   return payments.map(p => {
     const amt = totals.parseMoneyNum(p && p.amount);
     if (!amt) return '';
-    const label = escapeHTML(String((p && p.label) || 'Payment'));
-    return `<div class="adjust-row"><span class="ptl">${label}</span><span class="adjv"><span class="adj-sign">\u2212</span>${escapeHTML(totals.formatTotalsAmount(Math.abs(amt), data))}</span></div>`;
+    const label = escapeHTML(totals.paymentRowLabel(p));
+    const ref = String((p && p.ref) || '').trim();
+    const refHtml = ref ? `<span class="adj-ref">Ref ${escapeHTML(ref)}</span>` : '';
+    return `<div class="adjust-row"><span class="ptl"><span class="adj-label">${label}</span>${refHtml}</span><span class="adjv"><span class="adj-sign">\u2212</span>${escapeHTML(totals.formatTotalsAmount(Math.abs(amt), data))}</span></div>`;
   }).join('');
+}
+
+// Paid state of the totals block, from the payments on the invoice (not the
+// ledger status): balance 0 after payments shows PAID instead of the red due
+// card, a part payment shows what is left. Display only, data is untouched.
+function applyPaidBalanceState(block, data) {
+  const totals = getInvoiceTotals();
+  const s = totals.paymentSummary(data);
+  block.classList.toggle('has-payments', s.status !== 'none');
+  block.classList.toggle('is-paid', s.status === 'paid');
+  block.classList.toggle('is-partial', s.status === 'partial');
+  // Invoice convention: after payments the last line is the Balance Due. Only
+  // the default "Total / Due" wording is swapped; custom labels stay.
+  const top = block.querySelector('[data-field="totalLabelTop"]');
+  const bottom = block.querySelector('[data-field="totalLabelBottom"]');
+  const isDefault = String(data.totalLabelTop || '').trim().toLowerCase() === 'total'
+    && String(data.totalLabelBottom || '').trim().toLowerCase() === 'due';
+  if (top && isDefault) {
+    top.textContent = s.status === 'none' ? (data.totalLabelTop || 'Total') : 'Balance';
+    // startEdit puts the stored label back so "Balance" is never saved.
+    if (s.status === 'none') delete top.dataset.balanceSwap; else top.dataset.balanceSwap = '1';
+  }
+  const stamp = block.querySelector('.paid-stamp');
+  if (stamp) {
+    stamp.textContent = s.status === 'paid'
+      ? `Paid in full${s.lastPaidDate ? ' ' + s.lastPaidDate : ''}`
+      : '';
+  }
+  if (bottom && isDefault) bottom.textContent = data.totalLabelBottom || 'Due';
+  return s;
 }
 
 function renderPaymentsDisplay(payments, data) {
@@ -1547,6 +1631,7 @@ function applyTotalsBlockFormat(root, data) {
     list.innerHTML = totalsAdjustmentRowsHTML(data.payments || [], data);
   }
   if (editing) return;
+  applyPaidBalanceState(block, data);
   const due = block.querySelector('[data-field="totalAmount"]');
   if (due && data.totalAmount != null) due.textContent = totals.formatInvoiceAmount(data.totalAmount, data);
   root.querySelectorAll('#line-items .cost-amt[data-field]').forEach(el => {
@@ -2116,6 +2201,15 @@ function draftFromLedgerRow(row) {
     }],
     projectTotal: total,
     totalAmount:  due || total,
+    // Amount Paid / Paid Date (ledger columns L, M) come back as a dated
+    // payment row so the balance matches the ledger.
+    ...(parseFloat(parseAmt(row.amountPaid).replace(/,/g, '')) > 0 ? {
+      payments: [{
+        label: 'Payment received',
+        amount: parseAmt(row.amountPaid),
+        date: row.paidDate ? InvoiceDateApi().formatLedgerDate(row.paidDate) || row.paidDate : '',
+      }],
+    } : {}),
   });
 }
 
@@ -2205,7 +2299,8 @@ function markReceiptAsSent() {
       service:      services,
       description:  description,
       projectTotal: `${data.currency} ${data.projectTotal}`,
-      amountDue:    `${data.currency} ${data.totalAmount.replace(/[^0-9.,]/g, '').trim()}`,
+      amountDue:    ledgerAmountDueText(data),
+      ...ledgerPaymentFieldsFor(data),
       status:       quoteDoc ? '📋 Quote' : '📤 Sent',
       payPeriod:    data.payPeriod || '',
       docType:      quoteDoc ? 'quote' : 'invoice',
@@ -2218,6 +2313,23 @@ function markReceiptAsSent() {
 }
 
 let _pendingRow = null; // the row object for the current invoice, set on dialog open
+
+// Ledger Amount Due for an invoice: what it billed. That is the amount due on
+// the invoice plus any dated payments received against it (those go to Amount
+// Paid instead), so paying an invoice never turns its income into 0. With no
+// dated payments it is exactly the invoice's amount due, as before.
+function ledgerAmountDueText(data) {
+  const T = getInvoiceTotals();
+  const s = T.paymentSummary(data);
+  if (!(s.received > 0)) return `${data.currency} ${String(data.totalAmount).replace(/[^0-9.,]/g, '').trim()}`;
+  return `${data.currency} ${s.billed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+// Amount Paid ("JMD 100,000", text so the sheet never reads it as USD) and
+// the last Paid Date (M/D/YYYY) from the invoice's dated payment rows.
+function ledgerPaymentFieldsFor(data) {
+  try { return getInvoiceTotals().ledgerPaymentFields(data); }
+  catch (e) { return {}; }
+}
 
 // Ledger summary row for an invoice. Status comes from the existing row (set
 // by the user) or is derived: a deposit/payment with a balance left => Deposit.
@@ -2235,7 +2347,8 @@ function buildLedgerRowFromInvoice(data) {
     service:      services,
     description:  description,
     projectTotal: `${data.currency} ${data.projectTotal}`,
-    amountDue:    `${data.currency} ${String(data.totalAmount).replace(/[^0-9.,]/g, '').trim()}`,
+    amountDue:    ledgerAmountDueText(data),
+    ...ledgerPaymentFieldsFor(data),
     status,
     payPeriod:    data.payPeriod || '',
     docType:      quoteDoc ? 'quote' : 'invoice',
@@ -2295,6 +2408,8 @@ async function renderLedgerHistory() {
   const parseAmount = str => parseFloat((str || '').replace(/[^0-9.]/g, '')) || 0;
   const getCurrency = str => { const m = (str || '').match(/^([a-zA-Z]{2,4})/); return m ? m[1].toUpperCase() : 'USD'; };
   const fmt = (n, cur) => formatCurrencyNative(n, cur);
+  // Still owed on a row: Amount Due less Amount Paid (column L), never below 0.
+  const rowOwed = r => Math.max(0, parseAmount(r.amountDue) - parseAmount(r.amountPaid));
 
   const totalsByCurrency = {};
   rows.forEach(r => {
@@ -2304,13 +2419,13 @@ async function renderLedgerHistory() {
     if (r.status === '✅ Paid') {
       totalsByCurrency[cur].paid += parseAmount(r.amountDue);
     } else {
-      totalsByCurrency[cur].outstanding += parseAmount(r.amountDue);
+      totalsByCurrency[cur].outstanding += rowOwed(r);
       
       const rowDate = ledgerRowDate(r);
       const isOverdue = rowDate && !isNaN(rowDate.valueOf()) &&
         (new Date() - rowDate) / (1000 * 60 * 60 * 24) > (parseInt(r.payPeriod) || 30);
         
-      if (isOverdue) totalsByCurrency[cur].overdue += parseAmount(r.amountDue);
+      if (isOverdue) totalsByCurrency[cur].overdue += rowOwed(r);
     }
   });
 
@@ -2440,9 +2555,13 @@ async function renderLedgerHistory() {
       });
       saveLedgerRows(lrows);
       toUpdate.forEach(r => logReimbursableCost(r.receipt));
+      const recs = new Map(toUpdate.map(r => [r.receipt, recordFullPaymentOnPaid(r.receipt, { toast: false })]));
+      const recorded = [...recs.values()].filter(r => r && r.added).length;
+      if (recorded) showToast(`Recorded the payment on ${recorded} invoice${recorded === 1 ? '' : 's'} (dated today), so they show a balance of 0. Edit an invoice to change its payment date.`, 'success', 8000);
       renderLedgerHistory();
       for (const row of toUpdate) {
-        const ok = await updateLedgerStatusOnSheet(row.receipt, '✅ Paid', row.amountDue || null);
+        const rec = recs.get(row.receipt);
+        const ok = await updateLedgerStatusOnSheet(row.receipt, '✅ Paid', row.amountDue || null, rec ? rec.fields : null);
         if (ok) {
           const current = loadLedgerRows();
           const i = current.findIndex(r => r.receipt === row.receipt);
@@ -2591,7 +2710,7 @@ async function renderLedgerHistory() {
     Object.keys(grouped).sort((a, b) => a.localeCompare(b)).forEach(client => {
       const entries = grouped[client];
       const paid = entries.filter(e => e.row.status === '✅ Paid').reduce((s, e) => s + parseAmount(e.row.amountDue), 0);
-      const outstanding = entries.filter(e => e.row.status !== '✅ Paid').reduce((s, e) => s + parseAmount(e.row.amountDue), 0);
+      const outstanding = entries.filter(e => e.row.status !== '✅ Paid').reduce((s, e) => s + Math.max(0, parseAmount(e.row.amountDue) - parseAmount(e.row.amountPaid)), 0);
       // Client header
       const header = document.createElement('div');
       header.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 4px 4px; margin-top:6px; border-bottom:1.5px solid rgba(20,32,46,0.08); cursor:pointer;';
@@ -2800,8 +2919,10 @@ async function renderLedgerHistory() {
         wrap.style.background = rowBg(rows[realIdx], false);
         saveLedgerRows(rows);
         if (sel.value === '✅ Paid') logReimbursableCost(rows[realIdx].receipt);
+        const _rec = sel.value === '✅ Paid' ? recordFullPaymentOnPaid(rows[realIdx].receipt) : null;
+        if (_rec) { rows[realIdx].amountPaid = _rec.fields.amountPaid || ''; rows[realIdx].paidDate = _rec.fields.paidDate || ''; }
         const paidAmountDue = sel.value === '✅ Paid' ? rows[realIdx].amountDue : null;
-        const _statusOk = await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue);
+        const _statusOk = await updateLedgerStatusOnSheet(rows[realIdx].receipt, sel.value, paidAmountDue, _rec ? _rec.fields : null);
         if (_statusOk) {
           const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === rows[realIdx].receipt);
           if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
@@ -3192,10 +3313,12 @@ async function deleteLedgerEntry(row) {
 
 // ── Ledger sheet I/O ─────────────────────────────────────────
 async function readLedgerSheet() {
-  const res = await sheetsRequest('GET', `/spreadsheets/${_sheetsSpreadsheetId}/values/${encodeURIComponent('Ledger!A:K')}`);
+  const res = await sheetsRequest('GET', `/spreadsheets/${_sheetsSpreadsheetId}/values/${encodeURIComponent('Ledger!A:M')}`);
   if (!res || res.error) return null;
   const values = res.values || [];
   const LS = LedgerSyncApi();
+  const head = values[0] || [];
+  _ledgerPaymentHeadersOk = head[11] === LS.PAYMENT_HEADERS[0] && head[12] === LS.PAYMENT_HEADERS[1];
   // Keep one entry per sheet row (blank receipts too) so row numbers line up.
   const rows = values.slice(1).map(v => LS.sheetValuesToRow(v || []));
   return { rows, values };
@@ -3223,6 +3346,35 @@ async function deleteLedgerSheetRows(rowNumbers) {
   return !!res && !res.error;
 }
 
+// Amount Paid / Paid Date live in columns L and M, after every existing
+// column (nothing is shifted). The header is written the first time a
+// payment is, and never over a header that says something else.
+let _ledgerPaymentHeadersOk = null;
+async function ensureLedgerPaymentHeaders() {
+  if (_ledgerPaymentHeadersOk === true) return true;
+  const want = LedgerSyncApi().PAYMENT_HEADERS;
+  const head = await sheetsRead(_sheetsSpreadsheetId, 'Ledger!A1:M1');
+  if (head === null) return false;
+  const h = head[0] || [];
+  if (h[11] === want[0] && h[12] === want[1]) { _ledgerPaymentHeadersOk = true; return true; }
+  if ((h[11] && h[11] !== want[0]) || (h[12] && h[12] !== want[1])) {
+    console.warn('[Ledger] Columns L/M already hold other headers; Amount Paid not written', h[11], h[12]);
+    return false;
+  }
+  await sheetsWrite(_sheetsSpreadsheetId, 'Ledger!L1:M1', [want]);
+  _ledgerPaymentHeadersOk = true;
+  return true;
+}
+// n: 1-based sheet row. Writes nothing for rows with no payment unless the
+// columns already exist (then it clears a payment that was removed).
+async function writeLedgerPaymentCells(n, row) {
+  if (!row || (!('amountPaid' in row) && !('paidDate' in row))) return;
+  const hasValue = !!(row.amountPaid || row.paidDate);
+  if (!hasValue && _ledgerPaymentHeadersOk !== true) return;
+  if (hasValue && !(await ensureLedgerPaymentHeaders())) return;
+  await sheetsWrite(_sheetsSpreadsheetId, `Ledger!L${n}:M${n}`, [[row.amountPaid || '', row.paidDate || '']]);
+}
+
 // Write one row: update the existing sheet row with that receipt, or append.
 // Goal allocations (col J) are left alone unless the row carries them.
 async function upsertLedgerRowOnSheet(row) {
@@ -3235,13 +3387,16 @@ async function upsertLedgerRowOnSheet(row) {
     const idx = colA.findIndex((r, i) => i > 0 && LS.normReceipt(r && r[0]) === key);
     const vals = LS.rowToSheetValues(row);
     if (idx === -1) {
-      await sheetsAppend(_sheetsSpreadsheetId, 'Ledger!A1', [vals]);
+      const hasPaid = !!(row.amountPaid || row.paidDate);
+      if (hasPaid) await ensureLedgerPaymentHeaders();
+      await sheetsAppend(_sheetsSpreadsheetId, 'Ledger!A1', [hasPaid && _ledgerPaymentHeadersOk ? vals : vals.slice(0, 11)]);
       return true;
     }
     const n = idx + 1;
     await sheetsWrite(_sheetsSpreadsheetId, `Ledger!A${n}:I${n}`, [vals.slice(0, 9)]);
     if (row.goalAllocations) await sheetsWrite(_sheetsSpreadsheetId, `Ledger!J${n}`, [[vals[9]]]);
     await sheetsWrite(_sheetsSpreadsheetId, `Ledger!K${n}`, [[vals[10]]]);
+    await writeLedgerPaymentCells(n, row);
     return true;
   } catch (e) {
     console.warn('[Ledger] sheet upsert failed for', row.receipt, e.message || e);
@@ -9887,7 +10042,8 @@ function renderDashboard() {
   const isPassThrough = r => (reimbIdx.get(String(r.receipt || '').trim()) || 0) > 0 && netAmt(r) <= 0;
   const avgRows     = rows.filter(r => !isPassThrough(r));
   const avgInvoice  = avgRows.length ? avgRows.reduce((s, r) => s + netAmt(r), 0) / avgRows.length : 0;
-  const outstanding = unpaidDeposit.reduce((s, r) => s + parseAmt(r.amountDue), 0);
+  // Balance after payments: Amount Due less Amount Paid (column L) per row.
+  const outstanding = DashboardFiguresApi().outstandingTotal(unpaidDeposit);
 
   const currencyCode = (() => {
     try {
@@ -10626,7 +10782,8 @@ async function applyUpdateStatus(statusData, data, actionNotes) {
     rows[rowIdx]._dirty = true;
     rows[rowIdx]._statusDirty = true;
     saveLedgerRows(rows);
-    const ok = await updateLedgerStatusOnSheet(statusData.receipt, statusData.status);
+    const rec = statusData.status === '✅ Paid' ? recordFullPaymentOnPaid(statusData.receipt) : null;
+    const ok = await updateLedgerStatusOnSheet(statusData.receipt, statusData.status, null, rec ? rec.fields : null);
     if (ok) {
       const current = loadLedgerRows();
       const i = current.findIndex(r => r.receipt === statusData.receipt);
@@ -10768,7 +10925,7 @@ async function _doLoadLedgerFromSheet() {
   }
 }
 
-async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null) {
+async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null, payment = null) {
   if (!_sheetsSpreadsheetId) return;
 
   try {
@@ -10807,6 +10964,10 @@ async function updateLedgerStatusOnSheet(receiptNumber, status, amountDue = null
     if (!putRes.ok) {
       console.error('Status update failed on sheet row', sheetRowIdx + 1, putRes.status);
       return false;
+    }
+    if (payment) {
+      try { await writeLedgerPaymentCells(sheetRowIdx + 1, payment); }
+      catch (e) { console.warn('[Ledger] Amount Paid write failed', e.message || e); }
     }
     console.log('✓ Status updated on sheet row', sheetRowIdx + 1);
     return true;
@@ -11895,6 +12056,132 @@ function toggleStatusPicker(e) {
   picker.style.display = picker.style.display === 'none' ? 'flex' : 'none';
 }
 
+// Marking an invoice Paid records the payment, so its balance reads 0 instead
+// of the old total: one "Payment received" row for whatever is still owed,
+// dated today (M/D/YYYY), on the saved invoice (and the open one when it is
+// this receipt). Nothing is added when payments already cover it, so marking
+// Paid twice never adds a second row. The row stays editable in edit mode and
+// the toast offers Undo. A ledger row with no saved invoice on this device
+// gets Amount Paid / Paid Date on the row only.
+// Returns { fields: { amountPaid, paidDate }, added } or null.
+function recordFullPaymentOnPaid(receipt, { toast = true } = {}) {
+  const T = getInvoiceTotals();
+  const key = String(receipt || '').trim();
+  if (!key) return null;
+  const rows = loadLedgerRows();
+  const idx = rows.findIndex(r => String(r.receipt || '').trim() === key);
+  if (idx === -1) return null;
+  const row = rows[idx];
+  const today = InvoiceDateApi().formatLedgerDate(new Date());
+  const prevFields = { amountPaid: row.amountPaid || '', paidDate: row.paidDate || '' };
+  const archived = getArchivedInvoice(key);
+  const dataEl = document.getElementById('invoice-data');
+  let live = null;
+  try { live = getData(); } catch (e) { live = null; }
+  const isLive = !!(live && String(live.receiptNumber || '').trim() === key);
+  const prevArchive = archived ? JSON.parse(JSON.stringify(archived)) : null;
+  const prevLiveText = isLive ? dataEl.textContent : null;
+  const source = archived || (isLive ? live : null);
+  let added = null, fields, owedText = '';
+
+  if (source) {
+    const inv = JSON.parse(JSON.stringify(source));
+    added = T.fullPaymentRow(inv, { date: today });
+    if (added) {
+      owedText = T.formatTotalsAmount(T.parseMoneyNum(added.amount), inv);
+      inv.payments = [...(Array.isArray(inv.payments) ? inv.payments : []), added];
+      T.syncTotalsFromLineItems(inv);
+      archiveInvoice(key, inv);
+      if (isLive) {
+        const raw = JSON.parse(dataEl.textContent);
+        raw.payments = [...(Array.isArray(raw.payments) ? raw.payments : []), added];
+        T.syncTotalsFromLineItems(raw);
+        dataEl.textContent = JSON.stringify(raw, null, 2);
+      }
+    }
+    fields = T.ledgerPaymentFields(inv);
+  } else {
+    const money = v => T.parseMoneyNum(v);
+    const cur = (String(row.amountDue || row.projectTotal || '').trim().match(/^([A-Z]{2,4})\b/) || [])[1] || '';
+    const owed = Math.max(0, money(row.amountDue) - money(row.amountPaid));
+    if (owed > 0.005) {
+      added = { amount: String(owed), date: today };
+      owedText = T.ledgerMoneyText(owed, cur);
+      fields = { amountPaid: T.ledgerMoneyText(money(row.amountDue), cur), paidDate: today };
+    } else {
+      fields = prevFields;
+    }
+  }
+
+  const cur = loadLedgerRows();
+  const ci = cur.findIndex(r => String(r.receipt || '').trim() === key);
+  if (ci !== -1) {
+    cur[ci].amountPaid = fields.amountPaid || '';
+    cur[ci].paidDate = fields.paidDate || '';
+    if (added) cur[ci]._dirty = true;
+    saveLedgerRows(cur);
+  }
+
+  if (added && toast) {
+    const t = showToast(`Recorded ${escapeHtml(owedText)} received ${escapeHtml(today)} on ${escapeHtml(key)}, so it shows a balance of 0. Edit the invoice to change the date or add a reference.`, 'success', 10000);
+    if (t) {
+      const btn = document.createElement('button');
+      btn.textContent = 'Undo';
+      btn.className = 'toast-undo-btn';
+      btn.onclick = () => {
+        t.remove();
+        if (source) {
+          const arc = loadInvoiceArchive();
+          if (prevArchive) arc[key] = prevArchive; else delete arc[key];
+          try { localStorage.setItem('invoice-archive', JSON.stringify(arc)); } catch (e) {}
+        }
+        if (prevLiveText !== null && getData().receiptNumber === key) dataEl.textContent = prevLiveText;
+        const rs = loadLedgerRows();
+        const ri = rs.findIndex(r => String(r.receipt || '').trim() === key);
+        if (ri !== -1) { rs[ri].amountPaid = prevFields.amountPaid; rs[ri].paidDate = prevFields.paidDate; rs[ri]._dirty = true; saveLedgerRows(rs); updateLedgerStatusOnSheet(key, rs[ri].status, null, prevFields); }
+        render(getData());
+        if (document.getElementById('ledger-rows-list')) { try { renderLedgerHistory(); } catch (e) {} }
+        showToast(`Payment on ${escapeHtml(key)} removed`, 'info', 3000);
+      };
+      const closeBtn = t.querySelector('.toast-close');
+      if (closeBtn) t.insertBefore(btn, closeBtn); else t.appendChild(btn);
+    }
+  }
+  return { fields, added };
+}
+
+// View-mode prompt for an invoice that is marked Paid but has no payment
+// recorded (balance still shows the full amount). Never prints.
+function renderRecordPaymentOffer(data, statusStr) {
+  const el = document.getElementById('record-payment-offer');
+  if (!el) return;
+  const T = getInvoiceTotals();
+  const s = T.paymentSummary(data);
+  const show = statusStr === '✅ Paid' && s.balance > 0.005 && !document.body.classList.contains('editing');
+  el.classList.toggle('hidden', !show);
+  el.innerHTML = '';
+  if (!show) return;
+  const msg = document.createElement('span');
+  msg.textContent = `Marked paid, but no payment is recorded, so it still shows ${T.formatTotalsAmount(s.balance, data)} due.`;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Record payment received';
+  btn.onclick = () => {
+    const receipt = data.receiptNumber;
+    const rec = recordFullPaymentOnPaid(receipt);
+    if (rec && rec.added) {
+      const row = loadLedgerRows().find(r => String(r.receipt || '').trim() === String(receipt).trim());
+      updateLedgerStatusOnSheet(receipt, (row && row.status) || '✅ Paid', null, rec.fields).then(ok => {
+        if (!ok) return;
+        const c = loadLedgerRows(); const i = c.findIndex(r => r.receipt === receipt);
+        if (i !== -1) { delete c[i]._dirty; saveLedgerRows(c); }
+      });
+    }
+    render(getData());
+  };
+  el.append(msg, btn);
+}
+
 function quickSetStatus(status) {
   const data = getData();
   const rows = loadLedgerRows();
@@ -11913,15 +12200,16 @@ function quickSetStatus(status) {
   saveLedgerRows(rows);
   const _receipt = rows[idx].receipt;
   if (status === '✅ Paid') logReimbursableCost(_receipt, data);
+  const _rec = status === '✅ Paid' ? recordFullPaymentOnPaid(_receipt) : null;
   const _amtDue = status === '✅ Paid' ? rows[idx].amountDue : null;
-  updateLedgerStatusOnSheet(_receipt, status, _amtDue).then(ok => {
+  updateLedgerStatusOnSheet(_receipt, status, _amtDue, _rec ? _rec.fields : null).then(ok => {
     if (ok) {
       const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === _receipt);
       if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
     }
   });
   document.getElementById('status-picker').style.display = 'none';
-  render(data);
+  render(getData());
 }
 
 document.addEventListener('click', function(e) {

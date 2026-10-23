@@ -9,6 +9,19 @@
  * to or taken from ledger money. rateToUSD is "1 ledger unit = x USD".
  */
 
+import { ledgerRowBalance } from './ledger-sync.mjs';
+
+const OPEN_STATUSES = new Set(['⬜ Unpaid', '💰 Deposit', '📤 Sent']);
+
+/**
+ * Outstanding: what clients still owe on Unpaid, Deposit and Sent rows, after
+ * payments recorded against them (Amount Due less Amount Paid, never below 0
+ * per row). Reimbursable at-cost lines stay in: the client still owes them.
+ */
+export function outstandingTotal(rows) {
+  return round2((rows || []).reduce((s, r) => (r && OPEN_STATUSES.has(r.status)) ? s + ledgerRowBalance(r) : s, 0));
+}
+
 function money(s) {
   return parseFloat(String(s == null ? '' : s).replace(/[^0-9.-]/g, '')) || 0;
 }
