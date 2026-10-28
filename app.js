@@ -5507,7 +5507,7 @@ async function doLoadGoalsFromSheet() {
   } catch (e) {
     // The merge is already kept locally; the next sync pushes it again.
     console.error('[Goals] Push of merged goals failed, kept locally:', e);
-    reconciled = { merged: loadGoals(), remoteCount: rows.filter(r => r[0] && r[0].trim() !== '').length };
+    reconciled = { merged: loadGoals(), remoteCount: goalsFromSheetRows(rows).length };
   }
   console.log(`✅ [Goals] Sync complete. Local storage count: ${reconciled.merged.length}`);
   if (document.getElementById('dashboard-overlay')?.style.display === 'flex') {

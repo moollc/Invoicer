@@ -12,7 +12,8 @@ const appSource = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 // Small scanner: skips strings, template literals and // comments when matching braces.
 function declaration(name) {
   const lines = appSource.split('\n');
-  const start = lines.findIndex(l => l.startsWith(`function ${name}(`) || l.startsWith(`const ${name} =`));
+  const fn = new RegExp(`^(async )?function ${name}\\(`);
+  const start = lines.findIndex(l => fn.test(l) || l.startsWith(`const ${name} =`));
   if (start === -1) throw new Error(`${name} not found in app.js`);
   if (lines[start].startsWith('const ')) return lines[start];
   let depth = 0;
@@ -44,6 +45,7 @@ const FUNCTIONS = [
   'loadGoals', 'saveGoals', 'goalSortDeadline', 'goalHistoryKey', 'mergeGoals3Way',
   'rollSurplusToNextGoal', 'describeRollover', 'extractOrderNumber',
   'ledgerRowHasCollected', 'collectedIncomeOf',
+  'goalsFromSheetRows', 'goalToSheetRow', 'writeGoalsToSheet', 'reconcileGoals',
 ];
 const EXPOSED = ['goalKey', 'recordGoalDeletion', 'unrecordGoalDeletion', 'loadGoals', 'saveGoals', 'mergeGoals3Way', 'rollSurplusToNextGoal', 'describeRollover', 'extractOrderNumber'];
 
@@ -55,7 +57,10 @@ function loadApp() {
       setItem: (k, v) => { store.set(k, String(v)); },
     },
     window: {},
-    // Stand-ins for app.js globals the deposit helpers call.
+    // Stand-ins for app.js globals the helpers call. Sheet calls do nothing unless a test replaces them.
+    _sheetsSpreadsheetId: 'sheet-1',
+    sheetsWrite: async () => {},
+    sheetsClear: async () => {},
     parseMoneyNum: s => parseFloat(String(s || '').replace(/[^0-9.-]/g, '')) || 0,
     ReimbursableApi: () => Reimbursable,
   };
@@ -71,7 +76,7 @@ function loadApp() {
     `({ ${FUNCTIONS.join(', ')} })`,
   ].join('\n');
   const api = vm.runInNewContext(code, sandbox);
-  return { api, window: sandbox.window };
+  return { api, sandbox, window: sandbox.window };
 }
 
 // Values built inside the sandbox come from another realm, so compare them as plain JSON.
@@ -247,4 +252,35 @@ test('a deposit counts only what has been paid on it, net of reimbursable cost',
 
   const paid = { receipt: 'R2', status: '✅ Paid', amountDue: 'JMD 10,000', amountPaid: '', projectTotal: 'JMD 10,000' };
   assert.equal(api.collectedIncomeOf(paid, new Map()), 10000);
+});
+
+test('a failed sheet write does not advance the base, so the next sync keeps the unsynced goal', async () => {
+  const { api, sandbox } = loadApp();
+  const camera = goal({ name: 'Camera' });
+  const shimbol = goal({ name: 'Shimbol' });
+  const lens = goal({ name: 'Lens' });
+  const remoteRows = plain([camera, shimbol].map(g => api.goalToSheetRow(g)));
+  api.saveGoalsBase([camera, shimbol]);
+  api.saveGoals([camera, shimbol, lens]);
+
+  sandbox.sheetsWrite = async () => { throw new Error('offline'); };
+  await assert.rejects(api.reconcileGoals(api.loadGoals(), remoteRows), /offline/);
+  assert.deepEqual(names(api.loadGoalsBase()), ['Camera', 'Shimbol']);
+  assert.deepEqual(names(api.loadGoals()), ['Camera', 'Shimbol', 'Lens']);
+
+  // Retry once the sheet answers: Lens is pushed and the base catches up.
+  const writes = [];
+  sandbox.sheetsWrite = async (id, range, rows) => { writes.push({ range, rows: plain(rows) }); };
+  await api.reconcileGoals(api.loadGoals(), remoteRows);
+  assert.equal(writes[0].range, 'Goals!A2:L4');
+  assert.equal(writes[0].rows[2][0], 'Lens');
+  assert.deepEqual(names(api.loadGoalsBase()), ['Camera', 'Shimbol', 'Lens']);
+});
+
+test('a shorter goal list clears the old rows left below it', async () => {
+  const { api, sandbox } = loadApp();
+  const cleared = [];
+  sandbox.sheetsClear = async (id, range) => { cleared.push(range); };
+  await api.writeGoalsToSheet([goal({ name: 'Camera' })], 3);
+  assert.deepEqual(cleared, ['Goals!A3:L4']);
 });
