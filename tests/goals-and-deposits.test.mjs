@@ -42,7 +42,7 @@ const CONSTS = ['GOALS_STORAGE_KEY', 'GOALS_TOMBSTONES_KEY', 'GOALS_BASE_KEY', '
 const FUNCTIONS = [
   'goalKey', 'hasOwnKey', 'goalFieldText', 'loadGoalTombstones', 'saveGoalTombstones',
   'recordGoalDeletion', 'unrecordGoalDeletion', 'loadGoalsBase', 'saveGoalsBase', 'goalsByKey',
-  'loadGoals', 'saveGoals', 'goalSortDeadline', 'goalHistoryKey', 'mergeGoals3Way',
+  'loadGoals', 'saveGoals', 'goalSortDeadline', 'goalHistoryKey', 'goalSameAsBase', 'mergeGoals3Way',
   'rollSurplusToNextGoal', 'describeRollover', 'extractOrderNumber',
   'ledgerRowHasCollected', 'collectedIncomeOf',
   'goalsFromSheetRows', 'goalToSheetRow', 'writeGoalsToSheet', 'reconcileGoals',
@@ -283,4 +283,28 @@ test('a shorter goal list clears the old rows left below it', async () => {
   sandbox.sheetsClear = async (id, range) => { cleared.push(range); };
   await api.writeGoalsToSheet([goal({ name: 'Camera' })], 3);
   assert.deepEqual(cleared, ['Goals!A3:L4']);
+});
+
+test('first sync on a stale device with no base snapshot drops deleted local ghosts and lets sheet fields win', () => {
+  const { api } = loadApp();
+  const staleDeleted = goal({ name: 'SYNCO XVision HD', amount: '180', amountReached: '40' });
+  const staleShimbol = goal({ name: 'Shimbol', amount: '500', amountReached: '100', notes: 'old local note', history: [{ date: '2026-10-01', amount: 100 }] });
+  const dirtyNewGoal = goal({ name: 'Godox Light', amount: '300', _dirty: true });
+  const sheetShimbol = goal({ name: 'Shimbol', amount: '500', amountReached: '350', notes: 'updated on sheet' });
+
+  // Empty base {} simulates an existing phone/browser opening the new version for the first time.
+  const merged = plain(api.mergeGoals3Way([staleDeleted, staleShimbol, dirtyNewGoal], [sheetShimbol], {}, {}));
+  assert.deepEqual(merged.map(g => g.name), ['Shimbol', 'Godox Light'], 'SYNCO ghost dropped, dirty new goal kept');
+  assert.equal(merged[0].amountReached, '350', 'sheet amountReached wins over stale local cache on first load');
+  assert.equal(merged[0].notes, 'updated on sheet', 'sheet notes win over stale local cache on first load');
+  assert.equal(merged[0].history.length, 1, 'local contribution history is still preserved');
+});
+
+test('a goal deleted on the sheet is still dropped when local copy has history array not present in base', () => {
+  const { api } = loadApp();
+  const baseCamera = goal({ name: 'Camera', amount: '500', amountReached: '100' });
+  const localCameraWithHistory = goal({ name: 'Camera', amount: '500', amountReached: '100', history: [{ date: '2026-10-01', amount: 100 }] });
+  const shimbol = goal({ name: 'Shimbol', amount: '200' });
+  const merged = api.mergeGoals3Way([localCameraWithHistory, shimbol], [shimbol], api.goalsByKey([baseCamera, shimbol]), {});
+  assert.deepEqual(names(merged), ['Shimbol']);
 });

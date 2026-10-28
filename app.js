@@ -3148,7 +3148,7 @@ async function renderLedgerHistory() {
             const all = loadProjectCosts();
             const i = all.findIndex(x => x.id === c.id);
             if (i === -1) return;
-            all[i] = { ...all[i], amount: String(Math.round(v * 100) / 100) };
+            all[i] = { ...all[i], amount: String(Math.round(v * 100) / 100), _dirty: true };
             saveProjectCosts(all);
             syncProjectCostsToSheet().catch(() => {});
             renderCostsSection();
@@ -5341,8 +5341,13 @@ function goalHistoryKey(h) {
  * is the last-synced state keyed by goalKey, tombstones are deleted goal keys.
  * Local order comes first, then remote-only goals that are new since the last sync.
  */
+function goalSameAsBase(a, b) {
+  return Boolean(a && b && GOAL_MERGE_FIELDS.every(f => goalFieldText(a[f]) === goalFieldText(b[f])));
+}
+
 function mergeGoals3Way(localList, remoteList, baseMap, tombstones) {
   const base = baseMap || {};
+  const hasBase = Object.keys(base).length > 0;
   const dead = tombstones || {};
   const live = list => (list || []).filter(g => !hasOwnKey(dead, goalKey(g.name)));
   const local = live(localList);
@@ -5359,15 +5364,20 @@ function mergeGoals3Way(localList, remoteList, baseMap, tombstones) {
     const b = hasOwnKey(base, key) ? base[key] : null;
 
     if (!rem) {
-      // Gone from the sheet. Honour that delete unless this device edited the goal since the last sync.
-      if (b && JSON.stringify(loc) === JSON.stringify(b)) continue;
+      // Gone from the sheet.
+      // 1) Cold-start device with no base snapshot yet: sheet wins unless local goal was explicitly marked _dirty.
+      if (!hasBase && remote.length > 0 && !loc._dirty) continue;
+      // 2) Device with a base snapshot: honour remote delete unless this device edited the goal since base.
+      if (b && !loc._dirty && goalSameAsBase(loc, b)) continue;
       out.push(loc);
       continue;
     }
 
-    const localChanged = f => goalFieldText(loc[f]) !== goalFieldText(b && b[f]);
-    const remoteChanged = f => goalFieldText(rem[f]) !== goalFieldText(b && b[f]);
-    const merged = { ...rem, ...loc };
+    // On first sync with no base snapshot yet, sheet fields win over stale local cache unless loc._dirty is set.
+    const coldStartClean = !hasBase && !b && !loc._dirty;
+    const localChanged = f => !coldStartClean && goalFieldText(loc[f]) !== goalFieldText(b && b[f]);
+    const remoteChanged = f => coldStartClean || goalFieldText(rem[f]) !== goalFieldText(b && b[f]);
+    const merged = coldStartClean ? { ...loc, ...rem } : { ...rem, ...loc };
     for (const f of GOAL_MERGE_FIELDS) {
       if (remoteChanged(f) && !localChanged(f)) merged[f] = rem[f];
     }
@@ -5469,8 +5479,10 @@ async function reconcileGoals(local, remoteRows) {
   if (JSON.stringify(merged.map(goalToSheetRow)) !== JSON.stringify(remote.map(goalToSheetRow))) {
     await writeGoalsToSheet(merged, remoteRows.length);
   }
-  saveGoalsBase(merged);
-  return { merged, remoteCount: remote.length };
+  const clean = merged.map(g => { const copy = { ...g }; delete copy._dirty; return copy; });
+  saveGoals(clean);
+  saveGoalsBase(clean);
+  return { merged: clean, remoteCount: remote.length };
 }
 
 async function doGoalSync(list) {
@@ -5777,6 +5789,7 @@ function allocateToBills(incomeUSD) {
     if (!pct || pct <= 0 || pct > 100) return;
     const contribution = incomeUSD * (pct / 100);
     b.funded = String(Math.round(((parseFloat(b.funded) || 0) + contribution) * 100) / 100);
+    b._dirty = true;
     changed = true;
   });
   if (changed) { saveBills(bills); syncBillsToSheet(); }
@@ -5925,7 +5938,11 @@ function billFromSheetRow(r) {
 function mergeBillFromLocal(sheetBill, localBill) {
   if (!localBill) return sheetBill;
   const result = { ...sheetBill };
-  // Never un-pay a bill that is paid locally — sheet write may have failed
+  // Keep local-only base64 fallbacks when Drive upload had not completed
+  if (!sheetBill.receiptDocUrl && localBill.receiptDoc) result.receiptDoc = localBill.receiptDoc;
+  if (!sheetBill.invoiceDocUrl && localBill.invoiceDoc) result.invoiceDoc = localBill.invoiceDoc;
+  // Only overwrite sheet fields from local when localBill has unsynced local edits (_dirty)
+  if (!localBill._dirty) return result;
   if (localBill.paid && !sheetBill.paid) {
     result.paid = true;
     result.history = localBill.history?.length ? localBill.history : sheetBill.history;
@@ -5935,10 +5952,8 @@ function mergeBillFromLocal(sheetBill, localBill) {
   }
   if (!sheetBill.receiptDocUrl && localBill.receiptDocUrl) result.receiptDocUrl = localBill.receiptDocUrl;
   if (!sheetBill.receiptDocName && localBill.receiptDocName) result.receiptDocName = localBill.receiptDocName;
-  if (!sheetBill.receiptDocUrl && localBill.receiptDoc) result.receiptDoc = localBill.receiptDoc;
   if (!sheetBill.invoiceDocUrl && localBill.invoiceDocUrl) result.invoiceDocUrl = localBill.invoiceDocUrl;
   if (!sheetBill.invoiceDocName && localBill.invoiceDocName) result.invoiceDocName = localBill.invoiceDocName;
-  if (!sheetBill.invoiceDocUrl && localBill.invoiceDoc) result.invoiceDoc = localBill.invoiceDoc;
   if (!sheetBill.recipient && localBill.recipient) result.recipient = localBill.recipient;
   if (!sheetBill.cycleStart && localBill.cycleStart) result.cycleStart = localBill.cycleStart;
   return result;
@@ -5976,6 +5991,7 @@ async function syncBillsToSheet() {
     const emptyRow = Array(17).fill('');
     await sheetsWrite(_sheetsSpreadsheetId, `Bills!A${clearStart}:Q${clearStart + clearCount - 1}`,
       Array(clearCount).fill(emptyRow));
+    saveBills(bills.map(b => { const copy = { ...b }; delete copy._dirty; return copy; }));
     return { success: true };
   } catch (e) {
     console.warn('[Bills] Sheet rewrite failed:', e.message);
@@ -6004,6 +6020,7 @@ async function loadBillsFromSheet() {
   // Stops cleaned-away Equipment-Transport ghosts (different ids) from syncing back.
   const localOnly = local.filter(b => {
     if (sheetIds.has(b.id)) return false;
+    if (!b._dirty) return false;
     const n = billNameKey(b.name);
     if (n && sheetNames.has(n)) {
       console.warn('[Bills] Dropping local duplicate name already on sheet:', b.name, b.id);
@@ -6091,7 +6108,7 @@ async function saveBillModal() {
     const idx = bills.findIndex(b => b.id === _editingBillId);
     if (idx !== -1) {
       bills[idx] = { ...bills[idx], name, amount, recurrence, dueDay, customDays,
-        allocationPct: allocStr, recipient };
+        allocationPct: allocStr, recipient, _dirty: true };
       saveBills(bills);
     }
   } else {
@@ -6099,12 +6116,12 @@ async function saveBillModal() {
     const existingIdx = sameKey ? bills.findIndex(b => billNameKey(b.name) === sameKey) : -1;
     if (existingIdx !== -1) {
       bills[existingIdx] = { ...bills[existingIdx], name, amount, recurrence, dueDay, customDays,
-        allocationPct: allocStr, recipient };
+        allocationPct: allocStr, recipient, _dirty: true };
       saveBills(bills);
     } else {
       bills.push({ id: String(Date.now()), name, amount, recurrence, dueDay, customDays,
         allocationPct: allocStr, recipient, funded: '0', paid: false,
-        cycleStart: new Date().toISOString().slice(0, 10), history: [] });
+        cycleStart: new Date().toISOString().slice(0, 10), history: [], _dirty: true });
       saveBills(bills);
     }
   }
@@ -6303,6 +6320,7 @@ async function applyBillDriveDoc(billId, kind, uploaded) {
 
   savedBills[savedIdx][urlKey] = uploaded.url;
   savedBills[savedIdx][nameKey] = uploaded.name;
+  savedBills[savedIdx]._dirty = true;
   delete savedBills[savedIdx][dataKey];
   saveBills(savedBills);
 
@@ -6389,6 +6407,7 @@ async function confirmBillInvoice() {
 
   // Name only until Drive returns URL — avoid stuffing PDF base64 into localStorage first
   bill.invoiceDocName = docSnapshot.name;
+  bill._dirty = true;
   saveBills(bills);
   await syncBillsToSheet();
   closeInvoiceBillModal();
@@ -6456,6 +6475,7 @@ function addProjectCost({ receipt, client, desc, amount, date }) {
     desc:    (desc || '').trim(),
     amount:  String(parseFloat(amount) || 0),
     date:    date || new Date().toISOString().slice(0, 10),
+    _dirty:  true,
   };
   const costs = loadProjectCosts();
   costs.push(cost);
@@ -6552,6 +6572,7 @@ async function _syncProjectCostsToSheetNow() {
       console.warn(`[Costs] Sheet write failed for "${cost.desc}":`, e.message);
     }
   }
+  if (!failures) saveProjectCosts(costs.map(c => { const copy = { ...c }; delete copy._dirty; return copy; }));
   return failures ? { success: false, error: `${failures} cost(s) failed to sync` } : { success: true };
 }
 
@@ -6569,9 +6590,9 @@ async function loadProjectCostsFromSheet() {
     if (local.length) await syncProjectCostsToSheet();
     return;
   }
-  // Non-destructive merge: sheet wins by id, local-only records kept + pushed
+  // Non-destructive merge: sheet wins by id, dirty local-only records kept + pushed; clean local ghosts dropped
   const sheetIds = new Set(sheetCosts.map(c => c.id));
-  const localOnly = local.filter(c => !sheetIds.has(c.id));
+  const localOnly = local.filter(c => !sheetIds.has(c.id) && c._dirty === true);
   saveProjectCosts([...sheetCosts, ...localOnly]);
   if (localOnly.length) await syncProjectCostsToSheet();
 }
@@ -6604,6 +6625,7 @@ function logReimbursableCost(receipt, data) {
     return 'none';
   }
   if (res.action === 'none') return 'none';
+  if (res.costs[res.index]) res.costs[res.index]._dirty = true;
   saveProjectCosts(res.costs);
   syncProjectCostsToSheet().then(r => {
     if (r && !r.success && r.error !== 'Not signed in') {
@@ -6661,6 +6683,7 @@ async function commitBillPaid(billId, opts = {}) {
   bill.history.push({ date: payDate, amount: amountStr });
   bill.paidTotal = String((parseFloat(bill.paidTotal) || 0) + amount);
   bill.paid = true;
+  bill._dirty = true;
   bill.funded = String(Math.max(0, (parseFloat(bill.funded) || 0) - amount));
   if (docSnapshot) {
     bill.receiptDocName = docSnapshot.name;
@@ -6851,6 +6874,7 @@ function tickBillCycles() {
       const wasPaid = b.paid;
       resetBillCycle(b, !wasPaid);
       b.cycleStart = now.toISOString().slice(0, 10);
+      b._dirty = true;
       changed = true;
     }
   });
@@ -7861,6 +7885,7 @@ async function acceptExpenseInboxItem(id) {
       paid: false,
       cycleStart: item.date || new Date().toISOString().slice(0, 10),
       history: [],
+      _dirty: true,
     });
     saveBills(bills);
     syncBillsToSheet();
@@ -10583,7 +10608,7 @@ function submitGoalModal() {
     unrecordGoalDeletion(name);
     const oldTarget = parseFloat(g.amount) || 0;
     const reached = parseFloat(g.amountReached) || 0;
-    Object.assign(g, { name, amount: String(amount), deadline, notes, allocationPct });
+    Object.assign(g, { name, amount: String(amount), deadline, notes, allocationPct, _dirty: true });
     if (amount < oldTarget && reached > amount) {
       const rollMsg = describeRollover(rollSurplusToNextGoal(goals, g, oldTarget));
       if (rollMsg) showToast(rollMsg, 'success');
@@ -10594,7 +10619,7 @@ function submitGoalModal() {
     }
   } else {
     unrecordGoalDeletion(name);
-    goals.push({ name, amount: String(amount), deadline, notes, allocationPct, created: new Date().toISOString().slice(0, 10) });
+    goals.push({ name, amount: String(amount), deadline, notes, allocationPct, created: new Date().toISOString().slice(0, 10), _dirty: true });
   }
   _editingGoalIdx = -1;
   saveGoals(goals);
@@ -10628,7 +10653,7 @@ function rollSurplusToNextGoal(goals, editedGoal, oldTarget) {
 
   const todayStr = new Date().toISOString().slice(0, 10);
   let surplusCents = reachedCents - newTargetCents;
-  editedGoal.amountReached = String(newTargetCents / 100);
+  editedGoal.amountReached = String(newTargetCents / 100); editedGoal._dirty = true;
   if (newTargetCents > 0 && editedGoal.status !== 'Claimed') editedGoal.status = 'Funded';
 
   const recipients = goals
@@ -10642,6 +10667,7 @@ function rollSurplusToNextGoal(goals, editedGoal, oldTarget) {
     const giveDollars = giveCents / 100;
     g.amountReached = String(newReachedCents / 100);
     g.lastContributionDate = todayStr;
+    g._dirty = true;
     g.history = g.history || [];
     g.history.push({ date: todayStr, amount: giveDollars, rolledFrom: editedGoal.name });
     if (newReachedCents >= targetCents) g.status = 'Funded';
@@ -10767,7 +10793,7 @@ function renderAllocationUI(container, row) {
     // Save this % back to the goal so it pre-fills next time
     const goals = loadGoals();
     const idx = goals.findIndex(g => g.name === selectedGoal.name);
-    if (idx !== -1) { goals[idx].allocationPct = pct; saveGoals(goals); syncGoalsToSheet(); }
+    if (idx !== -1) { goals[idx].allocationPct = pct; goals[idx]._dirty = true; saveGoals(goals); syncGoalsToSheet(); }
     doAllocate(selectedGoal, pct, manualConfirmBtn);
   };
   inputWrap.append(pctInput, document.createTextNode('%  '), manualConfirmBtn);
@@ -10824,6 +10850,7 @@ async function undoGoalAllocation(row, container) {
       // Roll back the applied amount
       const nowReached = parseFloat(g.amountReached) || 0;
       g.amountReached = String(Math.max(0, Math.round((nowReached - a.applied) * 100) / 100));
+      g._dirty = true;
       // Roll back status if we funded it
       if (g.status === 'Funded' && parseFloat(g.amountReached) < (parseFloat(g.amount) || 0)) {
         g.status = a.prevStatus || 'Active';
@@ -10966,6 +10993,7 @@ async function submitClaimModal() {
     const idx = goals.findIndex(g => g.name === _claimingGoal.name);
     if (idx === -1) throw new Error('Goal not found — please reload and try again.');
     goals[idx].status = 'Claimed';
+    goals[idx]._dirty = true;
     goals[idx].claimDate = _claimingGoal.claimDate || new Date().toISOString().split('T')[0];
     goals[idx].receiptNumber = receipt;
     goals[idx].receiptFilename = driveFileUrl;
@@ -10996,7 +11024,8 @@ function applyAddGoal(goalData, actionNotes) {
     deadline:      goalData.deadline || '',
     allocationPct: typeof goalData.allocationPct === 'number' ? goalData.allocationPct : 0,
     notes:         goalData.notes || '',
-    created:       new Date().toISOString().slice(0, 10)
+    created:       new Date().toISOString().slice(0, 10),
+    _dirty:        true
   });
   saveGoals(goals);
   syncGoalsToSheet();
@@ -11011,6 +11040,7 @@ function applyUpdateGoal(updateData, actionNotes) {
   if (idx < 0) { console.warn('[applyUpdateGoal] No goal found:', updateData.name); return; }
   const c = updateData.changes || {};
   const oldTarget = parseFloat(goals[idx].amount) || 0;
+  goals[idx]._dirty = true;
   if ('amount'        in c) goals[idx].amount        = typeof c.amount === 'number' ? c.amount : parseFloat(c.amount) || 0;
   if ('deadline'      in c) goals[idx].deadline      = c.deadline || '';
   if ('allocationPct' in c) goals[idx].allocationPct = typeof c.allocationPct === 'number' ? c.allocationPct : 0;
@@ -11600,6 +11630,7 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
     if (needed <= 0) continue;
 
     const applied = Math.min(remaining, needed);
+    g._dirty = true;
     g.amountReached = String(Math.round((reached + applied) * 100) / 100);
     g.lastContributionDate = new Date().toISOString().slice(0, 10);
     g.history = g.history || [];
