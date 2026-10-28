@@ -222,6 +222,11 @@ function ledgerRowDate(row) {
   if (!row || !row.date) return null;
   return InvoiceDateApi().toDate(row.date, { receipt: row.receipt });
 }
+/** Ledger row paid date as a local Date, or null. */
+function ledgerRowPaidDate(row) {
+  if (!row || !row.paidDate) return null;
+  return InvoiceDateApi().toDate(row.paidDate, { receipt: row.receipt });
+}
 
 // Receipt format: YYMMDD + suffix letter (A, B, C…)
 // Suffix is stored in sessionStorage so refreshing the same day keeps it stable.
@@ -2968,9 +2973,9 @@ async function renderLedgerHistory() {
           const _cur = loadLedgerRows(); const _ci = _cur.findIndex(r => r.receipt === rows[realIdx].receipt);
           if (_ci !== -1) { delete _cur[_ci]._dirty; delete _cur[_ci]._statusDirty; saveLedgerRows(_cur); }
         }
-        if (sel.value === '✅ Paid') {
-          // Always reload from storage so goalAllocations saved by a prior allocation are visible
-          const liveRow = loadLedgerRows().find(r => r.receipt === rows[realIdx].receipt) || rows[realIdx];
+        // Always reload from storage so goalAllocations saved by a prior allocation are visible
+        const liveRow = loadLedgerRows().find(r => r.receipt === rows[realIdx].receipt) || rows[realIdx];
+        if (ledgerRowHasCollected(liveRow)) {
           renderAllocationUI(allocWrap, liveRow);
           allocWrap.style.display = 'flex';
         } else {
@@ -2982,8 +2987,8 @@ async function renderLedgerHistory() {
       }
     });
 
-    // If already Paid when modal opens, show allocation UI immediately
-    if (row.status === '✅ Paid') {
+    // If already Paid (or a deposit with a payment) when modal opens, show allocation UI immediately
+    if (ledgerRowHasCollected(row)) {
       const liveRow = loadLedgerRows().find(r => r.receipt === row.receipt) || rows[realIdx];
       renderAllocationUI(allocWrap, liveRow);
       allocWrap.style.display = 'flex';
@@ -5254,51 +5259,234 @@ async function loadClientsFromSheet() {
 }
 
 // ── Goals ─────────────────────────────────────────────────────
+// Goals are kept locally and mirrored to the Goals tab. A deleted goal leaves a
+// tombstone so a stale remote copy can't bring it back, and the last synced
+// state is kept as a base so a 3-way merge can tell which side changed a field.
+
+const GOALS_STORAGE_KEY = 'invoice-goals';
+const GOALS_TOMBSTONES_KEY = 'invoice-goals-deleted';
+const GOALS_BASE_KEY = 'invoice-goals-base';
+
+// Fields merged one by one. History is merged separately (union).
+const GOAL_MERGE_FIELDS = ['name', 'amount', 'amountReached', 'deadline', 'status', 'claimDate', 'receiptNumber', 'receiptFilename', 'notes', 'lastContributionDate', 'allocationPct'];
+const GOAL_CLAIM_FIELDS = ['claimDate', 'receiptNumber', 'receiptFilename'];
+
+function goalKey(name) {
+  return String(name || '').trim().toLowerCase();
+}
+function hasOwnKey(map, key) {
+  return Object.prototype.hasOwnProperty.call(map || {}, key);
+}
+// Comparable form of a field: blank, missing and 0 vs '0' should not count as a change.
+function goalFieldText(v) {
+  return v == null ? '' : String(v);
+}
+
+function loadGoalTombstones() {
+  return JSON.parse(localStorage.getItem(GOALS_TOMBSTONES_KEY) || '{}');
+}
+function saveGoalTombstones(map) {
+  localStorage.setItem(GOALS_TOMBSTONES_KEY, JSON.stringify(map));
+}
+function recordGoalDeletion(name) {
+  const key = goalKey(name);
+  const tombstones = loadGoalTombstones();
+  tombstones[key] = Date.now();
+  saveGoalTombstones(tombstones);
+  saveGoalsBase(loadGoalsBase().filter(g => goalKey(g.name) !== key));
+}
+function unrecordGoalDeletion(name) {
+  const tombstones = loadGoalTombstones();
+  delete tombstones[goalKey(name)];
+  saveGoalTombstones(tombstones);
+}
+
+// Base = the goals as they were at the last sync (stored as a list).
+function loadGoalsBase() {
+  return JSON.parse(localStorage.getItem(GOALS_BASE_KEY) || '[]');
+}
+function saveGoalsBase(list) {
+  localStorage.setItem(GOALS_BASE_KEY, JSON.stringify(list || []));
+}
+function goalsByKey(list) {
+  const map = Object.create(null);
+  (list || []).forEach(g => { map[goalKey(g.name)] = g; });
+  return map;
+}
 
 function loadGoals() {
-  return JSON.parse(localStorage.getItem('invoice-goals') || '[]');
+  const tombstones = loadGoalTombstones();
+  return JSON.parse(localStorage.getItem(GOALS_STORAGE_KEY) || '[]')
+    .filter(g => !hasOwnKey(tombstones, goalKey(g.name)));
 }
-function saveGoals(goals) {
-  localStorage.setItem('invoice-goals', JSON.stringify(goals));
+function saveGoals(list, opts) {
+  const tombstones = loadGoalTombstones();
+  const kept = opts && opts.keepTombstoned ? list : list.filter(g => !hasOwnKey(tombstones, goalKey(g.name)));
+  localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(kept));
 }
 
-async function syncGoalsToSheet() {
-  if (!_gmailToken || !_sheetsSpreadsheetId) return;
-  const goals = loadGoals();
-  if (!goals.length) return;
-  const existing = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
-  if (existing === null) { console.warn('[Goals] Push aborted — sheet read failed (auth/tab missing). Local goals kept.'); return; }
-  for (const goal of goals) {
-    const rowIdx = existing.findIndex(r => r[0] && r[0].toLowerCase() === goal.name.toLowerCase());
-    const newRow = [
-      goal.name, 
-      goal.amount || '', 
-      goal.deadline || '', 
-      goal.notes || '', 
-      goal.created || '',
-      goal.amountReached || '0',
-      goal.lastContributionDate || '',
-      goal.status || 'Active',
-      goal.claimDate || '',
-      goal.receiptNumber || '',
-      goal.receiptFilename || '',
-      goal.allocationPct || '0'
-    ];
-    if (rowIdx === -1) {
-      // Anchor append at A1, not the A:L range — append uses the range to detect
-      // the table's last row/column, and an A:L range can make it start the new
-      // row at column L (data lands in L:W, invisible to an A:L read).
-      await sheetsAppend(_sheetsSpreadsheetId, 'Goals!A1', [newRow]);
-    } else {
-      const sheetRow = rowIdx + 2;
-      await sheetsWrite(_sheetsSpreadsheetId, `Goals!A${sheetRow}:L${sheetRow}`, [newRow]);
+function goalSortDeadline(a, b) {
+  if (!a.deadline && !b.deadline) return 0;
+  if (!a.deadline) return 1;
+  if (!b.deadline) return -1;
+  return new Date(a.deadline) - new Date(b.deadline);
+}
+
+function goalHistoryKey(h) {
+  return `${h.date}|${Number(h.amount).toFixed(2)}|${h.invoiceNumber || h.name || h.rolledFrom || h.rolledTo || ''}`;
+}
+
+/**
+ * 3-way merge of goals. localList and remoteList are the current copies, baseMap
+ * is the last-synced state keyed by goalKey, tombstones are deleted goal keys.
+ * Local order comes first, then remote-only goals that are new since the last sync.
+ */
+function mergeGoals3Way(localList, remoteList, baseMap, tombstones) {
+  const base = baseMap || {};
+  const dead = tombstones || {};
+  const live = list => (list || []).filter(g => !hasOwnKey(dead, goalKey(g.name)));
+  const local = live(localList);
+  const remote = live(remoteList);
+  const remoteByKey = goalsByKey(remote);
+  const seen = new Set();
+  const out = [];
+
+  for (const loc of local) {
+    const key = goalKey(loc.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const rem = hasOwnKey(remoteByKey, key) ? remoteByKey[key] : null;
+    const b = hasOwnKey(base, key) ? base[key] : null;
+
+    if (!rem) {
+      // Gone from the sheet. Honour that delete unless this device edited the goal since the last sync.
+      if (b && JSON.stringify(loc) === JSON.stringify(b)) continue;
+      out.push(loc);
+      continue;
     }
+
+    const localChanged = f => goalFieldText(loc[f]) !== goalFieldText(b && b[f]);
+    const remoteChanged = f => goalFieldText(rem[f]) !== goalFieldText(b && b[f]);
+    const merged = { ...rem, ...loc };
+    for (const f of GOAL_MERGE_FIELDS) {
+      if (remoteChanged(f) && !localChanged(f)) merged[f] = rem[f];
+    }
+
+    // Claimed wins over any other status, and its receipt details come along with it.
+    const locClaimed = loc.status === 'Claimed';
+    const remClaimed = rem.status === 'Claimed';
+    if (locClaimed || remClaimed) {
+      merged.status = 'Claimed';
+      if (locClaimed !== remClaimed) {
+        const src = locClaimed ? loc : rem;
+        const other = locClaimed ? rem : loc;
+        for (const f of GOAL_CLAIM_FIELDS) merged[f] = src[f] || other[f] || '';
+      }
+    }
+
+    if (loc.history || rem.history) {
+      const historySeen = new Set();
+      merged.history = [...(loc.history || []), ...(rem.history || [])].filter(h => {
+        const k = goalHistoryKey(h);
+        if (historySeen.has(k)) return false;
+        historySeen.add(k);
+        return true;
+      });
+    }
+    out.push(merged);
   }
+
+  for (const rem of remote) {
+    const key = goalKey(rem.name);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Synced before but missing locally now: it was deleted here, so don't bring it back.
+    if (hasOwnKey(base, key)) continue;
+    out.push(rem);
+  }
+  return out;
 }
 
-async function loadGoalsFromSheet() {
-  if (!_gmailToken || !_sheetsSpreadsheetId) return { success: false, error: 'Missing token or ID' };
-  console.log(`🔄 [Goals] Syncing from spreadsheet: ${_sheetsSpreadsheetId}`);
+function goalsFromSheetRows(rows) {
+  return (rows || [])
+    .filter(r => r[0] && r[0].trim() !== '')
+    .map(r => ({
+      name: r[0],
+      amount: r[1] || '0',
+      deadline: r[2] || '',
+      notes: r[3] || '',
+      created: r[4] || '',
+      amountReached: r[5] || '0',
+      lastContributionDate: r[6] || '',
+      status: r[7] || 'Active',
+      claimDate: r[8] || '',
+      receiptNumber: r[9] || '',
+      receiptFilename: r[10] || '',
+      allocationPct: r[11] || '0'
+    }));
+}
+function goalToSheetRow(g) {
+  const cell = (v, fallback = '') => goalFieldText(v) || fallback;
+  return [
+    cell(g.name),
+    cell(g.amount),
+    cell(g.deadline),
+    cell(g.notes),
+    cell(g.created),
+    cell(g.amountReached, '0'),
+    cell(g.lastContributionDate),
+    cell(g.status, 'Active'),
+    cell(g.claimDate),
+    cell(g.receiptNumber),
+    cell(g.receiptFilename),
+    cell(g.allocationPct, '0')
+  ];
+}
+
+// Goal syncs and loads share one queue so a merge never runs over another one's write.
+let _goalSyncChain = Promise.resolve();
+function enqueueGoalSync(task) {
+  const run = _goalSyncChain.then(task);
+  _goalSyncChain = run.catch(() => {});
+  return run;
+}
+
+// Writes the goal rows over the top of the sheet, then clears any old rows left below them.
+// Writing first means a failed call never leaves the sheet empty.
+async function writeGoalsToSheet(merged, oldRowCount) {
+  if (merged.length) await sheetsWrite(_sheetsSpreadsheetId, `Goals!A2:L${merged.length + 1}`, merged.map(goalToSheetRow));
+  if (oldRowCount > merged.length) await sheetsClear(_sheetsSpreadsheetId, `Goals!A${merged.length + 2}:L${oldRowCount + 1}`);
+}
+
+// Merges local goals with the sheet rows, keeps the merge locally, and pushes it if the sheet differs.
+// The base only moves forward once the sheet has the merged list. If the push fails, the base stays
+// put and the next sync still treats the unsynced goals as new, not as deleted remotely.
+async function reconcileGoals(local, remoteRows) {
+  const remote = goalsFromSheetRows(remoteRows);
+  const merged = mergeGoals3Way(local, remote, goalsByKey(loadGoalsBase()), loadGoalTombstones())
+    .filter(g => g.name && g.name !== 'undefined');
+  saveGoals(merged);
+  if (JSON.stringify(merged.map(goalToSheetRow)) !== JSON.stringify(remote.map(goalToSheetRow))) {
+    await writeGoalsToSheet(merged, remoteRows.length);
+  }
+  saveGoalsBase(merged);
+  return { merged, remoteCount: remote.length };
+}
+
+async function doGoalSync(list) {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return;
+  const local = Array.isArray(list) ? list : loadGoals();
+  const remoteRows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
+  if (remoteRows === null) { console.warn('[Goals] Push aborted — sheet read failed (auth/tab missing). Local goals kept.'); return; }
+  await reconcileGoals(local, remoteRows);
+}
+
+// list is optional: without it the sync reads local goals when it actually runs.
+function syncGoalsToSheet(list) {
+  return enqueueGoalSync(() => doGoalSync(list));
+}
+
+async function doLoadGoalsFromSheet() {
   let rows = await sheetsRead(_sheetsSpreadsheetId, 'Goals!A2:L');
 
   if (rows === null) {
@@ -5311,59 +5499,34 @@ async function loadGoalsFromSheet() {
     console.error('❌ [Goals] Read failed after retry (tab missing or auth error)');
     return { success: false, error: 'Read failed' };
   }
-  
+
   console.log(`[Goals] Raw data rows received: ${rows.length}`);
-  
-  const sheetGoals = rows
-    .filter(r => r[0] && r[0].trim() !== '')
-    .map(r => ({ 
-      name: r[0], 
-      amount: r[1] || '0', 
-      deadline: r[2] || '', 
-      notes: r[3] || '', 
-      created: r[4] || '',
-      amountReached: r[5] || '0',
-      lastContributionDate: r[6] || '',
-      status: r[7] || 'Active',
-      claimDate: r[8] || '',
-      receiptNumber: r[9] || '',
-      receiptFilename: r[10] || '',
-      allocationPct: r[11] || '0'
-    }));
-  
-  console.log(`[Goals] Filtered valid goals: ${sheetGoals.length}`);
-  
-  const local = loadGoals();
-  const sheetNames = new Set(sheetGoals.map(g => g.name.toLowerCase()));
-
-  // Non-destructive merge. Sheet data wins for goals that exist in both, but
-  // local goals that aren't in the sheet yet are kept and pushed up — never
-  // silently deleted. A goal only leaves local storage via an explicit delete.
-  const merged = local.map(g => {
-    const sg = sheetGoals.find(s => s.name.toLowerCase() === g.name.toLowerCase());
-    return sg ? { ...g, ...sg } : g;
-  });
-  // Add goals that exist only in the sheet
-  sheetGoals.forEach(sg => {
-    if (!merged.some(g => g.name.toLowerCase() === sg.name.toLowerCase())) merged.push(sg);
-  });
-
-  const localOnly = local.filter(g => g.name && !sheetNames.has(g.name.toLowerCase()));
-  const cleaned = merged.filter(g => g.name && g.name !== 'undefined');
-  saveGoals(cleaned);
-  console.log(`✅ [Goals] Sync complete. Local storage count: ${cleaned.length}`);
-
-  // Push any local-only goals up so they propagate to other devices instead of
-  // being lost on the next sync. Runs only when a token is present.
-  if (localOnly.length && _gmailToken) {
-    console.log(`⬆️ [Goals] Pushing ${localOnly.length} local-only goal(s) to sheet...`);
-    try { await syncGoalsToSheet(); } catch (e) { console.error('[Goals] Push of local-only goals failed:', e); }
+  let reconciled;
+  try {
+    reconciled = await reconcileGoals(loadGoals(), rows);
+  } catch (e) {
+    // The merge is already kept locally; the next sync pushes it again.
+    console.error('[Goals] Push of merged goals failed, kept locally:', e);
+    reconciled = { merged: loadGoals(), remoteCount: rows.filter(r => r[0] && r[0].trim() !== '').length };
   }
+  console.log(`✅ [Goals] Sync complete. Local storage count: ${reconciled.merged.length}`);
   if (document.getElementById('dashboard-overlay')?.style.display === 'flex') {
     renderDashboard();
   }
-  return { success: true, count: sheetGoals.length };
+  return { success: true, count: reconciled.remoteCount };
 }
+
+function loadGoalsFromSheet() {
+  if (!_gmailToken || !_sheetsSpreadsheetId) return Promise.resolve({ success: false, error: 'Missing token or ID' });
+  console.log(`🔄 [Goals] Syncing from spreadsheet: ${_sheetsSpreadsheetId}`);
+  return enqueueGoalSync(() => doLoadGoalsFromSheet());
+}
+
+Object.assign(window, {
+  goalKey, loadGoalTombstones, saveGoalTombstones, recordGoalDeletion, unrecordGoalDeletion,
+  loadGoalsBase, saveGoalsBase, loadGoals, saveGoals, mergeGoals3Way,
+});
+
 
 
 // ── Business Profiles & Settings Sync ──────────────────────────
@@ -5695,9 +5858,10 @@ function calcIncomePool(rows) {
   // Income is net of reimbursable at-cost spend (money passed through to the
   // client is not ours). Rows with no reimbursable cost count in full.
   const reimbIdx      = reimbursableIndex();
-  const paidRows      = rows.filter(r => r.status === '✅ Paid');
-  const grossIncome   = paidRows.reduce((s, r) => s + parseAmt(r.amountDue), 0);
-  const totalIncome   = paidRows.reduce((s, r) => s + netIncomeOf(r, reimbIdx), 0);
+  // Paid rows count in full; a deposit counts only what has been paid on it.
+  const paidRows      = rows.filter(ledgerRowHasCollected);
+  const grossIncome   = paidRows.reduce((s, r) => s + parseAmt(r.status === '✅ Paid' ? r.amountDue : r.amountPaid), 0);
+  const totalIncome   = paidRows.reduce((s, r) => s + collectedIncomeOf(r, reimbIdx), 0);
   const reimbursedExcluded = Math.max(0, Math.round((grossIncome - totalIncome) * 100) / 100);
   // Goals are kept in USD; convert to the ledger currency before taking them
   // off income. With no rate they are shown in USD and left out of Liquid.
@@ -6463,6 +6627,19 @@ function netIncomeOf(row, byReceipt) {
 function reimbursableIndex() {
   try { return ReimbursableApi().reimbursableByReceipt(loadProjectCosts()); }
   catch (e) { return new Map(); }
+}
+// A row has brought money in when it is paid, or a deposit with some amount paid.
+function ledgerRowHasCollected(row) {
+  return !!row && (row.status === '✅ Paid' || (row.status === '💰 Deposit' && parseMoneyNum(row.amountPaid) > 0));
+}
+// Income actually collected so far, net of reimbursable at-cost spend. A deposit
+// counts only what has been paid, not the full amount due.
+function collectedIncomeOf(row, reimbIdx) {
+  if (!ledgerRowHasCollected(row)) return 0;
+  const idx = reimbIdx || reimbursableIndex();
+  const cost = idx.get(String(row.receipt || '').trim()) || 0;
+  const collected = row.status === '✅ Paid' ? row : { ...row, amountDue: row.amountPaid };
+  return ReimbursableApi().netIncomeAmount(collected, cost);
 }
 
 /**
@@ -9454,6 +9631,12 @@ async function sheetsAppend(spreadsheetId, range, values) {
   if (res.error) throw new Error(res.error.message);
   return res;
 }
+async function sheetsClear(spreadsheetId, range) {
+  const enc = encodeURIComponent(range);
+  const res = await sheetsRequest('POST', `/spreadsheets/${spreadsheetId}/values/${enc}:clear`, {});
+  if (res.error) throw new Error(res.error.message);
+  return res;
+}
 async function sheetsRead(spreadsheetId, range) {
   const enc = encodeURIComponent(range);
   const res = await sheetsRequest('GET', `/spreadsheets/${spreadsheetId}/values/${enc}`);
@@ -10071,15 +10254,20 @@ function renderDashboard() {
   // the full amount the client still owes.
   const reimbIdx = reimbursableIndex();
   const netAmt = r => netIncomeOf(r, reimbIdx);
-  const paid = rows.filter(r => r.status === '✅ Paid');
   const unpaidDeposit = rows.filter(r => r.status === '⬜ Unpaid' || r.status === '💰 Deposit' || r.status === '📤 Sent');
 
+  // Money in per month: paid rows and deposits with something paid, counted in the
+  // month of their paid date or their invoice date, at what has actually come in.
+  const paidYM = r => { const d = ledgerRowPaidDate(r); return d ? d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') : ''; };
+  const collectedIn = ym => rows
+    .filter(r => ledgerRowHasCollected(r) && (rowYM(r) === ym || paidYM(r) === ym))
+    .reduce((s, r) => s + collectedIncomeOf(r, reimbIdx), 0);
   let monthPaidYM = thisYM;
-  let monthPaid = paid.filter(r => rowYM(r) === thisYM).reduce((s, r) => s + netAmt(r), 0);
+  let monthPaid = collectedIn(thisYM);
   if (monthPaid === 0) {
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const lastYM = lastMonth.getFullYear() + '-' + String(lastMonth.getMonth() + 1).padStart(2, '0');
-    const lastMonthPaid = paid.filter(r => rowYM(r) === lastYM).reduce((s, r) => s + netAmt(r), 0);
+    const lastMonthPaid = collectedIn(lastYM);
     if (lastMonthPaid > 0) { monthPaid = lastMonthPaid; monthPaidYM = lastYM; }
   }
   const quarterAll  = rows.filter(r => rowQ(r) === thisQ).reduce((s, r) => s + netAmt(r), 0);
@@ -10251,7 +10439,7 @@ function renderGoalsList() {
   });
   const today = new Date(); today.setHours(0,0,0,0);
   goals.forEach((g) => {
-    const rawIdx = rawGoals.findIndex(r => r.name === g.name);
+    const rawIdx = rawGoals.indexOf(g) !== -1 ? rawGoals.indexOf(g) : rawGoals.findIndex(r => r.name === g.name);
     const div = document.createElement('div');
     div.className = 'goal-card';
     const reached = parseFloat(g.amountReached) || 0;
@@ -10294,10 +10482,10 @@ function renderGoalsList() {
 
     if (g.status === 'Claimed') {
       div.classList.add('goal-card--claimed');
-      claimBtn = `<span class="goal-claimed-label">✓ Claimed</span>`;
+      claimBtn = `<span class="goal-claimed-label" onclick="openClaimModal(${rawIdx})" style="cursor:pointer;" title="View or update the claim">✓ Claimed</span>`;
     } else if (reached >= target && target > 0) {
       div.classList.add('goal-card--complete');
-      claimBtn = `<button onclick="openClaimModal('${g.name}')" class="goal-claim-btn">Claim Reward</button>`;
+      claimBtn = `<button onclick="openClaimModal(${rawIdx})" class="goal-claim-btn">Claim Reward</button>`;
     } else if (reached > 0) {
       div.classList.add('goal-card--progress');
     }
@@ -10305,7 +10493,7 @@ function renderGoalsList() {
     // Goal targets and amounts are kept in USD (allocateToGoal converts).
     div.innerHTML = `
       <div class="goal-card-header">
-        <strong class="goal-name">${g.name}</strong>
+        <strong class="goal-name">${escapeHtml(g.name)}</strong>
         <div class="goal-card-actions">
           <button onclick="editGoal(${rawIdx})" class="goal-btn-edit" title="Edit goal">Edit</button>
           <button onclick="deleteGoal(${rawIdx})" class="goal-btn-delete" title="Delete goal">✕</button>
@@ -10317,7 +10505,7 @@ function renderGoalsList() {
         ${ageLabel ? `<span class="goal-age">${ageLabel}</span>` : ''}
         <span class="goal-target">${formatCurrencyNative(reached, 'USD', 0)} / ${formatCurrencyNative(target, 'USD', 0)}</span>
       </div>
-      <div class="goal-notes">${g.notes ? g.notes.replace(/https?:\/\/[^\s]+/g, url => `<a href="${url}" target="_blank" rel="noopener" class="goal-notes-link">${url}</a>`) : 'No notes provided'}</div>
+      <div class="goal-notes">${g.notes ? escapeHtml(g.notes).replace(/https?:\/\/[^\s<]+/g, url => `<a href="${url}" target="_blank" rel="noopener" class="goal-notes-link">${url}</a>`) : 'No notes provided'}</div>
       <div class="goal-bar-wrap">
         <div class="goal-bar-fill"></div>
       </div>`;
@@ -10389,8 +10577,23 @@ function submitGoalModal() {
 
   const goals = loadGoals();
   if (_editingGoalIdx >= 0 && _editingGoalIdx < goals.length) {
-    goals[_editingGoalIdx] = { ...goals[_editingGoalIdx], name, amount: String(amount), deadline, notes, allocationPct };
+    const g = goals[_editingGoalIdx];
+    const oldName = g.name;
+    if (goalKey(oldName) !== goalKey(name)) recordGoalDeletion(oldName);
+    unrecordGoalDeletion(name);
+    const oldTarget = parseFloat(g.amount) || 0;
+    const reached = parseFloat(g.amountReached) || 0;
+    Object.assign(g, { name, amount: String(amount), deadline, notes, allocationPct });
+    if (amount < oldTarget && reached > amount) {
+      const rollMsg = describeRollover(rollSurplusToNextGoal(goals, g, oldTarget));
+      if (rollMsg) showToast(rollMsg, 'success');
+    } else if (amount > reached && g.status === 'Funded') {
+      g.status = 'Active';
+    } else if (amount > 0 && reached >= amount && g.status !== 'Claimed') {
+      g.status = 'Funded';
+    }
   } else {
+    unrecordGoalDeletion(name);
     goals.push({ name, amount: String(amount), deadline, notes, allocationPct, created: new Date().toISOString().slice(0, 10) });
   }
   _editingGoalIdx = -1;
@@ -10402,7 +10605,8 @@ function submitGoalModal() {
 
 function deleteGoal(idx) {
   const goals = loadGoals();
-  goals.splice(idx, 1);
+  const [removed] = goals.splice(idx, 1);
+  if (removed) recordGoalDeletion(removed.name);
   saveGoals(goals);
   syncGoalsToSheet();
   renderGoalsList();
@@ -10410,29 +10614,80 @@ function deleteGoal(idx) {
 
 // ── Goal Allocations & Claims ─────────────────────────────────
 
+/**
+ * When a goal's target is lowered below what it already holds, the surplus moves
+ * on to the open goals (soonest deadline first) instead of disappearing. Works in
+ * whole cents so the amounts add up exactly. Mutates goals in place.
+ */
+function rollSurplusToNextGoal(goals, editedGoal, oldTarget) {
+  const result = { rolledCents: 0, recipients: [], leftoverCents: 0 };
+  const cents = v => Math.round((parseFloat(v) || 0) * 100);
+  const newTargetCents = cents(editedGoal.amount);
+  const reachedCents = cents(editedGoal.amountReached);
+  if (newTargetCents >= cents(oldTarget) || newTargetCents >= reachedCents) return result;
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  let surplusCents = reachedCents - newTargetCents;
+  editedGoal.amountReached = String(newTargetCents / 100);
+  if (newTargetCents > 0 && editedGoal.status !== 'Claimed') editedGoal.status = 'Funded';
+
+  const recipients = goals
+    .filter(g => g !== editedGoal && g.status !== 'Claimed' && cents(g.amount) > cents(g.amountReached))
+    .sort(goalSortDeadline);
+  for (const g of recipients) {
+    if (surplusCents <= 0) break;
+    const targetCents = cents(g.amount);
+    const giveCents = Math.min(surplusCents, targetCents - cents(g.amountReached));
+    const newReachedCents = cents(g.amountReached) + giveCents;
+    const giveDollars = giveCents / 100;
+    g.amountReached = String(newReachedCents / 100);
+    g.lastContributionDate = todayStr;
+    g.history = g.history || [];
+    g.history.push({ date: todayStr, amount: giveDollars, rolledFrom: editedGoal.name });
+    if (newReachedCents >= targetCents) g.status = 'Funded';
+    editedGoal.history = editedGoal.history || [];
+    editedGoal.history.push({ date: todayStr, amount: -giveDollars, rolledTo: g.name });
+    surplusCents -= giveCents;
+    result.rolledCents += giveCents;
+    result.recipients.push({ name: g.name, cents: giveCents });
+  }
+  result.leftoverCents = surplusCents;
+  return result;
+}
+// Short note for toasts and the AI action log; empty when nothing moved.
+function describeRollover(rollResult) {
+  if (!rollResult) return '';
+  const parts = [];
+  if (rollResult.recipients.length) {
+    const names = rollResult.recipients.map(r => `"${r.name}"`).join(', ');
+    parts.push(`$${(rollResult.rolledCents / 100).toFixed(2)} rolled over to ${names}`);
+  }
+  if (rollResult.leftoverCents > 0) {
+    parts.push(`$${(rollResult.leftoverCents / 100).toFixed(2)} has no open goal to move to, so it no longer counts toward goals`);
+  }
+  return parts.join('; ');
+}
+window.rollSurplusToNextGoal = rollSurplusToNextGoal;
+window.describeRollover = describeRollover;
+
 function renderAllocationUI(container, row) {
   container.innerHTML = '';
 
-  // 3-day retroactive window — only invoices created within the last 3 days can contribute to goals
-  if (row.date) {
-    try {
-      const invoiceDate = ledgerRowDate(row);
-      if (invoiceDate) {
-        const daysDiff = InvoiceDateApi().daysBetween(invoiceDate, new Date());
-        if (daysDiff > 3) {
-          container.innerHTML = '<div style="font-size:11px; color:#6c7682; background:#f6f6f4; padding:8px 10px; border-radius:6px;">Goal contributions are only available for invoices created within the last 3 days.</div>';
-          return;
-        }
-      }
-    } catch(e) {}
-  }
+  // 3-day retroactive window — an invoice created or paid within the last 3 days can contribute to goals
+  try {
+    const dates = [ledgerRowDate(row), ledgerRowPaidDate(row)].filter(Boolean);
+    if (dates.length && !dates.some(d => InvoiceDateApi().daysBetween(d, new Date()) <= 3)) {
+      container.innerHTML = '<div style="font-size:11px; color:#6c7682; background:#f6f6f4; padding:8px 10px; border-radius:6px;">Goal contributions are only available for invoices created or paid within the last 3 days.</div>';
+      return;
+    }
+  } catch(e) {}
 
   // Already allocated — show lock state with undo
   if (row.goalAllocations && row.goalAllocations.length) {
     const pool = calcIncomePool();
     const currency = window.currentDashCurrency || localStorage.getItem('invoicer-default-currency') || 'USD';
     const fmtLiquid = n => formatCurrencyNative(Math.round(n), currency, 0);
-    const lines = row.goalAllocations.map(a => `<span style="display:inline-block;background:#d4edda;color:#155724;border-radius:4px;padding:2px 7px;font-size:11px;margin:2px 2px 0 0;">✓ $${a.applied.toFixed(2)} → ${a.name}</span>`).join('');
+    const lines = row.goalAllocations.map(a => `<span style="display:inline-block;background:#d4edda;color:#155724;border-radius:4px;padding:2px 7px;font-size:11px;margin:2px 2px 0 0;">✓ $${a.applied.toFixed(2)} → ${escapeHtml(a.name)}</span>`).join('');
     container.innerHTML = `
       <div style="font-size:11px;font-weight:600;color:#14202e;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Goal Allocation</div>
       <div style="margin-bottom:8px;">${lines}</div>
@@ -10444,7 +10699,7 @@ function renderAllocationUI(container, row) {
     return;
   }
 
-  if (reimbursableCostFor(row.receipt) > 0 && netIncomeOf(row) <= 0) {
+  if (reimbursableCostFor(row.receipt) > 0 && (collectedIncomeOf(row) || netIncomeOf(row)) <= 0) {
     container.innerHTML = '<div class="reimb-alloc-note" style="font-size:11px; color:#5f6b78; background:#f6f6f4; padding:8px 10px; border-radius:6px;">This invoice is reimbursable at cost (money passed through to the client), so there is no income to allocate to goals.</div>';
     return;
   }
@@ -10529,7 +10784,7 @@ function renderAllocationUI(container, row) {
 
     const btn = document.createElement('button');
     btn.style.cssText = `padding:5px 10px; border:1px solid transparent; border-radius:4px; background:${bg}; color:${color}; font-size:11px; cursor:pointer; transition:all 0.1s; text-align:left;`;
-    btn.innerHTML = `<strong>${g.name}</strong>${pct ? ` <span style="opacity:0.7;">${pct}%</span>` : ''}`;
+    btn.innerHTML = `<strong>${escapeHtml(g.name)}</strong>${pct ? ` <span style="opacity:0.7;">${pct}%</span>` : ''}`;
 
     btn.onclick = () => {
       buttons.forEach(b => b.style.borderColor = 'transparent');
@@ -10613,14 +10868,44 @@ async function undoGoalAllocation(row, container) {
   }
 }
 
+// Order / receipt reference in a goal's notes (e.g. an Amazon order number), used to pre-fill the claim.
+function extractOrderNumber(notes) {
+  const text = String(notes || '');
+  const m = text.match(/(?:order\s*(?:#|no\.?|number)?\s*[:#-]?\s*)(\d{3}-\d{7}-\d{7}|\d{10,20}|[A-Z0-9]{2,6}-\d{5,15})/i)
+    || text.match(/\b(\d{3}-\d{7}-\d{7})\b/)
+    || text.match(/(?:ref(?:erence)?|receipt|inv(?:oice)?|order)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{4,24})/i);
+  return m ? m[1] : '';
+}
+window.extractOrderNumber = extractOrderNumber;
+
 let _claimingGoal = null;
-function openClaimModal(goalName) {
-  _claimingGoal = loadGoals().find(g => g.name === goalName);
+// goalRef is the goal's index in loadGoals() (from the card buttons) or its name.
+async function openClaimModal(goalRef) {
+  const name = typeof goalRef === 'number' ? (loadGoals()[goalRef] || {}).name : goalRef;
+  if (!name) return;
+  if (_gmailToken && _sheetsSpreadsheetId) {
+    try { await loadGoalsFromSheet(); } catch (e) { console.warn('[Claim] Sheet refresh failed, using local goal:', e); }
+  }
+  _claimingGoal = loadGoals().find(g => g.name === name);
   if (!_claimingGoal) return;
   document.getElementById('claim-modal-title').textContent = `Claim: ${_claimingGoal.name}`;
-  document.getElementById('claim-input-receipt').value = '';
+  document.getElementById('claim-input-receipt').value = _claimingGoal.receiptNumber || extractOrderNumber(_claimingGoal.notes) || '';
   document.getElementById('claim-input-file').value = '';
+  renderClaimExistingFile(_claimingGoal.receiptFilename);
   document.getElementById('claim-overlay').style.display = 'flex';
+}
+function renderClaimExistingFile(url) {
+  const input = document.getElementById('claim-input-file');
+  let box = document.getElementById('claim-existing-file');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'claim-existing-file';
+    box.style.cssText = 'font-size:12px; margin-top:6px;';
+    input.insertAdjacentElement('afterend', box);
+  }
+  box.innerHTML = url
+    ? `Receipt on file: <a href="${escapeHtml(url)}" target="_blank" rel="noopener">view</a> (upload a new one to replace it)`
+    : '';
 }
 function closeClaimModal() {
   document.getElementById('claim-overlay').style.display = 'none';
@@ -10639,7 +10924,7 @@ async function submitClaimModal() {
   btn.textContent = 'Processing...';
   
   try {
-    let driveFileUrl = '';
+    let driveFileUrl = _claimingGoal.receiptFilename || '';
     if (file) {
       if (!_driveFolderId) await ensureDriveFolder();
       const query = `name = 'Receipts' and '${_driveFolderId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
@@ -10681,7 +10966,7 @@ async function submitClaimModal() {
     const idx = goals.findIndex(g => g.name === _claimingGoal.name);
     if (idx === -1) throw new Error('Goal not found — please reload and try again.');
     goals[idx].status = 'Claimed';
-    goals[idx].claimDate = new Date().toISOString().split('T')[0];
+    goals[idx].claimDate = _claimingGoal.claimDate || new Date().toISOString().split('T')[0];
     goals[idx].receiptNumber = receipt;
     goals[idx].receiptFilename = driveFileUrl;
     saveGoals(goals);
@@ -10704,6 +10989,7 @@ function applyAddGoal(goalData, actionNotes) {
   const goals = loadGoals();
   const existing = goals.findIndex(g => g.name.toLowerCase() === goalData.name.toLowerCase());
   if (existing >= 0) { console.warn('[applyAddGoal] Goal already exists — use _updateGoal:', goalData.name); return; }
+  unrecordGoalDeletion(goalData.name);
   goals.push({
     name:          goalData.name,
     amount:        typeof goalData.amount === 'number' ? goalData.amount : parseFloat(goalData.amount) || 0,
@@ -10724,10 +11010,21 @@ function applyUpdateGoal(updateData, actionNotes) {
   const idx = goals.findIndex(g => g.name.toLowerCase() === updateData.name.toLowerCase());
   if (idx < 0) { console.warn('[applyUpdateGoal] No goal found:', updateData.name); return; }
   const c = updateData.changes || {};
+  const oldTarget = parseFloat(goals[idx].amount) || 0;
   if ('amount'        in c) goals[idx].amount        = typeof c.amount === 'number' ? c.amount : parseFloat(c.amount) || 0;
   if ('deadline'      in c) goals[idx].deadline      = c.deadline || '';
   if ('allocationPct' in c) goals[idx].allocationPct = typeof c.allocationPct === 'number' ? c.allocationPct : 0;
   if ('notes'         in c) goals[idx].notes         = c.notes || '';
+  const newTarget = parseFloat(goals[idx].amount) || 0;
+  const reached = parseFloat(goals[idx].amountReached) || 0;
+  if (newTarget < oldTarget && reached > newTarget) {
+    const rollMsg = describeRollover(rollSurplusToNextGoal(goals, goals[idx], oldTarget));
+    if (rollMsg) actionNotes.push(rollMsg);
+  } else if ('amount' in c && newTarget > reached && goals[idx].status === 'Funded') {
+    goals[idx].status = 'Active';
+  } else if ('amount' in c && newTarget > 0 && reached >= newTarget && goals[idx].status !== 'Claimed') {
+    goals[idx].status = 'Funded';
+  }
   saveGoals(goals);
   syncGoalsToSheet();
   renderGoalsList();
@@ -10740,6 +11037,7 @@ function applyDeleteGoal(deleteData, actionNotes) {
   const idx = goals.findIndex(g => g.name.toLowerCase() === deleteData.name.toLowerCase());
   if (idx < 0) { console.warn('[applyDeleteGoal] No goal found:', deleteData.name); return; }
   const removed = goals.splice(idx, 1)[0];
+  recordGoalDeletion(removed.name);
   saveGoals(goals);
   syncGoalsToSheet();
   renderGoalsList();
@@ -11263,8 +11561,11 @@ window.allocateToGoal = async function(invoiceRow, selectedGoal, pct) {
 
   const grossAmount = parseFloat((invoiceRow.amountDue || '0').replace(/[^0-9.]/g, '')) || 0;
   if (!grossAmount) throw new Error('Could not read invoice amount.');
-  // Goals draw on income only: reimbursable at-cost spend is left out.
-  const invoiceAmount = netIncomeOf(invoiceRow);
+  // Goals draw on income only: reimbursable at-cost spend is left out. A deposit
+  // draws only on what has been paid so far.
+  const isDeposit = invoiceRow.status === '💰 Deposit';
+  if (isDeposit && !ledgerRowHasCollected(invoiceRow)) throw new Error('No deposit has been paid on this invoice yet.');
+  const invoiceAmount = isDeposit ? collectedIncomeOf(invoiceRow) : netIncomeOf(invoiceRow);
   if (!invoiceAmount) throw new Error('This invoice is all reimbursable at cost, so there is no income to allocate.');
 
   const invoiceCurrency = (invoiceRow.projectTotal || '').split(' ')[0] || 'JMD';
